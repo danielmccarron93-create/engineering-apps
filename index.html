@@ -1,0 +1,753 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bligh Tanner | Engineering Tools</title>
+    <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@300;400;500&family=Barlow+Condensed:wght@700;800&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --cyan: #00AEEF;
+            --ink: #181818;
+            --mid: #666;
+            --muted: #aaa;
+            --rule: #e2e2de;
+            --bg: #f2f2ef;
+            --card: #ffffff;
+            --chrome: #e9e9e5;
+            --coming: #eaeae6;
+        }
+
+        html, body {
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            padding: 0;
+            font-family: 'Barlow', sans-serif;
+            background-color: var(--bg);
+            color: var(--ink);
+            overflow: hidden;
+        }
+
+        /* Password gate */
+        #passwordGate {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(135deg, var(--bg) 0%, var(--chrome) 100%);
+            z-index: 1000;
+            opacity: 1;
+            transition: opacity 0.4s ease-out;
+        }
+
+        #passwordGate.hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        .password-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 2rem;
+            text-align: center;
+        }
+
+        .password-logo {
+            font-family: 'Barlow Condensed', sans-serif;
+            font-size: 2.2rem;
+            font-weight: 800;
+            letter-spacing: 0.15em;
+            color: var(--ink);
+            margin-bottom: 1rem;
+        }
+
+        .password-input {
+            width: 280px;
+            padding: 0.75rem 1rem;
+            font-family: 'Barlow', sans-serif;
+            font-size: 1rem;
+            border: 2px solid var(--rule);
+            background: var(--card);
+            color: var(--ink);
+            transition: border-color 0.2s ease;
+        }
+
+        .password-input:focus {
+            outline: none;
+            border-color: var(--cyan);
+        }
+
+        .password-btn {
+            padding: 0.75rem 2rem;
+            font-family: 'Barlow Condensed', sans-serif;
+            font-size: 0.95rem;
+            font-weight: 700;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            background: var(--ink);
+            color: var(--card);
+            border: none;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .password-btn:hover {
+            background: var(--cyan);
+            color: var(--ink);
+        }
+
+        /* Main content */
+        #mainContent {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            opacity: 0;
+            transition: opacity 0.6s ease-out 0.2s;
+        }
+
+        #mainContent.visible {
+            opacity: 1;
+        }
+
+        /* Constrain content width on large monitors */
+        .content-wrap {
+            width: 100%;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 3rem;
+        }
+
+        /* Header */
+        header {
+            padding: 1.5rem 0;
+            border-bottom: 1px solid var(--rule);
+            flex-shrink: 0;
+        }
+
+        .header-left {
+            font-family: 'Barlow Condensed', sans-serif;
+            font-size: 1.1rem;
+            font-weight: 700;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            color: var(--ink);
+        }
+
+        .header-right {
+            font-family: 'Barlow Condensed', sans-serif;
+            font-size: 0.9rem;
+            font-weight: 700;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            color: var(--mid);
+            text-align: right;
+        }
+
+        .header-right-line {
+            display: block;
+            line-height: 1.3;
+        }
+
+        /* Cyan rule */
+        .cyan-rule {
+            height: 2px;
+            background: var(--cyan);
+            flex-shrink: 0;
+        }
+
+        /* Main container */
+        .main-container {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow-y: auto;
+            overflow-x: hidden;
+            padding: 2rem 0;
+        }
+
+        /* Hero title */
+        .hero-title {
+            font-family: 'Barlow Condensed', sans-serif;
+            font-size: 2.8rem;
+            font-weight: 800;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: var(--ink);
+            margin-bottom: 0.5rem;
+            animation: fadeUpStagger 0.8s ease-out 0.3s both;
+        }
+
+        .hero-title .cyan-plus {
+            color: var(--cyan);
+        }
+
+        /* Section label */
+        .section-label {
+            font-family: 'Barlow Condensed', sans-serif;
+            font-size: 0.85rem;
+            font-weight: 700;
+            letter-spacing: 0.15em;
+            text-transform: uppercase;
+            color: var(--mid);
+            margin-top: 2rem;
+            margin-bottom: 0.5rem;
+            animation: fadeUpStagger 0.8s ease-out 0.4s both;
+        }
+
+        .section-meta {
+            font-family: 'Barlow', sans-serif;
+            font-size: 0.9rem;
+            font-weight: 400;
+            color: var(--muted);
+            margin-bottom: 1.5rem;
+            animation: fadeUpStagger 0.8s ease-out 0.45s both;
+        }
+
+        /* Cards grid */
+        .cards-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 1.5rem;
+            margin-bottom: 2rem;
+        }
+
+        /* Live card */
+        .card-live {
+            background: var(--card);
+            border: 1px solid var(--rule);
+            padding: 1.5rem;
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+            transition: all 0.3s ease;
+            cursor: pointer;
+            position: relative;
+            text-decoration: none;
+            color: inherit;
+            animation: fadeUpStagger 0.8s ease-out 0.5s both;
+            box-shadow: 0 2px 8px rgba(24, 24, 24, 0.08);
+        }
+
+        .card-live:nth-child(2) {
+            animation-delay: 0.6s;
+        }
+
+        .card-live:nth-child(3) {
+            animation-delay: 0.7s;
+        }
+
+        .card-live:hover {
+            border-color: var(--cyan);
+            box-shadow: 0 8px 24px rgba(0, 174, 239, 0.15);
+            transform: translateY(-4px);
+        }
+
+        /* Thumbnail illustration area */
+        .card-illustration {
+            width: 100%;
+            aspect-ratio: 4 / 3;
+            overflow: hidden;
+            background: var(--bg);
+            border: 1px solid var(--rule);
+            position: relative;
+        }
+
+        .card-illustration img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            display: block;
+        }
+
+        /* Live badge */
+        .badge-live {
+            align-self: flex-start;
+            display: inline-block;
+            padding: 0.4rem 0.8rem;
+            border: 2px solid var(--cyan);
+            color: var(--cyan);
+            font-family: 'Barlow Condensed', sans-serif;
+            font-size: 0.75rem;
+            font-weight: 700;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            background: transparent;
+        }
+
+        /* Card content */
+        .card-content {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+            flex: 1;
+        }
+
+        .card-title {
+            font-family: 'Barlow Condensed', sans-serif;
+            font-size: 1.15rem;
+            font-weight: 800;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            color: var(--ink);
+        }
+
+        .card-description {
+            font-family: 'Barlow', sans-serif;
+            font-size: 0.95rem;
+            font-weight: 400;
+            color: var(--mid);
+            line-height: 1.4;
+        }
+
+        .card-standards {
+            font-family: 'Barlow Condensed', sans-serif;
+            font-size: 0.8rem;
+            font-weight: 500;
+            letter-spacing: 0.08em;
+            color: var(--muted);
+            text-transform: uppercase;
+            margin-top: 0.5rem;
+            line-height: 1.3;
+        }
+
+        /* Coming soon section */
+        .coming-section {
+            margin-top: 2rem;
+            animation: fadeUpStagger 0.8s ease-out 0.8s both;
+        }
+
+        .coming-label {
+            font-family: 'Barlow Condensed', sans-serif;
+            font-size: 0.85rem;
+            font-weight: 700;
+            letter-spacing: 0.15em;
+            text-transform: uppercase;
+            color: var(--mid);
+            margin-bottom: 1rem;
+        }
+
+        /* Coming soon grid */
+        .coming-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 1rem;
+        }
+
+        /* Coming soon card */
+        .card-coming {
+            background: var(--coming);
+            border: 1px solid var(--rule);
+            padding: 1rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.8rem;
+            opacity: 0.7;
+            position: relative;
+        }
+
+        .card-coming-illustration {
+            width: 100%;
+            aspect-ratio: 4 / 3;
+            overflow: hidden;
+            background: var(--bg);
+            border: 1px solid var(--rule);
+            position: relative;
+        }
+
+        .card-coming-illustration img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            display: block;
+        }
+
+        .badge-coming {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.4rem;
+            align-self: flex-start;
+            padding: 0.3rem 0.6rem;
+            border: 1px solid var(--muted);
+            color: var(--muted);
+            font-family: 'Barlow Condensed', sans-serif;
+            font-size: 0.7rem;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            background: transparent;
+        }
+
+        .lock-icon {
+            width: 12px;
+            height: 12px;
+            display: inline-block;
+        }
+
+        .card-coming-title {
+            font-family: 'Barlow Condensed', sans-serif;
+            font-size: 1rem;
+            font-weight: 800;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            color: var(--ink);
+        }
+
+        /* Grey rule */
+        .grey-rule {
+            height: 1px;
+            background: var(--rule);
+            margin: 2rem 0;
+        }
+
+        /* Footer */
+        footer {
+            padding: 1.5rem 0;
+            border-top: 1px solid var(--rule);
+            font-family: 'Barlow', sans-serif;
+            font-size: 0.85rem;
+            color: var(--muted);
+            flex-shrink: 0;
+        }
+
+        .footer-left {
+            text-align: left;
+        }
+
+        .footer-right {
+            text-align: right;
+            font-family: 'Barlow Condensed', sans-serif;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+        }
+
+        /* Animations */
+        @keyframes fadeUpStagger {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        /* Responsive — keep 3-col live / 4-col coming on most screens */
+        @media (max-width: 1000px) {
+            .cards-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+            .coming-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+
+        @media (max-width: 680px) {
+            .cards-grid,
+            .coming-grid {
+                grid-template-columns: 1fr;
+            }
+            header .content-wrap,
+            footer .content-wrap {
+                flex-direction: column;
+                gap: 0.5rem;
+                text-align: center;
+            }
+            .header-right {
+                text-align: center;
+            }
+            .hero-title {
+                font-size: 2rem;
+            }
+            .content-wrap {
+                padding: 0 1.5rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Password gate -->
+    <div id="passwordGate">
+        <div class="password-container">
+            <div class="password-logo">BLIGH TANNER</div>
+            <input type="password" id="passwordInput" class="password-input" placeholder="Enter password">
+            <button id="passwordBtn" class="password-btn">ENTER</button>
+        </div>
+    </div>
+
+    <!-- Main content -->
+    <div id="mainContent">
+        <!-- Header -->
+        <header>
+            <div class="content-wrap" style="display:flex;justify-content:space-between;align-items:center;">
+                <div class="header-left">BLIGH TANNER | ENGINEERING TOOLS</div>
+                <div class="header-right">
+                    <span class="header-right-line">BUILDING STRUCTURES</span>
+                    <span class="header-right-line">BRISBANE • INTERNAL USE ONLY</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- Cyan rule -->
+        <div class="cyan-rule"></div>
+
+        <!-- Main container -->
+        <div class="main-container">
+          <div class="content-wrap">
+            <!-- Hero title -->
+            <h1 class="hero-title">STRUCTURAL <span class="cyan-plus">+</span> DESIGN TOOLS</h1>
+
+            <!-- Available Now section -->
+            <div class="section-label">AVAILABLE NOW</div>
+            <div class="section-meta">8 tools · Click to open</div>
+
+            <!-- Live tools cards -->
+            <div class="cards-grid">
+                <!-- StructuralSketch -->
+                <a href="./structural-sketch/" target="_blank" class="card-live">
+                    <div class="card-illustration">
+                        <img src="./img/structural-sketch.png" alt="StructuralSketch — multi-level structural documentation">
+                    </div>
+                    <div class="badge-live">LIVE</div>
+                    <div class="card-content">
+                        <div class="card-title">STRUCTURALSKETCH</div>
+                        <div class="card-description">Multi-level structural documentation & details</div>
+                        <div class="card-standards">AS 3600 | AS 4100 | AS 1720.1</div>
+                    </div>
+                </a>
+
+                <!-- 2D Details -->
+                <a href="./2D-Details/" target="_blank" class="card-live">
+                    <div class="card-illustration">
+                        <img src="./img/2d-details.png" alt="2D Details — precision steel connection drafting">
+                    </div>
+                    <div class="badge-live">LIVE</div>
+                    <div class="card-content">
+                        <div class="card-title">2D DETAILS</div>
+                        <div class="card-description">Precision steel connection drafting & export</div>
+                        <div class="card-standards">AS 4100 | DXF, PDF EXPORT</div>
+                    </div>
+                </a>
+
+                <!-- UB Splice -->
+                <a href="./ub-splice/" target="_blank" class="card-live">
+                    <div class="card-illustration">
+                        <img src="./img/ub-splice.png" alt="UB Splice — moment splice checker + 3D visualiser">
+                    </div>
+                    <div class="badge-live">LIVE</div>
+                    <div class="card-content">
+                        <div class="card-title">UB SPLICE</div>
+                        <div class="card-description">Moment splice checker + live 3D visualiser</div>
+                        <div class="card-standards">AS 4100 | MS·B/T/F | SVG EXPORT</div>
+                    </div>
+                </a>
+
+                <!-- Structural Inspections -->
+                <a href="./Structural-Inspections/" target="_blank" class="card-live">
+                    <div class="card-illustration">
+                        <img src="./img/structural-inspections.png" alt="Structural Inspections — on-site inspection PWA with PDF reports">
+                    </div>
+                    <div class="badge-live">LIVE</div>
+                    <div class="card-content">
+                        <div class="card-title">STRUCTURAL INSPECTIONS</div>
+                        <div class="card-description">On-site PWA: mark up plans, capture photos, email the builder a signed PDF before leaving site</div>
+                        <div class="card-standards">AS 3600 | AS 4100 | AS 1720.1 | HOLD POINTS</div>
+                    </div>
+                </a>
+
+                <!-- Concrete Column Designer -->
+                <a href="./concrete-column/index.html" target="_blank" class="card-live">
+                    <div class="card-illustration">
+                        <img src="./img/concrete-column.png" alt="Concrete Column Designer — AS 3600 N-M interaction with 3D, charts and PDF">
+                    </div>
+                    <div class="badge-live">LIVE</div>
+                    <div class="card-content">
+                        <div class="card-title">CONCRETE COLUMN</div>
+                        <div class="card-description">RC column design with live 3D, N-M interaction diagram and full AS 3600 calc PDF</div>
+                        <div class="card-standards">AS 3600 | AS/NZS 1170.0 | RECT · SQUARE · CIRC</div>
+                    </div>
+                </a>
+
+                <!-- Pad Footing Designer -->
+                <a href="./pad-footings/index.html" target="_blank" class="card-live">
+                    <div class="card-illustration">
+                        <img src="./img/pad-footings.png" alt="Pad Footing Designer — AS 3600 isolated spread footing with bearing, flexure, shear & punching checks">
+                    </div>
+                    <div class="badge-live">LIVE</div>
+                    <div class="card-content">
+                        <div class="card-title">PAD FOOTING</div>
+                        <div class="card-description">Isolated spread footing design with live 3D, soil pressure diagram and full AS 3600 calc PDF</div>
+                        <div class="card-standards">AS 3600 | AS/NZS 1170.0 | BEARING · FLEXURE · PUNCHING</div>
+                    </div>
+                </a>
+
+                <!-- Blockwork Wall Designer -->
+                <a href="./blockwork-walls/index.html" target="_blank" class="card-live">
+                    <div class="card-illustration">
+                        <img src="./img/blockwork-walls.png" alt="Blockwork Wall Designer — AS 3700 reinforced & unreinforced masonry wall checks">
+                    </div>
+                    <div class="badge-live">LIVE</div>
+                    <div class="card-content">
+                        <div class="card-title">BLOCKWORK WALLS</div>
+                        <div class="card-description">Reinforced & unreinforced masonry wall design with vertical, lateral and shear capacity checks to AS 3700</div>
+                        <div class="card-standards">AS 3700 | AS/NZS 1170.0 | RC · URM · SHEAR</div>
+                    </div>
+                </a>
+
+                <!-- Retaining Wall Designer -->
+                <a href="./retaining-wall/index.html" target="_blank" class="card-live">
+                    <div class="card-illustration">
+                        <img src="./img/retaining-wall.png" alt="Retaining Wall Designer — AS 4678 cantilever wall stability + AS 3600 component design">
+                    </div>
+                    <div class="badge-live">LIVE</div>
+                    <div class="card-content">
+                        <div class="card-title">RETAINING WALL</div>
+                        <div class="card-description">Cantilever retaining wall design with Rankine earth pressure, sliding & overturning checks, bearing diagram and full reinforcement design</div>
+                        <div class="card-standards">AS 4678 | AS 3600 | AS/NZS 1170.0 | STABILITY · BEARING · FLEXURE</div>
+                    </div>
+                </a>
+            </div>
+
+            <!-- Grey rule -->
+            <div class="grey-rule"></div>
+
+            <!-- Coming Soon section -->
+            <div class="coming-section">
+                <div class="coming-label">COMING SOON</div>
+                <div class="coming-grid">
+                    <!-- Member Design -->
+                    <div class="card-coming">
+                        <div class="card-coming-illustration">
+                            <img src="./img/member-design.png" alt="Member Design">
+                        </div>
+                        <div class="badge-coming">
+                            <svg class="lock-icon" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">
+                                <path d="M8 1C5.2 1 3 3.2 3 6v2H2v8h12v-8h-1V6c0-2.8-2.2-5-5-5zm0 2c1.7 0 3 1.3 3 3v2H5V6c0-1.7 1.3-3 3-3z" fill="currentColor"/>
+                            </svg>
+                            COMING SOON
+                        </div>
+                        <div class="card-coming-title">MEMBER DESIGN</div>
+                    </div>
+
+                    <!-- Sketch to CAD -->
+                    <div class="card-coming">
+                        <div class="card-coming-illustration">
+                            <img src="./img/sketch-to-cad.png" alt="Sketch to CAD">
+                        </div>
+                        <div class="badge-coming">
+                            <svg class="lock-icon" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">
+                                <path d="M8 1C5.2 1 3 3.2 3 6v2H2v8h12v-8h-1V6c0-2.8-2.2-5-5-5zm0 2c1.7 0 3 1.3 3 3v2H5V6c0-1.7 1.3-3 3-3z" fill="currentColor"/>
+                            </svg>
+                            COMING SOON
+                        </div>
+                        <div class="card-coming-title">SKETCH TO CAD</div>
+                    </div>
+
+                    <!-- Base Plate Design -->
+                    <div class="card-coming">
+                        <div class="card-coming-illustration">
+                            <img src="./img/base-plate.png" alt="Base Plate Design">
+                        </div>
+                        <div class="badge-coming">
+                            <svg class="lock-icon" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">
+                                <path d="M8 1C5.2 1 3 3.2 3 6v2H2v8h12v-8h-1V6c0-2.8-2.2-5-5-5zm0 2c1.7 0 3 1.3 3 3v2H5V6c0-1.7 1.3-3 3-3z" fill="currentColor"/>
+                            </svg>
+                            COMING SOON
+                        </div>
+                        <div class="card-coming-title">BASE PLATE DESIGN</div>
+                    </div>
+
+                    <!-- Timber Connection -->
+                    <div class="card-coming">
+                        <div class="card-coming-illustration">
+                            <img src="./img/timber-connection.png" alt="Timber Connection">
+                        </div>
+                        <div class="badge-coming">
+                            <svg class="lock-icon" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">
+                                <path d="M8 1C5.2 1 3 3.2 3 6v2H2v8h12v-8h-1V6c0-2.8-2.2-5-5-5zm0 2c1.7 0 3 1.3 3 3v2H5V6c0-1.7 1.3-3 3-3z" fill="currentColor"/>
+                            </svg>
+                            COMING SOON
+                        </div>
+                        <div class="card-coming-title">TIMBER CONNECTION</div>
+                    </div>
+                </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Footer -->
+        <footer>
+            <div class="content-wrap" style="display:flex;justify-content:space-between;align-items:center;">
+                <div class="footer-left">© BLIGH TANNER PTY LTD · BRISBANE · INTERNAL USE ONLY</div>
+                <div class="footer-right">BUILDING STRUCTURES DIVISION</div>
+            </div>
+        </footer>
+    </div>
+
+    <!-- JavaScript -->
+    <script>
+        // Password gate logic
+        const PASSWORD = 'BlighTanner';
+        const SESSION_KEY = 'bt-tools-auth';
+        const passwordGate = document.getElementById('passwordGate');
+        const mainContent = document.getElementById('mainContent');
+        const passwordInput = document.getElementById('passwordInput');
+        const passwordBtn = document.getElementById('passwordBtn');
+
+        // Check if already authenticated
+        function checkAuth() {
+            const auth = sessionStorage.getItem(SESSION_KEY);
+            if (auth === 'true') {
+                revealContent();
+            }
+        }
+
+        // Handle password submission
+        function submitPassword() {
+            if (passwordInput.value === PASSWORD) {
+                sessionStorage.setItem(SESSION_KEY, 'true');
+                revealContent();
+            } else {
+                passwordInput.value = '';
+                passwordInput.style.borderColor = '#FF6B6B';
+                setTimeout(() => {
+                    passwordInput.style.borderColor = 'var(--rule)';
+                }, 300);
+            }
+        }
+
+        // Reveal main content
+        function revealContent() {
+            passwordGate.classList.add('hidden');
+            setTimeout(() => {
+                mainContent.classList.add('visible');
+            }, 100);
+        }
+
+        // Event listeners
+        passwordBtn.addEventListener('click', submitPassword);
+        passwordInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                submitPassword();
+            }
+        });
+
+        // Initialize
+        checkAuth();
+    </script>
+</body>
+</html>

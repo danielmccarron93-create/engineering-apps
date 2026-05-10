@@ -1,0 +1,82 @@
+# =============================================================
+# .gitignore for engineering-apps
+# =============================================================
+# Anything matching the patterns below will NOT be committed
+# to git, so it can never be accidentally pushed to a public
+# repo. Add new patterns here whenever you want to keep
+# something local-only.
+# =============================================================
+
+# --- macOS ---
+.DS_Store
+._*
+
+# --- Python cache ---
+__pycache__/
+*.pyc
+*.pyo
+
+# --- IDE / local tooling ---
+.claude/
+.vscode/
+.idea/
+*.iml
+
+# --- Backups & zips (store locally, never in repo) ---
+GITHUB BACKUP ZIP FILE/
+*.zip
+*.zip.backup
+*.bak
+
+# --- Logs ---
+*.log
+
+# --- Office / temp / OS junk ---
+~$*
+Thumbs.db
+.AppleDouble
+
+# =============================================================
+# Client / project work — keep all real project files OUT
+# =============================================================
+# These patterns make sure no actual BT client deliverables
+# (drawings, project files, model exports, photos) ever land
+# in this repo by accident, even if you forget.
+
+# Folders that hold project work (case-insensitive, anywhere
+# in the tree). Adjust naming convention as needed.
+**/Structural Drawings/
+**/Client Drawings/
+**/Project Files/
+**/Inspections/
+
+# Large engineering project file types
+*.btproject
+*.dwg
+*.dxf.bak
+*.rvt
+*.ifc
+*.skp
+*.3dm
+*.stp
+*.step
+*.iges
+*.igs
+
+# Site photos / scans that shouldn't be public
+**/Site Photos/
+**/Inspection Photos/
+
+# Scratch directories used by tools
+.btinspect_scratch/
+**/scratch/
+
+# =============================================================
+# Local config / secrets — never commit these
+# =============================================================
+.env
+.env.*
+*.secret
+*secrets*
+config.local.*
+api-keys.*
