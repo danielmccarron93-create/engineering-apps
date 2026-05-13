@@ -997,16 +997,21 @@ function v25UpdateInspector() {
   } else if (ent.type === 'leader2') {
     txt('Text (use | for new line)', 'txt', true);
   } else if (ent.type === 'mem2') {
-    sel('Type', 'memberType', ['ub','uc','wb','shs','rhs']);
+    sel('Type', 'memberType', ['ub','uc','wb','pfc','shs','rhs']);
     let secNames = ent.memberType === 'ub' ? Object.keys(UB_DB).filter(n => n.includes('UB'))
                  : ent.memberType === 'uc' ? Object.keys(UC_DB || {})
                  : ent.memberType === 'wb' ? Object.keys((typeof WB_DB === 'object') ? WB_DB : {})
+                 : ent.memberType === 'pfc' ? Object.keys((typeof PFC_DB === 'object') ? PFC_DB : {})
                  : ent.memberType === 'shs' ? Object.keys(SHS_DB)
                  : ent.memberType === 'rhs' ? Object.keys((typeof RHS_DB === 'object' ? RHS_DB : {}))
                  : [];
     if (ent.section && !secNames.includes(ent.section)) secNames = [ent.section, ...secNames];
     sel('Section', 'section', secNames);
     sel('Aspect', 'aspect', ['elev','sec']);
+    // PFC-only: open-face side. Affects cross-section drawing only.
+    if (ent.memberType === 'pfc') {
+      sel('Open face', 'openSide', ['-v','+v']);
+    }
     num('Length (mm)', 'length');
     num('Rotation°', 'rot', 0.5);
     // End cap kinds get an extra "mitre" option when a join is present so the

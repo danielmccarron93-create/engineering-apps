@@ -55,6 +55,9 @@ function getPaletteDef2D() {
         { id: 'v25-wb-2d', kind: 'member', label: 'WB',  sub: lastUsedSection.wb  || '700WB130',  icon: 'icon-ub', chord: 'M-W',
           onClick: () => v25PickAndSetMember('wb'),
           picker: { kind: 'wb' } },
+        { id: 'v25-pfc-2d', kind: 'member', label: 'PFC', sub: lastUsedSection.pfc || '200PFC 22.9', icon: 'icon-pfc', chord: 'M-P',
+          onClick: () => v25PickAndSetMember('pfc'),
+          picker: { kind: 'pfc' } },
         { id: 'v25-shs-2d', kind: 'member', label: 'SHS', sub: lastUsedSection.shs || '150x6', icon: 'icon-shs', chord: 'M-S',
           onClick: () => v25PickAndSetMember('shs'),
           picker: { kind: 'shs' } },
@@ -360,6 +363,11 @@ function v25TryHandleClick(blk, cu, cv, e) {
           endA: 'normal',
           endB: 'breakline',
         };
+        // PFC carries an open-face flag; default mirrors AS 1100 §3.12 (open
+        // face away from column / support).
+        if (v25State.memberType === 'pfc') {
+          props.openSide = v25State.openSide || '-v';
+        }
         if ((props.aspect === 'elev') && a.joinHostA) {
           props.endAJoin = { hostId: a.joinHostA };
           props.endA = 'mitre';

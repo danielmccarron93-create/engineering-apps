@@ -513,6 +513,117 @@ function drawMem2D(blk, ent, cs) {
       _drawCapWeld(weldA_ub, T, project);
       _drawCapWeld(weldB_ub, T, project);
     }
+  } else if (ent.memberType === 'pfc') {
+    // V26 — Parallel Flange Channel. Geometry per AS/NZS 3679.1 + AISC DCT
+    // Vol 1 Table 3.1-7(A). The cross-section is asymmetric (C-shape); we
+    // store `ent.openSide` ∈ { '+v', '-v' } so the user can flip the open face
+    // independently of the entity rotation. AS 1100 §3.12 default convention:
+    // open face points AWAY from the column / support — i.e. '-v' (toward the
+    // bottom of the local frame). Elevation draws as a symmetric rectangle
+    // with flange-tip inner lines, identical to a UB in side-view — the open
+    // face only shows in cross-section.
+    const dbS = (typeof PFC_DB === 'object') ? PFC_DB[ent.section] : null;
+    if (!dbS) return;
+    const d = dbS.d, bf = dbS.bf, tf = dbS.tf, tw = dbS.tw;
+    const hd = d / 2, hbf = bf / 2;
+    if (aspect === 'sec') {
+      // Cross-section C-shape. Local frame:
+      //   u axis = horizontal (along bf), v axis = vertical (along d).
+      //   Spine wall sits on the closed-face side, flanges on the open-face side.
+      // openSide '+v' means open face faces +v (looking at the page, open is up).
+      // openSide '-v' (default) means open face faces -v (open is down).
+      const openUp = ent.openSide === '+v';
+      // Define the closed (spine) face at vSpine, open tips at vOpen.
+      const vSpine = openUp ? -hd : +hd;
+      const vOpen  = openUp ? +hd : -hd;
+      // Step inward from each end toward the spine by tf (flange thickness).
+      const vFlangeInner = openUp ? vOpen - tf : vOpen + tf;
+      // Step from open tip inward toward spine by tw (web thickness) — the
+      // web of a PFC sits flush with the closed face on the -u side.
+      // Conventional drafting orientation: closed face on -u (left). User
+      // can rotate the entity ±90°/180° to point the spine any direction.
+      const uSpine = -hbf;        // outer edge of web (closed side)
+      const uWebInner = -hbf + tw; // inner edge of web
+      const uOpen = +hbf;         // open face (flange tips)
+      // Build the C-shape polygon traced clockwise starting at the
+      // open-side top flange tip.
+      const pts = [
+        [uOpen,     vOpen],
+        [uOpen,     vFlangeInner],
+        [uWebInner, vFlangeInner],
+        [uWebInner, -vFlangeInner],  // mirror across the u-axis
+        [uOpen,     -vFlangeInner],
+        [uOpen,     -vOpen],
+        [uSpine,    -vOpen],
+        [uSpine,    vOpen],
+      ];
+      fillPoly(pts);
+      ctx.lineWidth = cutLW;
+      ctx.beginPath();
+      pts.forEach((p, i) => {
+        const sp = project(p[0], p[1]);
+        if (i === 0) ctx.moveTo(sp.x, sp.y); else ctx.lineTo(sp.x, sp.y);
+      });
+      ctx.closePath(); ctx.stroke();
+      // Centrelines
+      ctx.strokeStyle = clCol; ctx.lineWidth = clLW; ctx.setLineDash(DASH.CL);
+      strokeLine(-hbf - 8, 0, hbf + 8, 0);
+      strokeLine(0, -hd - 8, 0, hd + 8);
+      ctx.setLineDash([]); ctx.strokeStyle = col;
+    } else {
+      // Elevation — outer rectangle + flange-tip inner lines + centreline.
+      // Mirrors the UB branch above; PFC in side-view is indistinguishable
+      // from a UB except for the absence of a visible web edge. We also honour
+      // auto-mitre joints + welded caps so PFCs participate in the same
+      // brace-meets-host pipeline as UB/SHS members.
+      const len = ent.length || 600;
+      const T = hd, B = -hd, ftBot = T - tf, fbTop = B + tf;
+      const trims = (typeof jointTrimsForMem2 === 'function')
+        ? jointTrimsForMem2(ent, blk.viewKey) : null;
+      const capA = trims && trims.a ? null
+        : ((typeof v25Mem2ResolveCap === 'function') ? v25Mem2ResolveCap(ent, 'A') : null);
+      const capB = trims && trims.b ? null
+        : ((typeof v25Mem2ResolveCap === 'function') ? v25Mem2ResolveCap(ent, 'B') : null);
+      const capX = (y, def, cap) => {
+        if (!cap) return def;
+        return cap.topLocalX + (T - y) / (2 * T) * (cap.botLocalX - cap.topLocalX);
+      };
+      const xA = (y) => trims && trims.a ? trims.a.uAtV(y) : capX(y, 0, capA);
+      const xB = (y) => trims && trims.b ? trims.b.uAtV(y) : capX(y, len, capB);
+      fillPoly([[xA(T), T], [xB(T), T], [xB(B), B], [xA(B), B]]);
+      ctx.lineWidth = cutLW;
+      strokeLine(xA(T),     T,     xB(T),     T);      // top flange (top edge)
+      strokeLine(xA(ftBot), ftBot, xB(ftBot), ftBot);  // top flange (under-edge)
+      strokeLine(xA(B),     B,     xB(B),     B);      // bottom flange (bottom edge)
+      strokeLine(xA(fbTop), fbTop, xB(fbTop), fbTop);  // bottom flange (top-edge)
+      if (capA) {
+        strokeLine(capA.topLocalX, T, capA.botLocalX, B);
+      } else if (trims && trims.a) {
+        strokeLine(xA(T), T, xA(B), B);
+      } else {
+        drawEndCap(0, T, B, ent.endA || 'normal', -1);
+      }
+      if (capB) {
+        strokeLine(capB.topLocalX, T, capB.botLocalX, B);
+      } else if (trims && trims.b) {
+        strokeLine(xB(T), T, xB(B), B);
+      } else {
+        drawEndCap(len, T, B, ent.endB || 'normal', +1);
+      }
+      const clMinPfc = Math.min(0, xA(0)) - 10;
+      const clMaxPfc = Math.max(len, xB(0)) + 10;
+      ctx.strokeStyle = clCol; ctx.lineWidth = clLW; ctx.setLineDash(DASH.CL);
+      strokeLine(clMinPfc, 0, clMaxPfc, 0);
+      ctx.setLineDash([]); ctx.strokeStyle = col;
+      const weldA_pfc = capA || (trims && trims.a
+        ? { topLocalX: xA(T), botLocalX: xA(B), weldSize: trims.a.weldSize || 6 }
+        : null);
+      const weldB_pfc = capB || (trims && trims.b
+        ? { topLocalX: xB(T), botLocalX: xB(B), weldSize: trims.b.weldSize || 6 }
+        : null);
+      _drawCapWeld(weldA_pfc, T, project);
+      _drawCapWeld(weldB_pfc, T, project);
+    }
   } else if (ent.memberType === 'shs' || ent.memberType === 'rhs' || ent.memberType === 'chs') {
     const dbS = (ent.memberType === 'shs' ? SHS_DB[ent.section]
               : ent.memberType === 'rhs' ? (typeof RHS_DB === 'object' ? RHS_DB[ent.section] : null)
@@ -824,6 +935,10 @@ function v25Mem2Thickness(ent) {
   if (ent.memberType === 'chs' && typeof CHS_DB === 'object') {
     const db = CHS_DB[ent.section]; return db && db.t ? db.t : 10;
   }
+  if (ent.memberType === 'pfc' && typeof PFC_DB === 'object') {
+    // AS 4100 Cl 9.7.3.10 "thinner part" — web is thinner than flange for PFCs.
+    const db = PFC_DB[ent.section]; return db && db.tw ? db.tw : 10;
+  }
   return 10;
 }
 
@@ -954,6 +1069,10 @@ function v25Mem2HalfDepth(ent) {
     const db = CHS_DB[ent.section];
     return db ? (db.d || db.D || 100) / 2 : 50;
   }
+  if (ent.memberType === 'pfc' && typeof PFC_DB === 'object') {
+    const db = PFC_DB[ent.section];
+    return db ? db.d / 2 : 50;
+  }
   return 50;
 }
 
@@ -978,6 +1097,11 @@ function v25Mem2Thickness(ent) {
   if (ent.memberType === 'chs' && typeof CHS_DB === 'object') {
     const db = CHS_DB[ent.section];
     return db ? db.t || 6 : 6;
+  }
+  if (ent.memberType === 'pfc' && typeof PFC_DB === 'object') {
+    // PFC tw (web) is thinner than tf (flange); use the governing thinner part.
+    const db = PFC_DB[ent.section];
+    return db ? Math.min(db.tw || 6, db.tf || 6) : 6;
   }
   return 6;
 }

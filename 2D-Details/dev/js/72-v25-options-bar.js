@@ -54,6 +54,7 @@ function v25UpdateOptionsBar() {
               : mt === 'shs' ? SHS_DB
               : mt === 'rhs' ? (typeof RHS_DB === 'object' ? RHS_DB : {})
               : mt === 'chs' ? (typeof CHS_DB === 'object' ? CHS_DB : {})
+              : mt === 'pfc' ? (typeof PFC_DB === 'object' ? PFC_DB : {})
               : {};
     let sectionNames = Object.keys(dbS || {});
     if (mt === 'ub') sectionNames = sectionNames.filter(n => n.includes('UB'));
@@ -75,6 +76,19 @@ function v25UpdateOptionsBar() {
       `<option value="sec"${curAsp === 'sec' ? ' selected' : ''}>Cross-section</option>` +
       `</select>`
     );
+    // PFC-specific: open-face side. Only shown in cross-section aspect; in
+    // elevation the C-shape collapses to the same outline as a UB so the
+    // control would have no visible effect. Default '-v' matches AS 1100
+    // §3.12 (open face away from column).
+    if (mt === 'pfc' && curAsp === 'sec') {
+      const openSide = v25State.openSide || '-v';
+      html += fld('Open face',
+        `<select id="v25o-openside">` +
+        `<option value="-v"${openSide === '-v' ? ' selected' : ''}>−v (toward bottom)</option>` +
+        `<option value="+v"${openSide === '+v' ? ' selected' : ''}>+v (toward top)</option>` +
+        `</select>`
+      );
+    }
   } else if (tool === 'v25-leader') {
     html += `<strong>Leader</strong>`;
     html += fld('Default text', `<input id="v25o-leadertxt" value="${(v25Last.leaderText || 'CALLOUT').replace(/"/g, '&quot;')}" style="width:200px"/>`);
@@ -109,7 +123,11 @@ function v25UpdateOptionsBar() {
     if (typeof populateTilePalette === 'function') populateTilePalette();
     if (typeof highlightActiveTile === 'function') highlightActiveTile();
   });
-  wire('v25o-aspect', e => { v25State.aspect = e.target.value; });
+  wire('v25o-aspect', e => {
+    v25State.aspect = e.target.value;
+    v25UpdateOptionsBar();
+  });
+  wire('v25o-openside', e => { v25State.openSide = e.target.value; });
   const pickBtn = bar.querySelector('#v25o-sect-pick');
   if (pickBtn) pickBtn.addEventListener('click', (ev) => {
     ev.stopPropagation();

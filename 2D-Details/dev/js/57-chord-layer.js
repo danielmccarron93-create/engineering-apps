@@ -17,7 +17,7 @@ const CHORD_BINDINGS = {
       { key: 'S', label: 'SHS',                    run: () => selectMemberBySection('shs', lastUsedSection.shs || '150x6') },
       { key: 'B', label: 'Bolt',                   run: () => selectMemberByBolt(lastUsedSection.bolt || 'M20') },
       { key: 'G', label: 'Bolt group',             run: () => document.getElementById('boltGroupDialog').classList.add('visible') },
-      { key: 'P', label: 'PFC — coming V22',       soon: true },
+      { key: 'P', label: 'PFC',                    run: () => selectMemberBySection('pfc', lastUsedSection.pfc || '200PFC 22.9') },
       { key: 'L', label: 'Plate (polygon)',        run: () => { setTool('draw-plate'); populateTilePalette(); } },
       { key: 'K', label: 'Cap plate connection',   run: () => openConnectionDialog('capPlate') },
     ],
