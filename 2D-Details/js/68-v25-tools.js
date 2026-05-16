@@ -418,7 +418,9 @@ function drawMem2D(blk, ent, cs) {
     else strokeLine(xLocal, yFrom, xLocal, yTo);
   };
 
-  if (ent.memberType === 'ub' || ent.memberType === 'uc') {
+  if (ent.memberType === 'ub' || ent.memberType === 'uc' || ent.memberType === 'wb') {
+    // UB_DB has UC + WB merged in at module load, so the trailing fallback
+    // resolves WB sections too.
     const dbS = (ent.memberType === 'ub' ? UB_DB[ent.section] : UC_DB[ent.section]) || UB_DB[ent.section];
     if (!dbS) return;
     const d = dbS.d, bf = dbS.bf, tf = dbS.tf, tw = dbS.tw;
@@ -448,33 +450,179 @@ function drawMem2D(blk, ent, cs) {
       // + bottom + 2 ends) + chain-dot centreline. Mirrors 3D drawUB().
       const len = ent.length || 600;
       const T = hd, B = -hd, ftBot = T - tf, fbTop = B + tf;
-      // Auto-mitre caps (joined ends): geometry resolved against host outline.
-      const capA = (typeof v25Mem2ResolveCap === 'function') ? v25Mem2ResolveCap(ent, 'A') : null;
-      const capB = (typeof v25Mem2ResolveCap === 'function') ? v25Mem2ResolveCap(ent, 'B') : null;
+      // V14-J — endpoint-to-endpoint joint trim (default mitre, or priority
+      // butt-cut when the user has picked one via the joint menu) takes
+      // precedence over the legacy single-host cap.
+      const trims = (typeof jointTrimsForMem2 === 'function')
+        ? jointTrimsForMem2(ent, blk.viewKey) : null;
+      const capA = trims && trims.a ? null
+        : ((typeof v25Mem2ResolveCap === 'function') ? v25Mem2ResolveCap(ent, 'A') : null);
+      const capB = trims && trims.b ? null
+        : ((typeof v25Mem2ResolveCap === 'function') ? v25Mem2ResolveCap(ent, 'B') : null);
       const capX = (y, def, cap) => {
         if (!cap) return def;
         return cap.topLocalX + (T - y) / (2 * T) * (cap.botLocalX - cap.topLocalX);
       };
-      const xA = (y) => capX(y, 0, capA);
-      const xB = (y) => capX(y, len, capB);
-      // Fill — clipped at both caps when present.
+      // Trim formula uAtV(v) describes a CUT LINE through M's body. We do
+      // NOT clamp to [0, len] — for an angled brace butting against a flat
+      // outer face, one corner of the brace must EXTEND past the original
+      // end face so both flange edges land flush on the host.
+      const xA = (y) => trims && trims.a ? trims.a.uAtV(y) : capX(y, 0, capA);
+      const xB = (y) => trims && trims.b ? trims.b.uAtV(y) : capX(y, len, capB);
+      // Fill polygon — straight cap on each end (the cut is linear, no kink).
+      const fillPts = [];
+      fillPts.push([xA(T), T]);
+      fillPts.push([xB(T), T]);
+      fillPts.push([xB(B), B]);
+      fillPts.push([xA(B), B]);
+      fillPoly(fillPts);
+      ctx.lineWidth = cutLW;
+      strokeLine(xA(T),     T,     xB(T),     T);      // top flange (top edge)
+      strokeLine(xA(ftBot), ftBot, xB(ftBot), ftBot);  // top flange (under-edge)
+      strokeLine(xA(B),     B,     xB(B),     B);      // bottom flange (bottom edge)
+      strokeLine(xA(fbTop), fbTop, xB(fbTop), fbTop);  // bottom flange (top-edge)
+      if (capA) {
+        strokeLine(capA.topLocalX, T, capA.botLocalX, B);
+      } else if (trims && trims.a) {
+        strokeLine(xA(T), T, xA(B), B);
+      } else {
+        drawEndCap(0, T, B, ent.endA || 'normal', -1);
+      }
+      if (capB) {
+        strokeLine(capB.topLocalX, T, capB.botLocalX, B);
+      } else if (trims && trims.b) {
+        strokeLine(xB(T), T, xB(B), B);
+      } else {
+        drawEndCap(len, T, B, ent.endB || 'normal', +1);
+      }
+      // Centreline — extend to cover any flange overhang past the original
+      // end face when the auto-joint trim extended the cut.
+      const clMinUB = Math.min(0, xA(0)) - 10;
+      const clMaxUB = Math.max(len, xB(0)) + 10;
+      ctx.strokeStyle = clCol; ctx.lineWidth = clLW; ctx.setLineDash(DASH.CL);
+      strokeLine(clMinUB, 0, clMaxUB, 0);
+      ctx.setLineDash([]); ctx.strokeStyle = col;
+      // Fillet weld hatching along each mitre cap. Auto-joint trims need a
+      // synthesised cap so the hatch follows the cut line — see SHS branch.
+      const weldA_ub = capA || (trims && trims.a
+        ? { topLocalX: xA(T), botLocalX: xA(B), weldSize: trims.a.weldSize || 6 }
+        : null);
+      const weldB_ub = capB || (trims && trims.b
+        ? { topLocalX: xB(T), botLocalX: xB(B), weldSize: trims.b.weldSize || 6 }
+        : null);
+      _drawCapWeld(weldA_ub, T, project);
+      _drawCapWeld(weldB_ub, T, project);
+    }
+  } else if (ent.memberType === 'pfc') {
+    // V26 — Parallel Flange Channel. Geometry per AS/NZS 3679.1 + AISC DCT
+    // Vol 1 Table 3.1-7(A). The cross-section is asymmetric (C-shape); we
+    // store `ent.openSide` ∈ { '+v', '-v' } so the user can flip the open face
+    // independently of the entity rotation. AS 1100 §3.12 default convention:
+    // open face points AWAY from the column / support — i.e. '-v' (toward the
+    // bottom of the local frame). Elevation draws as a symmetric rectangle
+    // with flange-tip inner lines, identical to a UB in side-view — the open
+    // face only shows in cross-section.
+    const dbS = (typeof PFC_DB === 'object') ? PFC_DB[ent.section] : null;
+    if (!dbS) return;
+    const d = dbS.d, bf = dbS.bf, tf = dbS.tf, tw = dbS.tw;
+    const hd = d / 2, hbf = bf / 2;
+    if (aspect === 'sec') {
+      // Cross-section C-shape. Local frame:
+      //   u axis = horizontal (along bf), v axis = vertical (along d).
+      //   Spine wall sits on the closed-face side, flanges on the open-face side.
+      // openSide '+v' means open face faces +v (looking at the page, open is up).
+      // openSide '-v' (default) means open face faces -v (open is down).
+      const openUp = ent.openSide === '+v';
+      // Define the closed (spine) face at vSpine, open tips at vOpen.
+      const vSpine = openUp ? -hd : +hd;
+      const vOpen  = openUp ? +hd : -hd;
+      // Step inward from each end toward the spine by tf (flange thickness).
+      const vFlangeInner = openUp ? vOpen - tf : vOpen + tf;
+      // Step from open tip inward toward spine by tw (web thickness) — the
+      // web of a PFC sits flush with the closed face on the -u side.
+      // Conventional drafting orientation: closed face on -u (left). User
+      // can rotate the entity ±90°/180° to point the spine any direction.
+      const uSpine = -hbf;        // outer edge of web (closed side)
+      const uWebInner = -hbf + tw; // inner edge of web
+      const uOpen = +hbf;         // open face (flange tips)
+      // Build the C-shape polygon traced clockwise starting at the
+      // open-side top flange tip.
+      const pts = [
+        [uOpen,     vOpen],
+        [uOpen,     vFlangeInner],
+        [uWebInner, vFlangeInner],
+        [uWebInner, -vFlangeInner],  // mirror across the u-axis
+        [uOpen,     -vFlangeInner],
+        [uOpen,     -vOpen],
+        [uSpine,    -vOpen],
+        [uSpine,    vOpen],
+      ];
+      fillPoly(pts);
+      ctx.lineWidth = cutLW;
+      ctx.beginPath();
+      pts.forEach((p, i) => {
+        const sp = project(p[0], p[1]);
+        if (i === 0) ctx.moveTo(sp.x, sp.y); else ctx.lineTo(sp.x, sp.y);
+      });
+      ctx.closePath(); ctx.stroke();
+      // Centrelines
+      ctx.strokeStyle = clCol; ctx.lineWidth = clLW; ctx.setLineDash(DASH.CL);
+      strokeLine(-hbf - 8, 0, hbf + 8, 0);
+      strokeLine(0, -hd - 8, 0, hd + 8);
+      ctx.setLineDash([]); ctx.strokeStyle = col;
+    } else {
+      // Elevation — outer rectangle + flange-tip inner lines + centreline.
+      // Mirrors the UB branch above; PFC in side-view is indistinguishable
+      // from a UB except for the absence of a visible web edge. We also honour
+      // auto-mitre joints + welded caps so PFCs participate in the same
+      // brace-meets-host pipeline as UB/SHS members.
+      const len = ent.length || 600;
+      const T = hd, B = -hd, ftBot = T - tf, fbTop = B + tf;
+      const trims = (typeof jointTrimsForMem2 === 'function')
+        ? jointTrimsForMem2(ent, blk.viewKey) : null;
+      const capA = trims && trims.a ? null
+        : ((typeof v25Mem2ResolveCap === 'function') ? v25Mem2ResolveCap(ent, 'A') : null);
+      const capB = trims && trims.b ? null
+        : ((typeof v25Mem2ResolveCap === 'function') ? v25Mem2ResolveCap(ent, 'B') : null);
+      const capX = (y, def, cap) => {
+        if (!cap) return def;
+        return cap.topLocalX + (T - y) / (2 * T) * (cap.botLocalX - cap.topLocalX);
+      };
+      const xA = (y) => trims && trims.a ? trims.a.uAtV(y) : capX(y, 0, capA);
+      const xB = (y) => trims && trims.b ? trims.b.uAtV(y) : capX(y, len, capB);
       fillPoly([[xA(T), T], [xB(T), T], [xB(B), B], [xA(B), B]]);
       ctx.lineWidth = cutLW;
       strokeLine(xA(T),     T,     xB(T),     T);      // top flange (top edge)
       strokeLine(xA(ftBot), ftBot, xB(ftBot), ftBot);  // top flange (under-edge)
       strokeLine(xA(B),     B,     xB(B),     B);      // bottom flange (bottom edge)
       strokeLine(xA(fbTop), fbTop, xB(fbTop), fbTop);  // bottom flange (top-edge)
-      if (capA) strokeLine(capA.topLocalX, T, capA.botLocalX, B);
-      else      drawEndCap(0,   T, B, ent.endA || 'normal', -1);
-      if (capB) strokeLine(capB.topLocalX, T, capB.botLocalX, B);
-      else      drawEndCap(len, T, B, ent.endB || 'normal', +1);
-      // Centreline along the member length.
+      if (capA) {
+        strokeLine(capA.topLocalX, T, capA.botLocalX, B);
+      } else if (trims && trims.a) {
+        strokeLine(xA(T), T, xA(B), B);
+      } else {
+        drawEndCap(0, T, B, ent.endA || 'normal', -1);
+      }
+      if (capB) {
+        strokeLine(capB.topLocalX, T, capB.botLocalX, B);
+      } else if (trims && trims.b) {
+        strokeLine(xB(T), T, xB(B), B);
+      } else {
+        drawEndCap(len, T, B, ent.endB || 'normal', +1);
+      }
+      const clMinPfc = Math.min(0, xA(0)) - 10;
+      const clMaxPfc = Math.max(len, xB(0)) + 10;
       ctx.strokeStyle = clCol; ctx.lineWidth = clLW; ctx.setLineDash(DASH.CL);
-      strokeLine(-10, 0, len + 10, 0);
+      strokeLine(clMinPfc, 0, clMaxPfc, 0);
       ctx.setLineDash([]); ctx.strokeStyle = col;
-      // Fillet weld hatching along each mitre cap.
-      _drawCapWeld(capA, T, project);
-      _drawCapWeld(capB, T, project);
+      const weldA_pfc = capA || (trims && trims.a
+        ? { topLocalX: xA(T), botLocalX: xA(B), weldSize: trims.a.weldSize || 6 }
+        : null);
+      const weldB_pfc = capB || (trims && trims.b
+        ? { topLocalX: xB(T), botLocalX: xB(B), weldSize: trims.b.weldSize || 6 }
+        : null);
+      _drawCapWeld(weldA_pfc, T, project);
+      _drawCapWeld(weldB_pfc, T, project);
     }
   } else if (ent.memberType === 'shs' || ent.memberType === 'rhs' || ent.memberType === 'chs') {
     const dbS = (ent.memberType === 'shs' ? SHS_DB[ent.section]
@@ -504,40 +652,81 @@ function drawMem2D(blk, ent, cs) {
     } else {
       // Elevation — outer rectangle (solid) + two dashed inner walls + centreline.
       const len = ent.length || 500;
-      // Auto-mitre caps (joined ends): geometry resolved against host outline.
-      const capA = (typeof v25Mem2ResolveCap === 'function') ? v25Mem2ResolveCap(ent, 'A') : null;
-      const capB = (typeof v25Mem2ResolveCap === 'function') ? v25Mem2ResolveCap(ent, 'B') : null;
+      // V14-J — joint trim (priority + mitre overrides) takes precedence over
+      // the legacy single-host cap when both apply. Falls back to the legacy
+      // cap system when no joint is detected (e.g. brace explicitly joined to
+      // a host but not part of a multi-member apex).
+      const trims = (typeof jointTrimsForMem2 === 'function')
+        ? jointTrimsForMem2(ent, blk.viewKey) : null;
+      const capA = trims && trims.a ? null
+        : ((typeof v25Mem2ResolveCap === 'function') ? v25Mem2ResolveCap(ent, 'A') : null);
+      const capB = trims && trims.b ? null
+        : ((typeof v25Mem2ResolveCap === 'function') ? v25Mem2ResolveCap(ent, 'B') : null);
       // Helper: x at a given local-y on a cap line. cap connects (topLocalX, +hd)
       // → (botLocalX, -hd). Returns the default if no cap.
       const capX = (y, def, cap) => {
         if (!cap) return def;
         return cap.topLocalX + (hB - y) / (2 * hB) * (cap.botLocalX - cap.topLocalX);
       };
-      const xA = (y) => capX(y, 0, capA);
-      const xB = (y) => capX(y, len, capB);
-      // Fill polygon — clipped at both caps when they exist.
-      fillPoly([[xA(hB), hB], [xB(hB), hB], [xB(-hB), -hB], [xA(-hB), -hB]]);
+      // Trim formula uAtV(v) describes a cut LINE through M's body. We do NOT
+      // clamp to [0, len] — for an angled brace butting against a flat outer
+      // face, one corner of the brace must EXTEND past the original end face
+      // so both edges land flush on the host. The legacy capA/capB pathway
+      // already worked this way; the auto-joint pathway now matches.
+      const xA = (y) => trims && trims.a ? trims.a.uAtV(y) : capX(y, 0, capA);
+      const xB = (y) => trims && trims.b ? trims.b.uAtV(y) : capX(y, len, capB);
+      // Fill polygon — straight cap on each end (no kink; the cut is linear,
+      // so a midpoint vertex would just be collinear noise).
+      const fillPts = [];
+      fillPts.push([xA(hB), hB]);
+      fillPts.push([xB(hB), hB]);
+      fillPts.push([xB(-hB), -hB]);
+      fillPts.push([xA(-hB), -hB]);
+      fillPoly(fillPts);
       ctx.lineWidth = cutLW;
-      strokeLine(xA(hB),  hB,  xB(hB),  hB);   // top outer (clipped)
-      strokeLine(xA(-hB), -hB, xB(-hB), -hB);  // bottom outer (clipped)
-      // End caps: sloped mitre when joined, else original endX kind.
-      if (capA) strokeLine(capA.topLocalX, hB, capA.botLocalX, -hB);
-      else      drawEndCap(0,   hB, -hB, ent.endA || 'normal', -1);
-      if (capB) strokeLine(capB.topLocalX, hB, capB.botLocalX, -hB);
-      else      drawEndCap(len, hB, -hB, ent.endB || 'normal', +1);
-      // Inner walls (hidden lines), clipped to caps.
+      strokeLine(xA(hB),  hB,  xB(hB),  hB);   // top outer
+      strokeLine(xA(-hB), -hB, xB(-hB), -hB);  // bottom outer
+      // End caps: straight sloped line for any joint cut, otherwise the
+      // original endA/endB end-cap glyph.
+      if (capA) {
+        strokeLine(capA.topLocalX, hB, capA.botLocalX, -hB);
+      } else if (trims && trims.a) {
+        strokeLine(xA(hB), hB, xA(-hB), -hB);
+      } else {
+        drawEndCap(0, hB, -hB, ent.endA || 'normal', -1);
+      }
+      if (capB) {
+        strokeLine(capB.topLocalX, hB, capB.botLocalX, -hB);
+      } else if (trims && trims.b) {
+        strokeLine(xB(hB), hB, xB(-hB), -hB);
+      } else {
+        drawEndCap(len, hB, -hB, ent.endB || 'normal', +1);
+      }
+      // Inner walls (hidden lines) — also slope to follow the outer cut.
       ctx.strokeStyle = hidCol; ctx.lineWidth = hidLW; ctx.setLineDash(DASH.HIDDEN);
       strokeLine(xA( hI),  hI,  xB( hI),  hI);
       strokeLine(xA(-hI), -hI, xB(-hI), -hI);
       ctx.setLineDash([]); ctx.strokeStyle = col;
-      // Centreline — extends to the entity's logical endpoint (truss workflow:
-      // logical endpoints sit on the host centreline so trusses snap together).
+      // Centreline — extend to cover the (possibly extended) body so it meets
+      // the host centreline cleanly on both ends.
+      const clMin = Math.min(0, xA(0)) - 8;
+      const clMax = Math.max(len, xB(0)) + 8;
       ctx.strokeStyle = clCol; ctx.lineWidth = clLW; ctx.setLineDash(DASH.CL);
-      strokeLine(-8, 0, len + 8, 0);
+      strokeLine(clMin, 0, clMax, 0);
       ctx.setLineDash([]); ctx.strokeStyle = col;
       // Fillet weld hatching along each mitre cap (AS 1101.3 / AS 4100 min size).
-      _drawCapWeld(capA, hB, project);
-      _drawCapWeld(capB, hB, project);
+      // When the auto-joint pipeline produced a trim, the cap line lives on the
+      // trim itself — synthesise a cap-shaped object so _drawCapWeld can hatch
+      // along it without caring whether the cut came from the legacy explicit
+      // join (capA/capB) or the auto-joint detector (trims.a/trims.b).
+      const weldA = capA || (trims && trims.a
+        ? { topLocalX: xA(hB), botLocalX: xA(-hB), weldSize: trims.a.weldSize || 6 }
+        : null);
+      const weldB = capB || (trims && trims.b
+        ? { topLocalX: xB(hB), botLocalX: xB(-hB), weldSize: trims.b.weldSize || 6 }
+        : null);
+      _drawCapWeld(weldA, hB, project);
+      _drawCapWeld(weldB, hB, project);
     }
   }
   } finally { ctx.globalAlpha = _opacityWas; }
@@ -733,8 +922,10 @@ function v25Mem2Faces(ent) {
 // sections, wall for hollow sections; defaults to 10 mm if unknown.
 function v25Mem2Thickness(ent) {
   if (!ent) return 10;
-  if (ent.memberType === 'ub' || ent.memberType === 'uc') {
-    const db = ent.memberType === 'ub' ? UB_DB[ent.section] : UC_DB[ent.section];
+  if (ent.memberType === 'ub' || ent.memberType === 'uc' || ent.memberType === 'wb') {
+    const db = ent.memberType === 'ub' ? UB_DB[ent.section]
+             : ent.memberType === 'wb' ? (typeof WB_DB === 'object' ? WB_DB[ent.section] : UB_DB[ent.section])
+             : UC_DB[ent.section];
     return db && db.tw ? db.tw : 10;
   }
   if (ent.memberType === 'shs') { const db = SHS_DB[ent.section]; return db && db.t ? db.t : 10; }
@@ -743,6 +934,10 @@ function v25Mem2Thickness(ent) {
   }
   if (ent.memberType === 'chs' && typeof CHS_DB === 'object') {
     const db = CHS_DB[ent.section]; return db && db.t ? db.t : 10;
+  }
+  if (ent.memberType === 'pfc' && typeof PFC_DB === 'object') {
+    // AS 4100 Cl 9.7.3.10 "thinner part" — web is thinner than flange for PFCs.
+    const db = PFC_DB[ent.section]; return db && db.tw ? db.tw : 10;
   }
   return 10;
 }
@@ -756,13 +951,23 @@ function v25Mem2Thickness(ent) {
 function computeV25WeldInterfaces(viewKey) {
   const out = [];
   if (!viewKey) return out;
-  const arr = entities2D[viewKey] || [];
-  const mems = arr.filter(e => e && e.type === 'mem2' && e.aspect !== 'sec' && (e.length || 0) >= 1);
-  if (mems.length < 2) return out;
   const tol = 2;          // mm — face proximity (matches snap catch zone)
   const minOverlap = 1;   // mm — minimum contact length
-  const allFaces = [];
-  for (const m of mems) for (const f of v25Mem2Faces(m)) { f._ent = m; allFaces.push(f); }
+  // Collect every weld-relevant face in this view. The plate module
+  // (76-v25-plate.js) exposes v25CollectWeldFaces which unifies mem2 outer
+  // faces and plate2 outer edges (so plate↔mem2 / plate↔plate auto-welds
+  // appear via the same pair-scan as mem2↔mem2). Fall back to mem2-only
+  // collection if the plate module isn't loaded yet.
+  let allFaces;
+  if (typeof v25CollectWeldFaces === 'function') {
+    allFaces = v25CollectWeldFaces(viewKey);
+  } else {
+    const arr = entities2D[viewKey] || [];
+    const mems = arr.filter(e => e && e.type === 'mem2' && e.aspect !== 'sec' && (e.length || 0) >= 1);
+    allFaces = [];
+    for (const m of mems) for (const f of v25Mem2Faces(m)) { f._ent = m; allFaces.push(f); }
+  }
+  if (allFaces.length < 2) return out;
   const bestPerKey = {};
   for (let i = 0; i < allFaces.length; i++) {
     for (let j = i + 1; j < allFaces.length; j++) {
@@ -794,15 +999,28 @@ function computeV25WeldInterfaces(viewKey) {
         u2: fA.u1 + aUx * tMax, v2: fA.v1 + aUy * tMax,
         hatchSide: 1,
       };
-      const tThin = Math.min(v25Mem2Thickness(fA._ent), v25Mem2Thickness(fB._ent));
+      // Thinner-part thickness for AS 4100 Cl. 9.7.3.10 weld sizing. Plate-
+      // aware: plate2 reports ent.thk, mem2 reports its web/wall thickness.
+      const thinPart = (ent) => {
+        if (ent && ent.type === 'plate2') return ent.thk || 10;
+        return (typeof v25Mem2Thickness === 'function') ? v25Mem2Thickness(ent) : 10;
+      };
+      const tThin = Math.min(thinPart(fA._ent), thinPart(fB._ent));
       const autoSize = autoWeldMinSize(tThin);
       const override = weldOverrides[key] || {};
       // showWeldPopup() reads ifc.objA.type / .section to render the
       // "X ↔ Y" footer label. The 3D pipeline supplies real obj{type,section}
-      // pairs; we mirror that shape with mem2's memberType so the same
-      // popup works for both worlds without any changes to its code.
-      const objA = { type: fA._ent.memberType || 'mem', section: fA._ent.section };
-      const objB = { type: fB._ent.memberType || 'mem', section: fB._ent.section };
+      // pairs; we mirror that shape for mem2 with memberType + section, and
+      // for plate2 with 'plate' + a "PL X" pseudo-section so the popup label
+      // reads naturally for plate-vs-X welds without any popup changes.
+      const labelOf = (ent) => {
+        if (ent && ent.type === 'plate2') {
+          return { type: 'plate', section: 'PL ' + (ent.thk || 10) };
+        }
+        return { type: ent.memberType || 'mem', section: ent.section };
+      };
+      const objA = labelOf(fA._ent);
+      const objB = labelOf(fB._ent);
       const candidate = {
         key, entA: fA._ent, entB: fB._ent, objA, objB,
         seg, _overlap: overlap,
@@ -856,8 +1074,10 @@ function v25HitTestWeld(blk, px, py) {
 
 // Half-depth helper used by hit-test/bounds and end-handle math.
 function v25Mem2HalfDepth(ent) {
-  if (ent.memberType === 'ub' || ent.memberType === 'uc') {
-    const db = ent.memberType === 'ub' ? UB_DB[ent.section] : UC_DB[ent.section];
+  if (ent.memberType === 'ub' || ent.memberType === 'uc' || ent.memberType === 'wb') {
+    const db = ent.memberType === 'ub' ? UB_DB[ent.section]
+             : ent.memberType === 'wb' ? (typeof WB_DB === 'object' ? WB_DB[ent.section] : UB_DB[ent.section])
+             : UC_DB[ent.section];
     return db ? db.d / 2 : 50;
   }
   if (ent.memberType === 'shs') {
@@ -872,6 +1092,10 @@ function v25Mem2HalfDepth(ent) {
     const db = CHS_DB[ent.section];
     return db ? (db.d || db.D || 100) / 2 : 50;
   }
+  if (ent.memberType === 'pfc' && typeof PFC_DB === 'object') {
+    const db = PFC_DB[ent.section];
+    return db ? db.d / 2 : 50;
+  }
   return 50;
 }
 
@@ -879,8 +1103,10 @@ function v25Mem2HalfDepth(ent) {
 // Returns the thinner part for joined-end weld defaults.
 function v25Mem2Thickness(ent) {
   if (!ent) return 6;
-  if (ent.memberType === 'ub' || ent.memberType === 'uc') {
-    const db = ent.memberType === 'ub' ? UB_DB[ent.section] : UC_DB[ent.section];
+  if (ent.memberType === 'ub' || ent.memberType === 'uc' || ent.memberType === 'wb') {
+    const db = ent.memberType === 'ub' ? UB_DB[ent.section]
+             : ent.memberType === 'wb' ? (typeof WB_DB === 'object' ? WB_DB[ent.section] : UB_DB[ent.section])
+             : UC_DB[ent.section];
     return db ? db.tf || db.tw || 6 : 6;
   }
   if (ent.memberType === 'shs') {
@@ -894,6 +1120,11 @@ function v25Mem2Thickness(ent) {
   if (ent.memberType === 'chs' && typeof CHS_DB === 'object') {
     const db = CHS_DB[ent.section];
     return db ? db.t || 6 : 6;
+  }
+  if (ent.memberType === 'pfc' && typeof PFC_DB === 'object') {
+    // PFC tw (web) is thinner than tf (flange); use the governing thinner part.
+    const db = PFC_DB[ent.section];
+    return db ? Math.min(db.tw || 6, db.tf || 6) : 6;
   }
   return 6;
 }

@@ -32,7 +32,7 @@ function getPaletteDef() {
         title: 'Sections',
         tiles: [
           // Order = user's frequency-of-use, most → least:
-          // UB · PFC · SHS · RHS · CHS · EA · UA · UC (WB not yet built).
+          // UB · PFC · SHS · RHS · CHS · EA · UA · UC · WB.
           { id: 'ub',  kind: 'member', label: 'UB',  sub: lastUsedSection.ub  || '360UB 50.7', icon: 'icon-ub',  chord: 'M-U',
             onClick: () => selectMemberBySection('ub',  lastUsedSection.ub  || '360UB 50.7'),
             picker: { kind: 'ub'  } },
@@ -57,6 +57,9 @@ function getPaletteDef() {
           { id: 'uc',  kind: 'member', label: 'UC',  sub: lastUsedSection.uc  || '250UC 72.9', icon: 'icon-uc',  chord: 'M-C',
             onClick: () => selectMemberBySection('uc',  lastUsedSection.uc  || '250UC 72.9'),
             picker: { kind: 'uc'  } },
+          { id: 'wb',  kind: 'member', label: 'WB',  sub: lastUsedSection.wb  || '700WB130',  icon: 'icon-ub',  chord: 'M-W',
+            onClick: () => selectMemberBySection('wb',  lastUsedSection.wb  || '700WB130'),
+            picker: { kind: 'wb'  } },
         ],
       },
       {
@@ -193,8 +196,13 @@ function getPaletteDef() {
 
 // Helpers for tiles that set up a member-draw. Keeps behaviour identical to
 // the old library click handlers but routes through the tile system.
+//
+// Welded Beams render via the same I-section pipeline as UB/UC, so the
+// drawMember.type is normalised to 'ub' for placement / drawUB lookups while
+// lastUsedSection.wb still tracks the WB-specific picker state.
 function selectMemberBySection(type, section) {
-  drawMember = { type, section };
+  const placementType = (type === 'wb') ? 'ub' : type;
+  drawMember = { type: placementType, section };
   drawStart = null; drawPreviewEnd = null;
   tool = 'draw-member';
   clickPts = []; polyPts = []; placing = null;
@@ -338,6 +346,9 @@ function highlightActiveTile() {
   let id = null;
   if (tool === 'draw-member' && drawMember) {
     if (drawMember.type === 'bolt') id = 'bolt';
+    // WB members carry type:'ub' (shared I-section pipeline) so we sniff the
+    // section name to highlight the WB tile rather than UB.
+    else if (drawMember.type === 'ub' && drawMember.section && drawMember.section.includes('WB')) id = 'wb';
     else if (drawMember.type) id = drawMember.type;
   } else if (tool === 'line') id = 't-line';
   else if (tool === 'rect') id = 't-rect';

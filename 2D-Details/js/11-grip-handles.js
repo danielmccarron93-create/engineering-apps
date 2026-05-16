@@ -64,11 +64,29 @@ function getGrips(obj, block) {
       // Axis projects visibly into this view — drag either end to extend.
       grips.push({ type: 'end-plus',  u: epUV.u, v: epUV.v, cursor: 'crosshair', sign: +1 });
       grips.push({ type: 'end-minus', u: enUV.u, v: enUV.v, cursor: 'crosshair', sign: -1 });
+
+      // V24.A5 — Rotation ball, mirroring the V25 mem2 pitch handle. Sits
+      // perpendicular to the projected member axis at its midpoint. Drag
+      // pitches the member in the view plane (about world depth axis); snaps
+      // to 0/45/90/... unless Shift is held for free angle. Frame-aware: the
+      // rotation is applied to the 3D frame via _applyMemberTilt so all four
+      // views stay consistent.
+      const muP = (epUV.u + enUV.u) / 2;
+      const mvP = (epUV.v + enUV.v) / 2;
+      const projLen = a.magUV;
+      const perpU = -a.v / projLen;
+      const perpV =  a.u / projLen;
+      const p = (typeof sectionProfile === 'function') ? sectionProfile(obj) : null;
+      const hd = (p && p.d) ? p.d / 2 : 50;
+      const offsetMm = hd + Math.max(40, hd * 0.6);
+      grips.push({
+        type: 'rotate',
+        u: muP + perpU * offsetMm,
+        v: mvP + perpV * offsetMm,
+        cursor: 'crosshair',
+        midU: muP, midV: mvP,
+      });
     }
-    // Rotation handle is no longer shown — orientation is now driven by the
-    // Inspector's Axis/Dir/Roll dropdowns (V24.A1). The old rotate grip would
-    // only edit the legacy `rot` scalar, which no longer fully describes the
-    // frame.
   }
 
   return grips;
@@ -184,6 +202,57 @@ function applyGripDrag(gripInfo, currentU, currentV) {
         obj.pt = newT;
       }
     }
+  }
+
+  // V24.A5 — Rotate handle for beam-like members. Pitch in the view plane,
+  // backed by a tilt of the 3D frame about the view's depth axis. Default
+  // snaps to 0/45/90/... ; Shift bypasses the snap for free angle. The
+  // snapshot frame (gripSnapshot.axis/up) anchors the rotation so the total
+  // delta is always re-derived from the drag start, never accumulated.
+  if (isMemberType(obj.type) && type === 'rotate' && gripSnapshot) {
+    const B = _viewBasis(vk);
+    // Snapshot's projected axis angle in this view's u-v plane.
+    const snapFrame = (typeof memberFrame === 'function') ? memberFrame(gripSnapshot) : null;
+    if (!snapFrame) return;
+    const aSnap = {
+      u: snapFrame.axis.x * B.u.x + snapFrame.axis.y * B.u.y + snapFrame.axis.z * B.u.z,
+      v: snapFrame.axis.x * B.v.x + snapFrame.axis.y * B.v.y + snapFrame.axis.z * B.v.z,
+    };
+    const startAngle = Math.atan2(aSnap.v, aSnap.u);
+    // Snapshot's projected centre (member centre projects onto u-v).
+    const muSnap = (gripSnapshot.x || 0) * B.u.x + (gripSnapshot.y || 0) * B.u.y + (gripSnapshot.z || 0) * B.u.z;
+    const mvSnap = (gripSnapshot.x || 0) * B.v.x + (gripSnapshot.y || 0) * B.v.y + (gripSnapshot.z || 0) * B.v.z;
+    // Cursor angle relative to centre, minus 90° because the handle sits
+    // perpendicular to the member.
+    const dx = currentU - muSnap, dy = currentV - mvSnap;
+    if (dx * dx + dy * dy < 1) return;
+    const cursorAngle = Math.atan2(dy, dx) - Math.PI / 2;
+    const useShift = (typeof shiftHeld !== 'undefined' && shiftHeld);
+    const targetAngle = (typeof applySnappedRotation === 'function')
+      ? applySnappedRotation(cursorAngle, useShift)
+      : cursorAngle;
+    let deltaRad = targetAngle - startAngle;
+    // Wrap to (-π, π] so we tilt the short way around.
+    while (deltaRad >  Math.PI) deltaRad -= 2 * Math.PI;
+    while (deltaRad < -Math.PI) deltaRad += 2 * Math.PI;
+    // Restore frame to snapshot, then tilt the absolute delta about the
+    // view's outward normal. Sign per-view (verified by hand for all three
+    // views; see HEAD comment in file 19-member-frame.js for view bases).
+    obj.axis = { x: snapFrame.axis.x, y: snapFrame.axis.y, z: snapFrame.axis.z };
+    obj.up   = { x: snapFrame.up.x,   y: snapFrame.up.y,   z: snapFrame.up.z   };
+    if ('rot' in obj) delete obj.rot;
+    let tiltAxis = 'Z', sign = 1;
+    if (vk === 'sectionA') { tiltAxis = 'X'; sign = -1; }
+    else if (vk === 'planB') { tiltAxis = 'Y'; sign = -1; }
+    const tiltDeg = sign * deltaRad * 180 / Math.PI;
+    if (typeof _applyMemberTilt === 'function' && Math.abs(tiltDeg) > 1e-6) {
+      _applyMemberTilt(obj, tiltAxis, tiltDeg);
+    }
+    // Stash the latest live angle for the render overlay.
+    obj._liveRotAngleDeg = ((targetAngle * 180 / Math.PI) % 360 + 360) % 360;
+    if (typeof v3dMarkDirty === 'function') v3dMarkDirty();
+    if (typeof invalidateWeldCache === 'function') invalidateWeldCache();
+    return;
   }
 
   // V24.A2 — Frame-aware length drag for any beam-like member. The grip's

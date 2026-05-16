@@ -37,6 +37,37 @@ const UB_DB = {
   "150UB 14.0":{ d:150, bf: 75, tf: 7.0, tw: 5.0, r1: 8.0 },
 };
 
+// AS/NZS 3679.2 Welded Beams — fabricated I-sections (typical heavy spans).
+// Geometry is the same I-shape as UB/UC so they share the drawUB() renderer.
+// r1 = 0 because welded sections have no rolled fillet; the flange-to-web
+// transition is a fillet weld (drawn separately via the auto-weld layer).
+// Source: AISC Design Capacity Tables Vol 1, Table 3.1-1(A), pp. 3-6.
+const WB_DB = {
+  "1200WB455": { d:1200, bf:500, tf:40.0, tw:16.0, r1:0 },
+  "1200WB423": { d:1192, bf:500, tf:36.0, tw:16.0, r1:0 },
+  "1200WB392": { d:1184, bf:500, tf:32.0, tw:16.0, r1:0 },
+  "1200WB342": { d:1194, bf:400, tf:32.0, tw:16.0, r1:0 },
+  "1200WB317": { d:1176, bf:400, tf:28.0, tw:16.0, r1:0 },
+  "1200WB278": { d:1170, bf:350, tf:25.0, tw:16.0, r1:0 },
+  "1200WB249": { d:1170, bf:275, tf:25.0, tw:16.0, r1:0 },
+  "1000WB322": { d:1024, bf:400, tf:32.0, tw:16.0, r1:0 },
+  "1000WB296": { d:1016, bf:400, tf:28.0, tw:16.0, r1:0 },
+  "1000WB258": { d:1010, bf:350, tf:25.0, tw:16.0, r1:0 },
+  "1000WB215": { d:1000, bf:300, tf:20.0, tw:16.0, r1:0 },
+  "900WB282":  { d: 924, bf:400, tf:32.0, tw:12.0, r1:0 },
+  "900WB257":  { d: 916, bf:400, tf:28.0, tw:12.0, r1:0 },
+  "900WB218":  { d: 910, bf:350, tf:25.0, tw:12.0, r1:0 },
+  "900WB175":  { d: 900, bf:300, tf:20.0, tw:12.0, r1:0 },
+  "800WB192":  { d: 816, bf:300, tf:28.0, tw:10.0, r1:0 },
+  "800WB168":  { d: 808, bf:300, tf:24.0, tw:10.0, r1:0 },
+  "800WB146":  { d: 800, bf:275, tf:20.0, tw:10.0, r1:0 },
+  "800WB122":  { d: 792, bf:275, tf:16.0, tw:10.0, r1:0 },
+  "700WB173":  { d: 716, bf:275, tf:28.0, tw:10.0, r1:0 },
+  "700WB150":  { d: 710, bf:275, tf:25.0, tw:10.0, r1:0 },
+  "700WB130":  { d: 700, bf:275, tf:20.0, tw:10.0, r1:0 },
+  "700WB115":  { d: 692, bf:250, tf:16.0, tw:10.0, r1:0 },
+};
+
 // AS/NZS 3679.1 Universal Columns — UC geometry identical to UB (I-section)
 // so they share the drawUB() renderer. Keyed separately so the library can
 // list them under "Columns" and labels can use the correct UC designation.
@@ -95,6 +126,7 @@ const SHS_DB = {
 //   a, b    leg lengths (mm) — angles (a = longer leg)
 
 // AS/NZS 3679.1 Parallel Flange Channels (PFC)
+// Source: AISC Design Capacity Tables Vol 1, Table 3.1-7(A), p. 3-18.
 const PFC_DB = {
   "380PFC 55.2": { d: 380, bf: 100, tf: 17.5, tw: 10.0, r1: 14.0 },
   "300PFC 40.1": { d: 300, bf:  90, tf: 16.0, tw:  8.0, r1: 14.0 },
@@ -102,10 +134,10 @@ const PFC_DB = {
   "230PFC 25.1": { d: 230, bf:  75, tf: 12.0, tw:  6.5, r1: 12.0 },
   "200PFC 22.9": { d: 200, bf:  75, tf: 12.0, tw:  6.0, r1: 12.0 },
   "180PFC 20.9": { d: 180, bf:  75, tf: 11.0, tw:  6.0, r1: 12.0 },
-  "150PFC 17.7": { d: 150, bf:  75, tf: 10.0, tw:  6.0, r1: 10.0 },
-  "125PFC 11.9": { d: 125, bf:  65, tf:  8.0, tw:  5.0, r1:  8.0 },
-  "100PFC 8.33": { d: 100, bf:  50, tf:  8.0, tw:  5.0, r1:  8.0 },
-  "75PFC":       { d:  75, bf:  40, tf:  7.5, tw:  4.0, r1:  8.0 },
+  "150PFC 17.7": { d: 150, bf:  75, tf:  9.5, tw:  6.0, r1: 10.0 },
+  "125PFC 11.9": { d: 125, bf:  65, tf:  8.0, tw:  4.7, r1:  8.0 },
+  "100PFC 8.33": { d: 100, bf:  50, tf:  6.7, tw:  4.2, r1:  8.0 },
+  "75PFC 5.92":  { d:  75, bf:  40, tf:  6.1, tw:  3.8, r1:  8.0 },
 };
 
 // AS 1163 Rectangular Hollow Sections (RHS). B along depth, bf along width.
@@ -151,10 +183,12 @@ const CHS_DB = {
 };
 
 // AS/NZS 3679.1 Equal Angles (EA). a = leg, t = thickness, r1 = root radius.
+// Source: AISC Design Capacity Tables Vol 1, Tables 3.1-9(A)-1 and 3.1-9(A)-2.
 const EA_DB = {
   "EA200x200x26": { a: 200, t: 26, r1: 18 },
   "EA200x200x20": { a: 200, t: 20, r1: 18 },
   "EA200x200x18": { a: 200, t: 18, r1: 18 },
+  "EA200x200x16": { a: 200, t: 16, r1: 18 },
   "EA200x200x13": { a: 200, t: 13, r1: 18 },
   "EA150x150x19": { a: 150, t: 19, r1: 13 },
   "EA150x150x16": { a: 150, t: 16, r1: 13 },
@@ -181,14 +215,20 @@ const EA_DB = {
   "EA65x65x5":    { a:  65, t:  5, r1:  6 },
   "EA55x55x6":    { a:  55, t:  6, r1:  6 },
   "EA55x55x5":    { a:  55, t:  5, r1:  6 },
+  "EA50x50x8":    { a:  50, t:  8, r1:  5 },
   "EA50x50x6":    { a:  50, t:  6, r1:  5 },
   "EA50x50x5":    { a:  50, t:  5, r1:  5 },
   "EA50x50x3":    { a:  50, t:  3, r1:  5 },
+  "EA45x45x6":    { a:  45, t:  6, r1:  5 },
   "EA45x45x5":    { a:  45, t:  5, r1:  5 },
   "EA45x45x3":    { a:  45, t:  3, r1:  5 },
+  "EA40x40x6":    { a:  40, t:  6, r1:  5 },
+  "EA40x40x5":    { a:  40, t:  5, r1:  5 },
+  "EA40x40x3":    { a:  40, t:  3, r1:  5 },
 };
 
 // AS/NZS 3679.1 Unequal Angles (UA). a = long leg, b = short leg.
+// Source: AISC Design Capacity Tables Vol 1, Table 3.1-10(A).
 const UA_DB = {
   "UA150x100x12": { a: 150, b: 100, t: 12, r1: 13 },
   "UA150x100x10": { a: 150, b: 100, t: 10, r1: 13 },

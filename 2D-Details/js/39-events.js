@@ -218,8 +218,22 @@ function initEvents() {
           v25Selected = [];
           const root = document.getElementById('inspectorRoot');
           if (root && sheetMode === '2d') root.innerHTML = '';
+          // Start V25 marquee (Bluebeam/AutoCAD-style). Mouseup branch in this
+          // file finalises window-vs-crossing against entities2D + v25EntBounds.
+          selBoxStart = [cu, cv];
+          selBoxMode = '2d';
           requestRender();
+          return;
         }
+      } else if (e.shiftKey) {
+        // Shift + click on empty V25 canvas — start an additive marquee.
+        // Without this branch Shift on empty space is a silent no-op in V25
+        // mode, which breaks the user's "Shift = add to selection" muscle
+        // memory from Bluebeam/AutoCAD.
+        selBoxStart = [cu, cv];
+        selBoxMode = '2d';
+        requestRender();
+        return;
       }
     }
 
@@ -493,7 +507,10 @@ function initEvents() {
 
     // V19 revision cloud — multi-click polygon, dbl-click / Enter to close
     if (tool === 'draw-rev-cloud') {
-      polyPts.push({ u: cu, v: cv });
+      const lastPP = polyPts.length > 0 ? polyPts[polyPts.length - 1] : null;
+      if (!lastPP || Math.hypot(cu - lastPP.u, cv - lastPP.v) > 0.1) {
+        polyPts.push({ u: cu, v: cv });
+      }
       requestRender(); return;
     }
 
@@ -548,7 +565,13 @@ function initEvents() {
     }
 
     // Polyline
-    if (tool === 'polyline') { polyPts.push({ u:cu, v:cv }); requestRender(); return; }
+    if (tool === 'polyline') {
+      const lastPP = polyPts.length > 0 ? polyPts[polyPts.length - 1] : null;
+      if (!lastPP || Math.hypot(cu - lastPP.u, cv - lastPP.v) > 0.1) {
+        polyPts.push({ u: cu, v: cv });
+      }
+      requestRender(); return;
+    }
 
     // Line
     if (tool === 'line') {
@@ -656,7 +679,10 @@ function initEvents() {
 
     // V22.6 — Hatch: multi-click polygon, Enter/dblclick to close + prompt for pattern.
     if (tool === 'draw-hatch') {
-      polyPts.push({ u: cu, v: cv });
+      const lastPP = polyPts.length > 0 ? polyPts[polyPts.length - 1] : null;
+      if (!lastPP || Math.hypot(cu - lastPP.u, cv - lastPP.v) > 0.1) {
+        polyPts.push({ u: cu, v: cv });
+      }
       requestRender(); return;
     }
 
@@ -855,8 +881,10 @@ function initEvents() {
       if (selected3D.length > 0) {
         const grip = hitTestGrip(activeBlock, px, py);
         if (grip) {
-          if (grip.type === 'rotate') {
-            // Enter rotation mode
+          // Legacy scalar-rot rotateMode is for non-member objects (plates).
+          // Members use the V24.A5 frame-tilt grip via the standard
+          // grip-drag path below.
+          if (grip.type === 'rotate' && !isMemberType(grip.obj.type)) {
             rotateMode = true;
             const b = getObj2DBounds(grip.obj, activeBlock);
             const mu = (b.u1 + b.u2) / 2, mv = (b.v1 + b.v2) / 2;
@@ -893,6 +921,7 @@ function initEvents() {
         if (!e.shiftKey) selected3D = [];
         const real = px2real(activeBlock, px, py);
         selBoxStart = [real.u, real.v];
+        selBoxMode = '3d';
       }
       requestRender(); return;
     }
@@ -953,10 +982,24 @@ function initEvents() {
       requestRender(); return;
     }
 
+    // V25 — when in plate tool and not yet committed a click, probe for a
+    // host edge under the cursor and surface the orange "endpoint" snap
+    // indicator. This is purely advisory — the actual snap happens in
+    // v25TryHandleClick on mousedown.
+    if (sheetMode === '2d' && tool === 'v25-plate' && activeBlock
+        && !v25State.plateDownPx && v25State.polyPts.length === 0
+        && typeof v25Plate2SnapHost === 'function') {
+      const real = px2real(activeBlock, px, py);
+      const snap = v25Plate2SnapHost(activeBlock, real.u, real.v);
+      const prevHad = !!v25SnapInfo;
+      v25SnapInfo = snap ? { type: 'endpoint', u: snap.u, v: snap.v } : null;
+      if (prevHad || snap) requestRender();
+    }
+
     // V25 — when in select tool and 2D mode and NOT currently dragging,
     // run a hover-pick so the user gets cursor feedback + visible grip
     // highlight before they click. This makes node-editing feel reactive.
-    if (sheetMode === '2d' && tool === 'select' && !v25Drag && !blockDragging && !blockResizing && activeBlock) {
+    if (sheetMode === '2d' && tool === 'select' && !v25Drag && !blockDragging && !blockResizing && !selBoxStart && activeBlock) {
       const real = px2real(activeBlock, px, py);
       const hover = (typeof v25HoverPick === 'function') ? v25HoverPick(activeBlock, real.u, real.v) : null;
       const newHover = hover ? { entId: hover.ent.id, handle: hover.handle } : null;
@@ -1049,7 +1092,7 @@ function initEvents() {
     // Update cursor style for resize handles, border drag, grip hover, cut line hover.
     // V25 — in 2D mode the v25 hover-pick (above) owns the cursor, so skip
     // the 3D-only resize/cut-line affordances here.
-    if (sheetMode !== '2d' && tool === 'select' && activeBlock && !dragMoving) {
+    if (sheetMode !== '2d' && tool === 'select' && activeBlock && !dragMoving && !selBoxStart) {
       // Priority: resize handle > border > grip > cut line > default
       const rh = hitTestResizeHandle(activeBlock, px, py);
       if (rh) { canvas.style.cursor = resizeHandleCursor(rh); }
@@ -1180,6 +1223,78 @@ function initEvents() {
       requestRender();
       return;
     }
+    // V25 — plate placement commit on mouseup. Same drag-vs-click pattern as
+    // hatch, but split by Aspect: section commits a cleat (thk × drag), elev
+    // commits a rect on drag / starts a polygon on click.
+    if (tool === 'v25-plate' && v25State.plateDownPx && v25State.plateDownWorld
+        && v25State.polyPts.length === 0 && activeBlock) {
+      const a = v25State.plateDownWorld;
+      const dx = e.clientX - v25State.plateDownPx.x;
+      const dy = e.clientY - v25State.plateDownPx.y;
+      const moved = Math.hypot(dx, dy);
+      const { px, py } = getPixelXY(e);
+      const upR = px2real(activeBlock, px, py);
+      const aspect = (typeof v25Last === 'object' && v25Last.plateAspect === 'sec') ? 'sec' : 'elev';
+      const thk = (typeof v25Last === 'object' && v25Last.plateThk)
+        ? v25Last.plateThk
+        : ((typeof V25_PLATE_DEFAULT_THK !== 'undefined') ? V25_PLATE_DEFAULT_THK : 10);
+      if (aspect === 'sec') {
+        // Cleat — drag distance is cleat projection length, oriented along
+        // the snapped host face outward normal (or raw drag direction if no
+        // host was snapped). Inward drags get flipped 180° so the cleat
+        // always projects AWAY from where the user pulled.
+        if (moved > 4) {
+          let length, rotDeg;
+          if (a.faceAngleRad != null) {
+            const cosA = Math.cos(a.faceAngleRad), sinA = Math.sin(a.faceAngleRad);
+            const drU = upR.u - a.u, drV = upR.v - a.v;
+            const projLen = drU * cosA + drV * sinA;
+            length = Math.abs(projLen);
+            rotDeg = (projLen >= 0 ? a.faceAngleRad : a.faceAngleRad + Math.PI) * 180 / Math.PI;
+          } else {
+            const drU = upR.u - a.u, drV = upR.v - a.v;
+            length = Math.hypot(drU, drV);
+            rotDeg = Math.atan2(drV, drU) * 180 / Math.PI;
+          }
+          if (length >= 5 && typeof v25Add === 'function') {
+            const ent = v25Add('plate2', {
+              aspect: 'sec', shape: 'rect',
+              u: a.u, v: a.v, length, thk,
+              rot: rotDeg,
+              hostId: a.hostId || undefined,
+            });
+            if (ent && typeof v25Selected !== 'undefined') {
+              v25Selected = [ent.id];
+              if (typeof v25UpdateInspector === 'function') v25UpdateInspector();
+            }
+          }
+        }
+      } else {
+        // Elevation — drag = rect; no drag = first polygon vertex.
+        if (moved > 4) {
+          const u = Math.min(a.u, upR.u), v = Math.min(a.v, upR.v);
+          const w = Math.abs(upR.u - a.u), h = Math.abs(upR.v - a.v);
+          if (w > 1 && h > 1 && typeof v25Add === 'function') {
+            const ent = v25Add('plate2', {
+              aspect: 'elev', shape: 'rect',
+              u, v, w, h, thk,
+            });
+            if (ent && typeof v25Selected !== 'undefined') {
+              v25Selected = [ent.id];
+              if (typeof v25UpdateInspector === 'function') v25UpdateInspector();
+            }
+          }
+        } else {
+          // No drag — push the snapped/raw down position as first polygon vertex.
+          v25State.polyPts.push({ u: a.u, v: a.v });
+        }
+      }
+      v25State.plateDownPx = null;
+      v25State.plateDownWorld = null;
+      v25SnapInfo = null;
+      requestRender();
+      return;
+    }
     // Release orbit drag (but stay in orbit mode until Enter)
     if (v3dOrbiting) {
       v3dHandleOrbitUp();
@@ -1232,6 +1347,10 @@ function initEvents() {
         if (undoStack.length > 100) undoStack.shift();
         redoStack = [];
       }
+      // V24.A5 — clear the live-angle overlay state once the drag ends.
+      if (activeGrip.obj && '_liveRotAngleDeg' in activeGrip.obj) {
+        delete activeGrip.obj._liveRotAngleDeg;
+      }
       activeGrip = null; gripStart = null; gripSnapshot = null;
       rotateMode = false; rotatePivot = null; rotateStartAngle = null;
       canvas.style.cursor = 'default';
@@ -1258,17 +1377,40 @@ function initEvents() {
       const real = px2real(activeBlock, px, py);
       const u1 = Math.min(selBoxStart[0], real.u), u2 = Math.max(selBoxStart[0], real.u);
       const v1 = Math.min(selBoxStart[1], real.v), v2 = Math.max(selBoxStart[1], real.v);
+      // Same 2-px noise threshold as the render overlay so a stationary click
+      // never finalises a (zero-area) selection.
       if (u2 - u1 > 2 || v2 - v1 > 2) {
+        // Crossing (R→L) selects anything the box touches; window (L→R)
+        // requires full containment. Bluebeam / AutoCAD / Revit convention.
         const crossing = real.u < selBoxStart[0];
-        const hits = objects3D.filter(obj => {
-          const b = getObj2DBounds(obj, activeBlock);
-          if (!b) return false;
-          if (crossing) return b.u1 <= u2 && b.u2 >= u1 && b.v1 <= v2 && b.v2 >= v1;
-          return b.u1 >= u1 && b.u2 <= u2 && b.v1 >= v1 && b.v2 <= v2;
-        });
-        selected3D = e.shiftKey ? [...selected3D, ...hits] : hits;
+        if (selBoxMode === '2d') {
+          // V25 2D paper-space marquee — filter entities2D for the active view
+          // and dispatch through v25Selected (ids, not refs).
+          const list = (typeof entities2D !== 'undefined' && entities2D[activeBlock.viewKey]) || [];
+          const hitIds = list.filter(ent => {
+            const b = (typeof v25EntBounds === 'function') ? v25EntBounds(ent) : null;
+            if (!b) return false;
+            // v25EntBounds returns {L,R,B,T} with L<R and B<T already.
+            if (crossing) return b.L <= u2 && b.R >= u1 && b.B <= v2 && b.T >= v1;
+            return b.L >= u1 && b.R <= u2 && b.B >= v1 && b.T <= v2;
+          }).map(en => en.id);
+          v25Selected = e.shiftKey
+            ? Array.from(new Set([...(v25Selected || []), ...hitIds]))
+            : hitIds;
+          if (typeof v25UpdateInspector === 'function') v25UpdateInspector();
+        } else {
+          // 3D-projected mode marquee — existing behaviour.
+          const hits = objects3D.filter(obj => {
+            const b = getObj2DBounds(obj, activeBlock);
+            if (!b) return false;
+            if (crossing) return b.u1 <= u2 && b.u2 >= u1 && b.v1 <= v2 && b.v2 >= v1;
+            return b.u1 >= u1 && b.u2 <= u2 && b.v1 >= v1 && b.v2 <= v2;
+          });
+          selected3D = e.shiftKey ? [...selected3D, ...hits] : hits;
+        }
       }
       selBoxStart = null;
+      selBoxMode = null;
       requestRender();
     }
   });
@@ -1294,6 +1436,23 @@ function initEvents() {
         });
       }
       v25State.polyPts = [];
+      requestRender();
+      return;
+    }
+    // V25 plate poly close on dblclick. Same pattern as v25-hatch: strip the
+    // trailing artefact from the dblclick mousedown, then commit if ≥3 pts.
+    if (tool === 'v25-plate') {
+      if (v25State.plateDownPx) {
+        v25State.plateDownPx = null;
+        v25State.plateDownWorld = null;
+      } else if (v25State.polyPts.length > 0) {
+        v25State.polyPts.pop();
+      }
+      if (v25State.polyPts.length >= 3 && typeof v25PlateCommitPoly === 'function') {
+        v25PlateCommitPoly();
+      } else {
+        v25State.polyPts = [];
+      }
       requestRender();
       return;
     }
@@ -1337,10 +1496,27 @@ function initEvents() {
       // V25-layout-overhaul Phase 6.5 — prefer the 2D weld pipeline when in
       // 2D mode so dblclicks on the AS 1101.3 hatch open the same popup
       // (type / size / enabled). 3D pipeline is checked next as a fallback.
+      // V14-J — SHS joint popup takes precedence over the weld popup so that
+      // a dblclick at a node opens the priority + mitre editor. Try V25 (2D
+      // paper-space) joint first, then 3D-mode joint, then weld interface.
+      if (sheetMode === '2d' && typeof hitTestJointV25 === 'function') {
+        const v25Joint = hitTestJointV25(activeBlock, px, py);
+        if (v25Joint) {
+          showJointPopupV25(v25Joint, e.clientX, e.clientY, activeBlock.viewKey);
+          return;
+        }
+      }
       if (sheetMode === '2d' && typeof v25HitTestWeld === 'function') {
         const v25Hit = v25HitTestWeld(activeBlock, px, py);
         if (v25Hit) {
           showWeldPopup(v25Hit, e.clientX, e.clientY);
+          return;
+        }
+      }
+      if (typeof hitTestJoint === 'function') {
+        const jointHit = hitTestJoint(activeBlock, px, py);
+        if (jointHit) {
+          showJointPopup(jointHit, e.clientX, e.clientY);
           return;
         }
       }

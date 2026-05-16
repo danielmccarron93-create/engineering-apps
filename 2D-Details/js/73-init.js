@@ -30,9 +30,16 @@ window.addEventListener('DOMContentLoaded', () => {
   initToolbar();
   setTool('select');
 
-  // Demo objects
+  // Demo objects — UB beam landing on a vertical SHS column with a 60mm
+  // gap between the column face and the beam end (typical end-plate space).
   addObj(mkObj('ub', { section: '360UB 50.7', x: 0, y: 0, z: 0, length: 600 }));
-  addObj(mkObj('shs', { section: '150x6', x: -350, y: 0, z: 0, length: 500 }));
+  addObj(mkObj('shs', {
+    section: '150x6',
+    x: -435, y: 0, z: 0,
+    length: 500,
+    axis: { x: 0, y: 1, z: 0 },
+    up: { x: -1, y: 0, z: 0 },
+  }));
   undoStack = []; redoStack = [];
 
   // V19.5 initialise the multi-sheet project model with the current state

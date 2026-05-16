@@ -41,6 +41,14 @@ function populateLibrary() {
     });
   }
 
+  // WB list — welded beams (WB_DB keys). Same I-section renderer as UB.
+  const wbList = document.getElementById('wbList');
+  if (wbList && typeof WB_DB === 'object') {
+    Object.keys(WB_DB).forEach(name => {
+      addMemberItem(wbList, name, { type:'ub', section:name });
+    });
+  }
+
   const shsList = document.getElementById('shsList');
   Object.keys(SHS_DB).forEach(name => {
     const item = document.createElement('div');

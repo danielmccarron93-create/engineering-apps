@@ -28,36 +28,66 @@ function drawSHS(blk, obj, col, hidCol, clCol, cs, occRects, cutClass) {
     // Draw SHS horizontally by default (length along X, depth along Y)
     // — matches UB convention so withRotation() handles all orientations correctly.
     const cx = obj.x, cy = obj.y;
-    const L = cx-hl, R = cx+hl, T = cy+hB, B = cy-hB;
 
-    // Outer walls
-    rLineOcc(blk, L, T, R, T, occRects, col, hidCol, cutLW, hidLW);  // top
-    rLineOcc(blk, L, B, R, B, occRects, col, hidCol, cutLW, hidLW);  // bottom
-    rLineOcc(blk, L, T, L, B, occRects, col, hidCol, visLW, hidLW);  // left end
-    rLineOcc(blk, R, T, R, B, occRects, col, hidCol, visLW, hidLW);  // right end
+    // V14-J — joint trim. If this SHS shares a node with higher-priority
+    // SHS members, the relevant end-cap u positions get pulled inward to
+    // match the priority/mitre cut line. cutInfo.uAtV(v) returns the local
+    // cut u for a given local v (constant for butt cut, slanted for mitre).
+    // Defaults (no joint) = ±hl, giving the original full rectangle.
+    const trims = (typeof jointTrimsForMember === 'function')
+      ? jointTrimsForMember(obj) : null;
+    const cutPlus = trims && trims.ends ? trims.ends.plus : null;
+    const cutMinus = trims && trims.ends ? trims.ends.minus : null;
+
+    // Outer-wall corner u's at v = +hB (top) and v = -hB (bottom) for each end.
+    const uPT = cutPlus  ? cutPlus.uAtV(+hB)  : +hl; // plus end, top
+    const uPB = cutPlus  ? cutPlus.uAtV(-hB)  : +hl; // plus end, bottom
+    const uMT = cutMinus ? cutMinus.uAtV(+hB) : -hl; // minus end, top
+    const uMB = cutMinus ? cutMinus.uAtV(-hB) : -hl; // minus end, bottom
+    // Inner-wall corner u's at v = +hI / -hI.
+    const uPTi = cutPlus  ? cutPlus.uAtV(+hI)  : +hl;
+    const uPBi = cutPlus  ? cutPlus.uAtV(-hI)  : +hl;
+    const uMTi = cutMinus ? cutMinus.uAtV(+hI) : -hl;
+    const uMBi = cutMinus ? cutMinus.uAtV(-hI) : -hl;
+
+    // Outer walls (top + bottom = cut weight; end caps = visible weight)
+    rLineOcc(blk, cx + uMT, cy + hB, cx + uPT, cy + hB, occRects, col, hidCol, cutLW, hidLW);  // top
+    rLineOcc(blk, cx + uMB, cy - hB, cx + uPB, cy - hB, occRects, col, hidCol, cutLW, hidLW);  // bottom
+    rLineOcc(blk, cx + uMT, cy + hB, cx + uMB, cy - hB, occRects, col, hidCol, visLW, hidLW);  // minus end
+    rLineOcc(blk, cx + uPT, cy + hB, cx + uPB, cy - hB, occRects, col, hidCol, visLW, hidLW);  // plus end
 
     // Inner walls (hidden lines)
     ctx.strokeStyle = hidCol; ctx.lineWidth = hidLW;
     ctx.setLineDash(DASH.HIDDEN);
-    rLine(blk, L, cy+hI, R, cy+hI); rLine(blk, L, cy-hI, R, cy-hI);  // top/bottom inner
-    rLine(blk, L, cy+hI, L, cy-hI); rLine(blk, R, cy+hI, R, cy-hI);  // left/right inner
+    rLine(blk, cx + uMTi, cy + hI, cx + uPTi, cy + hI);                                       // top inner
+    rLine(blk, cx + uMBi, cy - hI, cx + uPBi, cy - hI);                                       // bottom inner
+    rLine(blk, cx + uMTi, cy + hI, cx + uMBi, cy - hI);                                       // minus end inner
+    rLine(blk, cx + uPTi, cy + hI, cx + uPBi, cy - hI);                                       // plus end inner
     ctx.setLineDash([]);
 
-    // Fill
+    // Fill — 4-corner polygon (degenerates to rectangle when no trim)
     ctx.fillStyle = colorAlpha(col, memberFillAlpha(obj, 0.04));
-    rFillRect(blk, L, B, obj.length, s.B);
+    rFillPoly(blk, [
+      { u: cx + uMT, v: cy + hB },
+      { u: cx + uPT, v: cy + hB },
+      { u: cx + uPB, v: cy - hB },
+      { u: cx + uMB, v: cy - hB },
+    ]);
 
-    // Centreline (horizontal, along member length)
+    // Centreline (horizontal, along member length) — extend past the
+    // shorter of the two trimmed ends so it still pokes out clearly.
     ctx.strokeStyle = clCol; ctx.lineWidth = 0.5;
     ctx.setLineDash(DASH.CL);
-    rLine(blk, L-8, cy, R+8, cy);
+    const clMinus = Math.min(uMT, uMB) - 8;
+    const clPlus  = Math.max(uPT, uPB) + 8;
+    rLine(blk, cx + clMinus, cy, cx + clPlus, cy);
     ctx.setLineDash([]);
 
     // Label
     ctx.fillStyle = cs.getPropertyValue('--mute').trim();
     const fs = Math.max(6, 1.8 * pm);
     ctx.font = `${fs}px system-ui`; ctx.textAlign = 'center';
-    const lp = real2px(blk, cx, T + 6);
+    const lp = real2px(blk, cx, cy + hB + 6);
     ctx.fillText(obj.section + ' SHS', lp.x, lp.y);
     ctx.textAlign = 'start';
   }

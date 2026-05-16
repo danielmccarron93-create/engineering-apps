@@ -951,13 +951,23 @@ function v25Mem2Thickness(ent) {
 function computeV25WeldInterfaces(viewKey) {
   const out = [];
   if (!viewKey) return out;
-  const arr = entities2D[viewKey] || [];
-  const mems = arr.filter(e => e && e.type === 'mem2' && e.aspect !== 'sec' && (e.length || 0) >= 1);
-  if (mems.length < 2) return out;
   const tol = 2;          // mm — face proximity (matches snap catch zone)
   const minOverlap = 1;   // mm — minimum contact length
-  const allFaces = [];
-  for (const m of mems) for (const f of v25Mem2Faces(m)) { f._ent = m; allFaces.push(f); }
+  // Collect every weld-relevant face in this view. The plate module
+  // (76-v25-plate.js) exposes v25CollectWeldFaces which unifies mem2 outer
+  // faces and plate2 outer edges (so plate↔mem2 / plate↔plate auto-welds
+  // appear via the same pair-scan as mem2↔mem2). Fall back to mem2-only
+  // collection if the plate module isn't loaded yet.
+  let allFaces;
+  if (typeof v25CollectWeldFaces === 'function') {
+    allFaces = v25CollectWeldFaces(viewKey);
+  } else {
+    const arr = entities2D[viewKey] || [];
+    const mems = arr.filter(e => e && e.type === 'mem2' && e.aspect !== 'sec' && (e.length || 0) >= 1);
+    allFaces = [];
+    for (const m of mems) for (const f of v25Mem2Faces(m)) { f._ent = m; allFaces.push(f); }
+  }
+  if (allFaces.length < 2) return out;
   const bestPerKey = {};
   for (let i = 0; i < allFaces.length; i++) {
     for (let j = i + 1; j < allFaces.length; j++) {
@@ -989,15 +999,28 @@ function computeV25WeldInterfaces(viewKey) {
         u2: fA.u1 + aUx * tMax, v2: fA.v1 + aUy * tMax,
         hatchSide: 1,
       };
-      const tThin = Math.min(v25Mem2Thickness(fA._ent), v25Mem2Thickness(fB._ent));
+      // Thinner-part thickness for AS 4100 Cl. 9.7.3.10 weld sizing. Plate-
+      // aware: plate2 reports ent.thk, mem2 reports its web/wall thickness.
+      const thinPart = (ent) => {
+        if (ent && ent.type === 'plate2') return ent.thk || 10;
+        return (typeof v25Mem2Thickness === 'function') ? v25Mem2Thickness(ent) : 10;
+      };
+      const tThin = Math.min(thinPart(fA._ent), thinPart(fB._ent));
       const autoSize = autoWeldMinSize(tThin);
       const override = weldOverrides[key] || {};
       // showWeldPopup() reads ifc.objA.type / .section to render the
       // "X ↔ Y" footer label. The 3D pipeline supplies real obj{type,section}
-      // pairs; we mirror that shape with mem2's memberType so the same
-      // popup works for both worlds without any changes to its code.
-      const objA = { type: fA._ent.memberType || 'mem', section: fA._ent.section };
-      const objB = { type: fB._ent.memberType || 'mem', section: fB._ent.section };
+      // pairs; we mirror that shape for mem2 with memberType + section, and
+      // for plate2 with 'plate' + a "PL X" pseudo-section so the popup label
+      // reads naturally for plate-vs-X welds without any popup changes.
+      const labelOf = (ent) => {
+        if (ent && ent.type === 'plate2') {
+          return { type: 'plate', section: 'PL ' + (ent.thk || 10) };
+        }
+        return { type: ent.memberType || 'mem', section: ent.section };
+      };
+      const objA = labelOf(fA._ent);
+      const objB = labelOf(fB._ent);
       const candidate = {
         key, entA: fA._ent, entB: fB._ent, objA, objB,
         seg, _overlap: overlap,

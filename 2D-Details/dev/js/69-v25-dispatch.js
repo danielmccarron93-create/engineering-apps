@@ -14,6 +14,7 @@ function v25DrawEnt(blk, ent, cs) {
   if (ent.type === 'mesh') { drawMesh2D(blk, ent, cs); return true; }
   if (ent.type === 'leader2') { drawLeader2D(blk, ent, cs); return true; }
   if (ent.type === 'mem2') { drawMem2D(blk, ent, cs); return true; }
+  if (ent.type === 'plate2' && typeof drawPlate2D === 'function') { drawPlate2D(blk, ent, cs); return true; }
   if (ent.type === 'lineSet' && typeof drawLineSet2D === 'function') { drawLineSet2D(blk, ent, cs); return true; }
   if (ent.type === 'txtBox' && typeof drawTxtBox2D === 'function') { drawTxtBox2D(blk, ent, cs); return true; }
   return false;
@@ -281,6 +282,61 @@ function v25TryHandleClick(blk, cu, cv, e) {
     return true;
   }
 
+  // V25 — plate placement. Same click-vs-drag distinguishing as the hatch
+  // tool, branched by Aspect (set in the options bar via v25Last.plateAspect):
+  //   Elevation  — drag = rect (down→up); plain click = first polygon vertex
+  //                (subsequent clicks add vertices, dblclick/Enter closes).
+  //   Section    — first click anchors on the nearest mem2/plate face (soft-
+  //                snap ~8 px); drag = cleat projection length; release
+  //                commits a thin rectangle of {thk × drag-length} oriented
+  //                along the host face outward normal.
+  // The actual commit happens in the mouseup hook in 39-events.js; this
+  // branch just records state on first click and extends the polygon on
+  // subsequent clicks.
+  if (tool === 'v25-plate') {
+    const aspect = (typeof v25Last === 'object' && v25Last.plateAspect === 'sec') ? 'sec' : 'elev';
+    if (aspect === 'sec') {
+      const snap = (typeof v25Plate2SnapHost === 'function')
+        ? v25Plate2SnapHost(blk, cu, cv) : null;
+      const aU = snap ? snap.u : cu;
+      const aV = snap ? snap.v : cv;
+      v25State.plateDownPx = { x: e.clientX, y: e.clientY };
+      v25State.plateDownWorld = {
+        u: aU, v: aV, blk,
+        faceAngleRad: snap ? snap.faceAngleRad : null,
+        hostId: snap ? snap.hostId : null,
+      };
+      requestRender();
+      return true;
+    }
+    // Elevation aspect.
+    if (v25State.polyPts.length === 0) {
+      // Fresh start: soft-snap first vertex to nearest host edge, then defer
+      // the rect-vs-poly decision to mouseup.
+      const snap = (typeof v25Plate2SnapHost === 'function')
+        ? v25Plate2SnapHost(blk, cu, cv) : null;
+      const aU = snap ? snap.u : cu;
+      const aV = snap ? snap.v : cv;
+      v25State.plateDownPx = { x: e.clientX, y: e.clientY };
+      v25State.plateDownWorld = { u: aU, v: aV, blk };
+    } else {
+      // Polygon already in progress — extend, or close if click lands near
+      // the first vertex (Bluebeam-style click-to-close, ≥3 vertices).
+      const last = v25State.polyPts[v25State.polyPts.length - 1];
+      const first = v25State.polyPts[0];
+      const cursorPx = real2px(blk, cu, cv);
+      const firstPx = real2px(blk, first.u, first.v);
+      const nearFirst = Math.hypot(cursorPx.x - firstPx.x, cursorPx.y - firstPx.y) < 14;
+      if (nearFirst && v25State.polyPts.length >= 3 && typeof v25PlateCommitPoly === 'function') {
+        v25PlateCommitPoly();
+      } else if (Math.hypot(cu - last.u, cv - last.v) > 0.1) {
+        v25State.polyPts.push({ u: cu, v: cv });
+      }
+    }
+    requestRender();
+    return true;
+  }
+
   // V25-layout-overhaul — hatch placement (click=poly, drag=rect).
   // The mousedown only RECORDS state. The mouseup hook decides:
   //   - if mouse moved > 4 px on screen → drag → create rect
@@ -336,8 +392,34 @@ function v25TryHandleClick(blk, cu, cv, e) {
   }
 
   if (tool === 'v25-mem') {
-    // Two-click member length. Aspect (elevation vs cross-section) is
-    // controlled by the quick-options bar (v25State.aspect).
+    // Cross-section placement: single-click drops the section at the cursor
+    // with length:0, rot:0 (= web vertical for a UB, the natural drafting
+    // orientation). Bypasses the two-click drag flow so the user doesn't
+    // get a meaningless rot=atan2(dy,dx) stamped from the drag direction,
+    // and doesn't need to drag at all. No host probe — cross-sections
+    // don't mitre / weld-join the way elevation members do.
+    if ((v25State.aspect || 'elev') === 'sec') {
+      if (!v25State.memberType || !v25State.section) return true;
+      const props = {
+        memberType: v25State.memberType,
+        section: v25State.section,
+        u: cu, v: cv,
+        length: 0,
+        rot: 0,
+        aspect: 'sec',
+      };
+      if (v25State.memberType === 'pfc') {
+        props.openSide = v25State.openSide || '-v';
+      }
+      const ent = v25Add('mem2', props);
+      if (ent) {
+        v25Selected = [ent.id];
+        if (typeof v25UpdateInspector === 'function') v25UpdateInspector();
+      }
+      return true;
+    }
+    // Two-click member length for elevation aspect. Aspect is controlled by
+    // the quick-options bar (v25State.aspect).
     if (!v25State.dragStart) {
       // Remember any host the FIRST click was near so endA can be joined on
       // commit. The host probe runs in elevation only (sec view is excluded
@@ -583,6 +665,131 @@ function v25DrawPreview(blk, cs) {
   if (v25State.dragStart && tool === 'v25-mem') {
     const a = v25State.dragStart;
     rLine(blk, a.u, a.v, cu, cv);
+  }
+  // V25 plate placement preview.
+  //   Elevation rect: rubber-band rect from down-world to cursor while
+  //     the mouse is held after the first click.
+  //   Elevation poly: dashed polyline through committed vertices + rubber-
+  //     band to cursor. Closure hint when cursor is near the first vertex.
+  //   Section cleat:  ghost rectangle anchored at the snapped down-world,
+  //     length = drag distance projected along the host face outward.
+  if (tool === 'v25-plate') {
+    const aspect = (typeof v25Last === 'object' && v25Last.plateAspect === 'sec') ? 'sec' : 'elev';
+    const thk = (typeof v25Last === 'object' && v25Last.plateThk)
+      ? v25Last.plateThk : ((typeof V25_PLATE_DEFAULT_THK !== 'undefined') ? V25_PLATE_DEFAULT_THK : 10);
+    // Section preview while user is dragging
+    if (aspect === 'sec' && v25State.plateDownWorld) {
+      const a = v25State.plateDownWorld;
+      let length, rotDeg;
+      if (a.faceAngleRad != null) {
+        const cosA = Math.cos(a.faceAngleRad), sinA = Math.sin(a.faceAngleRad);
+        const drU = cu - a.u, drV = cv - a.v;
+        const projLen = drU * cosA + drV * sinA;
+        length = Math.abs(projLen);
+        rotDeg = (projLen >= 0 ? a.faceAngleRad : a.faceAngleRad + Math.PI) * 180 / Math.PI;
+      } else {
+        const drU = cu - a.u, drV = cv - a.v;
+        length = Math.hypot(drU, drV);
+        rotDeg = Math.atan2(drV, drU) * 180 / Math.PI;
+      }
+      if (length > 1 && typeof drawPlate2D === 'function') {
+        ctx.save();
+        ctx.setLineDash([]);
+        drawPlate2D(blk, {
+          type: 'plate2', _v25: true, _preview: true, id: -1,
+          aspect: 'sec', shape: 'rect',
+          u: a.u, v: a.v, length, thk,
+          rot: rotDeg,
+          opacity: 0.45,
+        }, cs);
+        ctx.restore();
+      }
+    }
+    // Elevation rectangle preview while user is dragging the first click.
+    if (aspect === 'elev' && v25State.plateDownWorld && v25State.polyPts.length === 0) {
+      const a = v25State.plateDownWorld;
+      const w = Math.abs(cu - a.u), h = Math.abs(cv - a.v);
+      const u = Math.min(a.u, cu), v = Math.min(a.v, cv);
+      // Only render when the drag has moved enough to be a meaningful rect.
+      if (w > 1 || h > 1) {
+        ctx.save();
+        ctx.strokeStyle = colorAlpha(col, 0.7);
+        ctx.lineWidth = 1;
+        ctx.setLineDash([6, 4]);
+        rRect(blk, u, v, Math.max(0.01, w), Math.max(0.01, h));
+        ctx.restore();
+      }
+    }
+    // Elevation polygon preview — committed segments + rubber-band to cursor.
+    if (aspect === 'elev' && v25State.polyPts.length) {
+      ctx.save();
+      ctx.strokeStyle = colorAlpha(col, 0.7);
+      ctx.lineWidth = 1;
+      ctx.setLineDash([6, 4]);
+      for (let i = 0; i < v25State.polyPts.length - 1; i++) {
+        const p = v25State.polyPts[i], q = v25State.polyPts[i + 1];
+        rLine(blk, p.u, p.v, q.u, q.v);
+      }
+      const last = v25State.polyPts[v25State.polyPts.length - 1];
+      rLine(blk, last.u, last.v, cu, cv);
+      // Closure highlight: small ring at the first vertex when the cursor is
+      // near it and we have ≥3 vertices (click here to close).
+      if (v25State.polyPts.length >= 3) {
+        const first = v25State.polyPts[0];
+        const cursorPx = real2px(blk, cu, cv);
+        const firstPx = real2px(blk, first.u, first.v);
+        if (Math.hypot(cursorPx.x - firstPx.x, cursorPx.y - firstPx.y) < 14) {
+          ctx.setLineDash([]);
+          ctx.fillStyle = '#ffffff';
+          ctx.strokeStyle = col;
+          ctx.lineWidth = 1.6;
+          ctx.beginPath();
+          ctx.arc(firstPx.x, firstPx.y, 8, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+          ctx.fillStyle = col;
+          ctx.font = 'bold 10px system-ui';
+          ctx.textBaseline = 'top';
+          ctx.fillText('close', firstPx.x + 12, firstPx.y + 4);
+        }
+      }
+      ctx.restore();
+    }
+  }
+
+  // Cross-section placement ghost — when the user is in v25-mem with
+  // aspect=sec, draw a faint outline of the actual section under the cursor
+  // so they can see what they're about to place. Uses the real drawMem2D
+  // pipeline so the preview is pixel-identical to the placed entity (no
+  // duplicate geometry to keep in sync). Wrapped in save/restore so the
+  // preview line-dash + opacity don't leak into subsequent draws.
+  if (tool === 'v25-mem' && (v25State.aspect || 'elev') === 'sec'
+      && v25State.memberType && v25State.section
+      && typeof drawMem2D === 'function') {
+    const previewEnt = {
+      type: 'mem2',
+      memberType: v25State.memberType,
+      section: v25State.section,
+      u: cu, v: cv,
+      length: 0,
+      rot: 0,
+      aspect: 'sec',
+      // v25EntOpacity reads ent.opacity — 0.45 gives a clear ghost without
+      // disappearing on light backgrounds.
+      opacity: 0.45,
+      // Sentinel id so any code that compares against entities2D ids never
+      // matches a real entity. drawMem2D itself doesn't use id, but cheap insurance.
+      id: -1,
+      _v25: true,
+      _preview: true,
+    };
+    if (v25State.memberType === 'pfc') {
+      previewEnt.openSide = v25State.openSide || '-v';
+    }
+    ctx.save();
+    ctx.setLineDash([]);
+    drawMem2D(blk, previewEnt, cs);
+    ctx.restore();
   }
   if (v25State.dragStart && (tool === 'v25-anchor' || tool === 'v25-leader')) {
     const a = v25State.dragStart;

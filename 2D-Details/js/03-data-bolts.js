@@ -31,10 +31,12 @@ const BOLT_DB = {
 // b.head / b.nut / b.p, so keep these in sync with the canonical fields.
 Object.values(BOLT_DB).forEach(b => { b.head = b.headAF; b.nut = b.nutAF; b.p = b.pitch; });
 
-// Merge UC sections into UB_DB: UC geometry is identical to UB (both I-sections)
-// so all UB_DB[...] lookups and the drawUB() renderer work transparently for
-// UC members. The library panel keeps them as a separate "Columns" group via UC_DB.
+// Merge UC + WB sections into UB_DB: both have I-section geometry identical to
+// UB so all UB_DB[...] lookups and the drawUB() renderer work transparently
+// for UC and WB members. The library panel keeps each as its own group via
+// UC_DB / WB_DB.
 Object.assign(UB_DB, UC_DB);
+Object.assign(UB_DB, WB_DB);
 
 // Standard bolt length increments (AS 1252) — mm
 const BOLT_LENGTHS = [

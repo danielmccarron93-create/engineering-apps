@@ -90,6 +90,20 @@ function getCursor(block) {
       [u, v] = constrainUV(u, v, origin.u, origin.v);
     }
   }
+  // Polygon-trace tools — once the first vertex has been dropped, the user
+  // is typically tracing a curve with rapid clicks, so 10 mm grid snap and
+  // endpoint pull both fight the input. Free pointer is the right default.
+  // Shift (handled above) gives ortho/45°; Alt restores the snap layer so
+  // the user can still grab existing endpoints when they need to.
+  const inPolyTrace =
+    (tool === 'v25-hatch' && v25State && v25State.polyPts && v25State.polyPts.length > 0) ||
+    ((tool === 'draw-hatch' || tool === 'draw-rev-cloud' || tool === 'polyline')
+      && polyPts && polyPts.length > 0);
+  const altDown = (typeof altHeld !== 'undefined' && altHeld);
+  if (inPolyTrace && !altDown) {
+    v25SnapInfo = null;
+    return [u, v];
+  }
   // V25 — endpoint + alignment snap (for v25 draw tools, 2D mode). Runs
   // BEFORE the generic snapUV so it gets first dibs; sets v25SnapInfo for
   // the render loop to draw a marker / alignment guide.

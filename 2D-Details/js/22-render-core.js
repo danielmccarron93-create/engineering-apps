@@ -54,6 +54,39 @@ function render() {
   // Edge snap feedback lines
   drawEdgeSnapLines(cs);
 
+  // Marquee selection rubber-band (Bluebeam/AutoCAD convention).
+  // Drawn in screen-px so it's always axis-aligned to the canvas regardless
+  // of view-plane orientation. Window (L→R): solid blue + faint blue fill,
+  // only fully-enclosed objects selected. Crossing (R→L): dashed green +
+  // faint green fill, anything touching the box selected. Mouseup branch in
+  // 39-events.js does the actual filtering with the same crossing rule.
+  if (selBoxStart && cursorSheet && activeBlock) {
+    const sp = real2px(activeBlock, selBoxStart[0], selBoxStart[1]);
+    const x0 = sp.x, y0 = sp.y;
+    const x1 = cursorSheet.px, y1 = cursorSheet.py;
+    const dx = x1 - x0, dy = y1 - y0;
+    // Avoid drawing for a click that hasn't actually moved yet — 2 px matches
+    // the mouseup "noise" threshold so we never render a box that won't act.
+    if (Math.abs(dx) > 2 || Math.abs(dy) > 2) {
+      const crossing = dx < 0;
+      const stroke = crossing ? '#3aa84a' : '#1e6ec8';
+      const fill   = crossing ? 'rgba(58, 168, 74, 0.10)'
+                              : 'rgba(30, 110, 200, 0.10)';
+      const bx = Math.min(x0, x1), by = Math.min(y0, y1);
+      const bw = Math.abs(dx),     bh = Math.abs(dy);
+      ctx.save();
+      ctx.fillStyle = fill;
+      ctx.fillRect(bx, by, bw, bh);
+      ctx.strokeStyle = stroke;
+      ctx.lineWidth = 1;
+      ctx.setLineDash(crossing ? [6, 4] : []);
+      // +0.5 / -1 for crisp 1px stroke on integer pixel grid
+      ctx.strokeRect(bx + 0.5, by + 0.5, Math.max(0, bw - 1), Math.max(0, bh - 1));
+      ctx.setLineDash([]);
+      ctx.restore();
+    }
+  }
+
   // Click preview and crosshair
   if (activeBlock && cursorSheet) {
     drawClickPreview(activeBlock, cs);

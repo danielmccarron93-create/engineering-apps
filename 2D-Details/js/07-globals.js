@@ -44,7 +44,7 @@ let plateBlock = null;       // which DetailBlock the plate is being drawn in
 let plateDimInput = '';      // typed dimension string during edge drawing
 let plateDimActive = false;  // true when user is typing a dimension mid-edge
 
-let spaceHeld = false, shiftHeld = false;
+let spaceHeld = false, shiftHeld = false, altHeld = false;
 let snapOn = true, orthoOn = false, gridOn = false;
 let gridSize = 10;
 let nudgeSize = 10;
@@ -70,6 +70,11 @@ let dimType = 'horizontal'; // 'horizontal', 'vertical', 'aligned', 'angular'
 let isPanning = false, panLast = null;
 let dragMoving = false, dragStart = null, dragSnapshots = null;
 let selBoxStart = null;
+// Which finaliser the mouseup branch should run for the marquee that
+// `selBoxStart` started: '3d' = filter objects3D + getObj2DBounds, '2d' = filter
+// entities2D[viewKey] + v25EntBounds. Captured at mousedown so a sheet-mode
+// switch mid-drag doesn't pick the wrong list. Null when no marquee is active.
+let selBoxMode = null;
 let blockDragging = null; // for dragging detail block positions
 let blockDragOffset = null;
 let blockResizing = null;  // { block, handle } — which block/corner is being resized

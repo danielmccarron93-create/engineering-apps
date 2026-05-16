@@ -192,9 +192,10 @@
           sub: 'UB', icon: 'icon-ub',
           onClick: () => v25PickAndSetMember('ub'),
           picker: { kind: 'ub' } },
-        { id: 'd-pfc', kind: 'soon', label: 'PFC',
-          sub: 'PFC', icon: 'icon-pfc', soonTag: 'soon',
-          soonNote: 'PFC drawing — coming in a follow-on build.' },
+        { id: 'v25-pfc-2d', kind: 'member', label: 'PFC',
+          sub: 'PFC', icon: 'icon-pfc',
+          onClick: () => v25PickAndSetMember('pfc'),
+          picker: { kind: 'pfc' } },
         { id: 'v25-shs-2d', kind: 'member', label: 'SHS',
           sub: 'SHS', icon: 'icon-shs',
           onClick: () => v25PickAndSetMember('shs'),
@@ -216,16 +217,23 @@
           sub: 'UC', icon: 'icon-uc',
           onClick: () => v25PickAndSetMember('uc'),
           picker: { kind: 'uc' } },
-        { id: 'd-wb', kind: 'soon', label: 'WB',
-          sub: 'WB', icon: 'icon-wb', soonTag: 'soon',
-          soonNote: 'Welded Beam (WB) catalogue — coming in a follow-on build.' },
+        { id: 'v25-wb-2d', kind: 'member', label: 'WB',
+          sub: 'WB', icon: 'icon-ub',
+          onClick: () => v25PickAndSetMember('wb'),
+          picker: { kind: 'wb' } },
         { id: 'd-bolt', kind: 'tool', label: 'Bolts',
           sub: 'BOLT', icon: 'icon-bolt',
           onClick: () => selectMemberByBolt(lastUsedSection.bolt || 'M20') },
         { id: 'd-bolt-group', kind: 'tool', label: 'Bolt grp',
           sub: 'BOLT GRP', icon: 'icon-bolt-group', onClick: openBoltDialog },
         { id: 'plate', kind: 'tool', label: 'Plate',
-          sub: 'PLATE', icon: 'icon-plate', onClick: () => setTool('draw-plate') },
+          sub: 'PLATE', icon: 'icon-plate',
+          onClick: () => {
+            // 2D mode → new V25 plate2 entity (Aspect / Thk in options bar).
+            // 3D mode → legacy draw-plate (objects3D, polygon flow unchanged).
+            if (sheetMode === '2d' && typeof v25SetPlate === 'function') v25SetPlate();
+            else setTool('draw-plate');
+          } },
       ]},
       { title: 'Hatches', tiles: [
         { id: 'd-hat-existing', kind: 'tool', label: 'Existing',

@@ -227,7 +227,13 @@
         { id: 'd-bolt-group', kind: 'tool', label: 'Bolt grp',
           sub: 'BOLT GRP', icon: 'icon-bolt-group', onClick: openBoltDialog },
         { id: 'plate', kind: 'tool', label: 'Plate',
-          sub: 'PLATE', icon: 'icon-plate', onClick: () => setTool('draw-plate') },
+          sub: 'PLATE', icon: 'icon-plate',
+          onClick: () => {
+            // 2D mode → new V25 plate2 entity (Aspect / Thk in options bar).
+            // 3D mode → legacy draw-plate (objects3D, polygon flow unchanged).
+            if (sheetMode === '2d' && typeof v25SetPlate === 'function') v25SetPlate();
+            else setTool('draw-plate');
+          } },
       ]},
       { title: 'Hatches', tiles: [
         { id: 'd-hat-existing', kind: 'tool', label: 'Existing',

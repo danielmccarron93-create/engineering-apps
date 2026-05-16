@@ -120,6 +120,12 @@ function v25EntBounds(ent) {
   if (ent.type === 'txtBox') {
     return { L: ent.u, R: ent.u + 200, B: ent.v - 30, T: ent.v + 5 };
   }
+  // V25 plate2 — defer to v25Plate2Bounds in 76-v25-plate.js so the rotated-
+  // cleat case (aspect:'sec' with non-zero rot) gets the correct rotated AABB
+  // from the same face math the renderer / snap / weld pipelines use.
+  if (ent.type === 'plate2' && typeof v25Plate2Bounds === 'function') {
+    return v25Plate2Bounds(ent);
+  }
   return null;
 }
 
@@ -193,8 +199,17 @@ function v25EntHandles(ent) {
   } else if (ent.type === 'mem2') {
     const rot = (ent.rot || 0) * Math.PI / 180;
     const len = ent.length || 0;
-    out.push({ key: 'end-a', u: ent.u, v: ent.v });
-    out.push({ key: 'end-b', u: ent.u + Math.cos(rot) * len, v: ent.v + Math.sin(rot) * len });
+    // Cross-section members (aspect:'sec', length:0) have no meaningful
+    // "ends" — both endpoints collapse to the entity origin, so emitting
+    // end-a / end-b would trap every body-drag click in the end-handle
+    // pipeline (which then re-stretches the section into a length-having
+    // elevation member). Skip the end handles for cross-sections; body drag
+    // and rotate (via the inspector for now) are the only valid edits.
+    const isSec = (ent.aspect || 'elev') === 'sec' || len < 1;
+    if (!isSec) {
+      out.push({ key: 'end-a', u: ent.u, v: ent.v });
+      out.push({ key: 'end-b', u: ent.u + Math.cos(rot) * len, v: ent.v + Math.sin(rot) * len });
+    }
     // Midpoint rotation handle — perpendicular ball offset above the member,
     // mirroring Bluebeam's pitch handle. Drag rotates around the midpoint.
     if (len > 0) {
@@ -214,6 +229,24 @@ function v25EntHandles(ent) {
     out.push({ key: 'txt', u: ent.txtU, v: ent.txtV });
   } else if (ent.type === 'anchor' && ent.txtU != null && ent.txtV != null) {
     out.push({ key: 'txt', u: ent.txtU, v: ent.txtV });
+  } else if (ent.type === 'plate2') {
+    // Elevation rectangle: 4 corner handles.
+    // Elevation polygon: per-vertex handles (matches mat poly pattern).
+    // Section cleat: outer-end handle to drag the cleat projection length;
+    // the inner end is anchored on the host and shouldn't move.
+    if (ent.aspect === 'elev' && ent.shape === 'rect') {
+      const w = ent.w || 0, h = ent.h || 0;
+      out.push({ key: 'corner:bl', u: ent.u,     v: ent.v });
+      out.push({ key: 'corner:br', u: ent.u + w, v: ent.v });
+      out.push({ key: 'corner:tr', u: ent.u + w, v: ent.v + h });
+      out.push({ key: 'corner:tl', u: ent.u,     v: ent.v + h });
+    } else if (ent.aspect === 'elev' && ent.shape === 'poly' && Array.isArray(ent.pts)) {
+      ent.pts.forEach((p, i) => out.push({ key: 'pt:' + i, u: p.u, v: p.v }));
+    } else if (ent.aspect === 'sec') {
+      const rot = (ent.rot || 0) * Math.PI / 180;
+      const len = ent.length || 0;
+      out.push({ key: 'end-outer', u: ent.u + Math.cos(rot) * len, v: ent.v + Math.sin(rot) * len });
+    }
   }
   // Mat — rotation handle (Bluebeam-style perpendicular ball above the top
   // edge). Same affordance as mem2 so the user has one mental model for
@@ -781,16 +814,22 @@ function v25HitHandle(blk, ent, u, v) {
     // member is short on screen at very low zoom.
     const rot = (ent.rot || 0) * Math.PI / 180;
     const len = ent.length || 0;
-    const ebu = ent.u + Math.cos(rot) * len;
-    const ebv = ent.v + Math.sin(rot) * len;
-    const dA = distPx(ent.u, ent.v);
-    const dB = distPx(ebu, ebv);
-    const aPx = real2px(blk, ent.u, ent.v);
-    const bPx = real2px(blk, ebu, ebv);
-    const memberSpanPx = Math.hypot(bPx.x - aPx.x, bPx.y - aPx.y);
-    const TOL = Math.max(3, Math.min(12, memberSpanPx / 3));
-    if (dA < TOL || dB < TOL) {
-      return dA <= dB ? 'end-a' : 'end-b';
+    // Skip end-handle classification for cross-sections — both "ends"
+    // collapse to the entity origin, so any body click would be
+    // misclassified as end-a and trigger the stretch-into-elevation bug.
+    const isSec = (ent.aspect || 'elev') === 'sec' || len < 1;
+    if (!isSec) {
+      const ebu = ent.u + Math.cos(rot) * len;
+      const ebv = ent.v + Math.sin(rot) * len;
+      const dA = distPx(ent.u, ent.v);
+      const dB = distPx(ebu, ebv);
+      const aPx = real2px(blk, ent.u, ent.v);
+      const bPx = real2px(blk, ebu, ebv);
+      const memberSpanPx = Math.hypot(bPx.x - aPx.x, bPx.y - aPx.y);
+      const TOL = Math.max(3, Math.min(12, memberSpanPx / 3));
+      if (dA < TOL || dB < TOL) {
+        return dA <= dB ? 'end-a' : 'end-b';
+      }
     }
   }
   if (ent.type === 'lineSet' && ent.pts && ent.pts.length) {
@@ -929,6 +968,53 @@ function v25Move(ent, du, dv, handle) {
     return;
   }
 
+  // V25 plate2 — vertex drag for polygon plates (same shape as mat poly).
+  if (ent.type === 'plate2' && ent.aspect === 'elev' && ent.shape === 'poly'
+      && typeof handle === 'string' && handle.startsWith('pt:')) {
+    const idx = parseInt(handle.slice(3));
+    if (ent.pts && ent.pts[idx]) {
+      ent.pts[idx].u += du;
+      ent.pts[idx].v += dv;
+    }
+    return;
+  }
+
+  // V25 plate2 — corner drag for rectangle elevation plates. Recompute u,v,w,h
+  // from min/max of the four corners after the drag so the rect stays axis-
+  // aligned even if the dragged corner crosses the opposite edge.
+  if (ent.type === 'plate2' && ent.aspect === 'elev' && ent.shape === 'rect'
+      && typeof handle === 'string' && handle.startsWith('corner:')) {
+    const corner = handle.slice(7);
+    const w = ent.w || 0, h = ent.h || 0;
+    const bl = { u: ent.u,     v: ent.v };
+    const br = { u: ent.u + w, v: ent.v };
+    const tr = { u: ent.u + w, v: ent.v + h };
+    const tl = { u: ent.u,     v: ent.v + h };
+    if (corner === 'bl') { bl.u += du; bl.v += dv; }
+    else if (corner === 'br') { br.u += du; br.v += dv; }
+    else if (corner === 'tr') { tr.u += du; tr.v += dv; }
+    else if (corner === 'tl') { tl.u += du; tl.v += dv; }
+    const minU = Math.min(bl.u, br.u, tr.u, tl.u);
+    const maxU = Math.max(bl.u, br.u, tr.u, tl.u);
+    const minV = Math.min(bl.v, br.v, tr.v, tl.v);
+    const maxV = Math.max(bl.v, br.v, tr.v, tl.v);
+    ent.u = minU; ent.v = minV;
+    ent.w = Math.max(1, maxU - minU);
+    ent.h = Math.max(1, maxV - minV);
+    return;
+  }
+
+  // V25 plate2 — outer-end drag for section cleats. Project the drag onto the
+  // cleat's length axis so the length grows/shrinks but the rotation stays
+  // locked to the host face. Floor at 5 mm so the cleat doesn't collapse.
+  if (ent.type === 'plate2' && ent.aspect === 'sec' && handle === 'end-outer') {
+    const rot = (ent.rot || 0) * Math.PI / 180;
+    const cosR = Math.cos(rot), sinR = Math.sin(rot);
+    const lenDelta = du * cosR + dv * sinR;
+    ent.length = Math.max(5, (ent.length || 0) + lenDelta);
+    return;
+  }
+
   // Body move — translate primary u,v plus any related coords.
   if (ent.u !== undefined) ent.u += du;
   if (ent.v !== undefined) ent.v += dv;
@@ -997,15 +1083,21 @@ function v25UpdateInspector() {
   } else if (ent.type === 'leader2') {
     txt('Text (use | for new line)', 'txt', true);
   } else if (ent.type === 'mem2') {
-    sel('Type', 'memberType', ['ub','uc','shs','rhs']);
+    sel('Type', 'memberType', ['ub','uc','wb','pfc','shs','rhs']);
     let secNames = ent.memberType === 'ub' ? Object.keys(UB_DB).filter(n => n.includes('UB'))
                  : ent.memberType === 'uc' ? Object.keys(UC_DB || {})
+                 : ent.memberType === 'wb' ? Object.keys((typeof WB_DB === 'object') ? WB_DB : {})
+                 : ent.memberType === 'pfc' ? Object.keys((typeof PFC_DB === 'object') ? PFC_DB : {})
                  : ent.memberType === 'shs' ? Object.keys(SHS_DB)
                  : ent.memberType === 'rhs' ? Object.keys((typeof RHS_DB === 'object' ? RHS_DB : {}))
                  : [];
     if (ent.section && !secNames.includes(ent.section)) secNames = [ent.section, ...secNames];
     sel('Section', 'section', secNames);
     sel('Aspect', 'aspect', ['elev','sec']);
+    // PFC-only: open-face side. Affects cross-section drawing only.
+    if (ent.memberType === 'pfc') {
+      sel('Open face', 'openSide', ['-v','+v']);
+    }
     num('Length (mm)', 'length');
     num('Rotation°', 'rot', 0.5);
     // End cap kinds get an extra "mitre" option when a join is present so the
@@ -1122,7 +1214,8 @@ function v25UpdateInspector() {
     } else if (f.kind === 'stepper') {
       // AS-1100 line-weight stepper. Stored as an integer level (0..6) so we
       // can later offset for print-mode without changing on-screen ink.
-      // Level 0 = no edge stroke at all; default level = 3 (0.25 mm).
+      // Level 0 = no edge stroke at all; default level = 3 (0.13 mm export,
+      // rendered at AS1100_LW_PX[3] = 2 px on screen).
       const lvl = (typeof ent[f.key] === 'number')
         ? Math.max(0, Math.min(AS1100_LW.length - 1, ent[f.key]))
         : AS1100_LW_DEFAULT;
@@ -1232,12 +1325,14 @@ function v25UpdateInspector() {
       if (k === 'memberType' && ent.type === 'mem2') {
         const newDb = val === 'ub' ? UB_DB
                     : val === 'uc' ? (typeof UC_DB === 'object' ? UC_DB : UB_DB)
+                    : val === 'wb' ? (typeof WB_DB === 'object' ? WB_DB : UB_DB)
                     : val === 'shs' ? SHS_DB
                     : val === 'rhs' ? (typeof RHS_DB === 'object' ? RHS_DB : {})
                     : {};
         let names = Object.keys(newDb || {});
         if (val === 'ub') names = names.filter(n => n.includes('UB'));
         if (val === 'uc' && typeof UC_DB === 'object') names = Object.keys(UC_DB);
+        if (val === 'wb' && typeof WB_DB === 'object') names = Object.keys(WB_DB);
         if (!names.includes(ent.section)) ent.section = (typeof lastUsedSection !== 'undefined' && lastUsedSection[val]) || names[0] || '';
         v25UpdateInspector();
       }

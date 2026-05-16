@@ -105,7 +105,10 @@ const AS1100_LW = [0, 0.05, 0.10, 0.13, 0.18, 0.25, 0.35];   // mm — used for 
 // Screen-pixel widths matched to the ramp. Used by canvas rendering so the
 // levels are visibly differentiated even at low zoom (where mm × pm collapses
 // every level to a sub-pixel value). At export time we use AS1100_LW (mm).
-const AS1100_LW_PX = [0, 0.5, 0.75, 1.0, 1.5, 2.0, 2.5];
+// Ramp is bumped above the raw mm values so the default (level 3) reads as a
+// clearly chunky perimeter on screen — sub-pixel widths get rounded away by
+// the canvas otherwise. Adjacent steps stay ≥0.5 px apart for visible distinction.
+const AS1100_LW_PX = [0, 1.0, 1.5, 2.0, 2.75, 3.5, 4.5];
 const AS1100_LW_DEFAULT = 3;
 const AS1100_LW_LABEL = ['none','very faint','faint','thin','medium','heavy','heaviest'];
 
@@ -177,18 +180,20 @@ function drawMat2D(blk, ent, cs) {
   const scaleMul = Math.max(0.1, (ent.hatchScale != null ? +ent.hatchScale : 50) / 50);
   const scaleMulSq = scaleMul * scaleMul;
   // Outline — AS 1100 line-weight ramp via ent.edgeLevel. Skip stroke when
-  // level === 0 ("no edge"). Uses the screen-px ramp directly so the levels
-  // are visibly distinct on screen regardless of zoom; for entities created
-  // before this field existed, fall back to def.edge × pm with the legacy
-  // 0.35 px floor.
+  // level === 0 ("no edge"). Entities without an explicit edgeLevel fall back
+  // to AS1100_LW_DEFAULT so the visual default matches the inspector reading
+  // (and gives the perimeter a clearly chunky default on screen).
+  // Width source depends on context: AS1100_LW_PX (screen px, bumped above raw
+  // mm so sub-pixel widths don't get rounded away by the canvas) for normal
+  // rendering, AS1100_LW (mm) when ppm() returns 1 in PDF vector export mode.
   const _edgeLvl = (typeof ent.edgeLevel === 'number')
     ? Math.max(0, Math.min(AS1100_LW.length - 1, ent.edgeLevel))
-    : null;
+    : AS1100_LW_DEFAULT;
   let _edgePx;
-  if (_edgeLvl == null) {
-    _edgePx = Math.max(0.35, (def.edge || 0.5) * pm);
-  } else if (_edgeLvl === 0) {
+  if (_edgeLvl === 0) {
     _edgePx = 0;
+  } else if (typeof pdfExportMode !== 'undefined' && pdfExportMode) {
+    _edgePx = AS1100_LW[_edgeLvl];
   } else {
     _edgePx = AS1100_LW_PX[_edgeLvl];
   }

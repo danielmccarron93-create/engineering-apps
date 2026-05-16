@@ -113,7 +113,13 @@ function getObjFaces(obj) {
 let _weldInterfaceCache = null;
 let _weldCacheDirty = true;
 
-function invalidateWeldCache() { _weldCacheDirty = true; }
+function invalidateWeldCache() {
+  _weldCacheDirty = true;
+  // 23a-shs-joints — keep the SHS joint trim cache in sync with weld cache so
+  // every existing call site (addObj, undo, grip drag, inspector edits, etc.)
+  // automatically refreshes joint trims without scattering separate calls.
+  if (typeof invalidateJointCache === 'function') invalidateJointCache();
+}
 
 function computeWeldInterfaces() {
   if (!_weldCacheDirty && _weldInterfaceCache) return _weldInterfaceCache;

@@ -43,11 +43,15 @@ function drawSelHighlight(blk, obj, cs) {
       ctx.strokeStyle = selCol; ctx.lineWidth = 1.5;
       ctx.beginPath(); ctx.arc(gp.x, gp.y, 5, 0, Math.PI * 2); ctx.stroke();
       ctx.fillStyle = colorAlpha(selCol, 0.3); ctx.fill();
-      // Line connecting to bbox top
-      const topMid = real2px(blk, g.u, b.v2);
+      // Connecting line — for member rotate grips it goes from the projected
+      // member centre (g.midU, g.midV) so the leash points perpendicular to
+      // the actual member, not arbitrarily up to the AABB top.
+      const anchorReal = (g.midU != null && g.midV != null)
+        ? real2px(blk, g.midU, g.midV)
+        : real2px(blk, g.u, b.v2);
       ctx.strokeStyle = colorAlpha(selCol, 0.4); ctx.lineWidth = 0.8;
       ctx.setLineDash(DASH.THREAD);
-      ctx.beginPath(); ctx.moveTo(topMid.x, topMid.y); ctx.lineTo(gp.x, gp.y); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(anchorReal.x, anchorReal.y); ctx.lineTo(gp.x, gp.y); ctx.stroke();
       ctx.setLineDash([]);
     } else {
       // Resize/extend handle: filled diamond (5px for visibility on small sections)
@@ -72,6 +76,31 @@ function drawSelHighlight(blk, obj, cs) {
     ctx.fillStyle = selCol;
     ctx.font = '9px system-ui'; ctx.textAlign = 'center';
     ctx.fillText(`${obj.rot.toFixed(1)}°`, cp.x, cp.y);
+    ctx.textAlign = 'start';
+  }
+
+  // V24.A5 — Live angle readout while a member rotate grip is being dragged.
+  // Anchored above the projected member centre so it tracks the spinning
+  // member rather than the AABB. Only shown for the active drag, on its block.
+  if (isMemberType(obj.type) && activeGrip && activeGrip.type === 'rotate'
+      && activeGrip.obj === obj && activeGrip.block === blk
+      && obj._liveRotAngleDeg != null) {
+    const deg = obj._liveRotAngleDeg;
+    const a = (typeof memberProjectedAxis === 'function') ? memberProjectedAxis(obj, blk.viewKey) : null;
+    const muP = (a && a.magUV > 0.3)
+      ? (obj.x || 0) * _viewBasis(blk.viewKey).u.x + (obj.y || 0) * _viewBasis(blk.viewKey).u.y + (obj.z || 0) * _viewBasis(blk.viewKey).u.z
+      : (b.u1 + b.u2) / 2;
+    const mvP = (a && a.magUV > 0.3)
+      ? (obj.x || 0) * _viewBasis(blk.viewKey).v.x + (obj.y || 0) * _viewBasis(blk.viewKey).v.y + (obj.z || 0) * _viewBasis(blk.viewKey).v.z
+      : (b.v1 + b.v2) / 2;
+    const tp = real2px(blk, muP, mvP);
+    const label = `${deg.toFixed(shiftHeld ? 1 : 0)}°` + (shiftHeld ? '' : ' (snap)');
+    ctx.font = '11px system-ui'; ctx.textAlign = 'center';
+    const w = ctx.measureText(label).width + 10;
+    ctx.fillStyle = 'rgba(0,0,0,0.75)';
+    ctx.fillRect(tp.x - w / 2, tp.y - 22, w, 16);
+    ctx.fillStyle = '#fff';
+    ctx.fillText(label, tp.x, tp.y - 10);
     ctx.textAlign = 'start';
   }
   }); // end withRotation

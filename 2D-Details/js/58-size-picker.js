@@ -38,6 +38,10 @@ function _pickerItemsFor(kind) {
     const names = Object.keys(UC_DB || {});
     return { grouped: true, groups: _groupBySeries(names), flat: names };
   }
+  if (kind === 'wb') {
+    const names = Object.keys((typeof WB_DB === 'object') ? WB_DB : {});
+    return { grouped: true, groups: _groupBySeries(names), flat: names };
+  }
   if (kind === 'shs') {
     return { grouped: false, flat: Object.keys(SHS_DB) };
   }

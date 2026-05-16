@@ -50,13 +50,16 @@ function v25UpdateOptionsBar() {
     const memberLabel = mt.toUpperCase();
     const dbS = mt === 'ub' ? UB_DB
               : mt === 'uc' ? (typeof UC_DB === 'object' ? UC_DB : UB_DB)
+              : mt === 'wb' ? (typeof WB_DB === 'object' ? WB_DB : UB_DB)
               : mt === 'shs' ? SHS_DB
               : mt === 'rhs' ? (typeof RHS_DB === 'object' ? RHS_DB : {})
               : mt === 'chs' ? (typeof CHS_DB === 'object' ? CHS_DB : {})
+              : mt === 'pfc' ? (typeof PFC_DB === 'object' ? PFC_DB : {})
               : {};
     let sectionNames = Object.keys(dbS || {});
     if (mt === 'ub') sectionNames = sectionNames.filter(n => n.includes('UB'));
     if (mt === 'uc') sectionNames = (typeof UC_DB === 'object') ? Object.keys(UC_DB) : sectionNames.filter(n => n.includes('UC'));
+    if (mt === 'wb') sectionNames = (typeof WB_DB === 'object') ? Object.keys(WB_DB) : sectionNames.filter(n => n.includes('WB'));
     const curSec = v25State.section || '';
     const curAsp = v25State.aspect || 'elev';
     html += `<strong>${memberLabel}</strong>`;
@@ -73,6 +76,45 @@ function v25UpdateOptionsBar() {
       `<option value="sec"${curAsp === 'sec' ? ' selected' : ''}>Cross-section</option>` +
       `</select>`
     );
+    // PFC-specific: open-face side. Only shown in cross-section aspect; in
+    // elevation the C-shape collapses to the same outline as a UB so the
+    // control would have no visible effect. Default '-v' matches AS 1100
+    // §3.12 (open face away from column).
+    if (mt === 'pfc' && curAsp === 'sec') {
+      const openSide = v25State.openSide || '-v';
+      html += fld('Open face',
+        `<select id="v25o-openside">` +
+        `<option value="-v"${openSide === '-v' ? ' selected' : ''}>−v (toward bottom)</option>` +
+        `<option value="+v"${openSide === '+v' ? ' selected' : ''}>+v (toward top)</option>` +
+        `</select>`
+      );
+    }
+  } else if (tool === 'v25-plate') {
+    const aspect = v25Last.plateAspect === 'sec' ? 'sec' : 'elev';
+    const thk = v25Last.plateThk || ((typeof V25_PLATE_DEFAULT_THK !== 'undefined') ? V25_PLATE_DEFAULT_THK : 10);
+    const thkList = (typeof V25_PLATE_THICKNESSES !== 'undefined') ? V25_PLATE_THICKNESSES : [10, 12, 16, 20, 25];
+    html += `<strong>Plate</strong>`;
+    html += fld('Aspect',
+      `<select id="v25o-plate-aspect">` +
+      `<option value="elev"${aspect === 'elev' ? ' selected' : ''}>Elevation</option>` +
+      `<option value="sec"${aspect === 'sec' ? ' selected' : ''}>Cross-section</option>` +
+      `</select>`
+    );
+    // Thickness dropdown is only meaningful in Section aspect — it's the
+    // VISIBLE plate gauge there. In Elevation aspect the value is stored as
+    // metadata only (used for "PL X THK" labels and weld sizing), so we hide
+    // the control to keep the bar minimal. Edit elev plates in the inspector.
+    if (aspect === 'sec') {
+      html += fld('Thickness',
+        `<select id="v25o-plate-thk" style="width:70px">` +
+        thkList.map(t => `<option value="${t}"${t === thk ? ' selected' : ''}>${t} mm</option>`).join('') +
+        `</select>`
+      );
+    }
+    const hint = aspect === 'sec'
+      ? 'Click on a member edge, drag perpendicular to set cleat width.'
+      : 'Drag = rectangle · Click = polygon (dbl-click / Enter to close).';
+    html += `<span style="color:var(--text-mute);font-size:11px">${hint}</span>`;
   } else if (tool === 'v25-leader') {
     html += `<strong>Leader</strong>`;
     html += fld('Default text', `<input id="v25o-leadertxt" value="${(v25Last.leaderText || 'CALLOUT').replace(/"/g, '&quot;')}" style="width:200px"/>`);
@@ -107,7 +149,30 @@ function v25UpdateOptionsBar() {
     if (typeof populateTilePalette === 'function') populateTilePalette();
     if (typeof highlightActiveTile === 'function') highlightActiveTile();
   });
-  wire('v25o-aspect', e => { v25State.aspect = e.target.value; });
+  wire('v25o-aspect', e => {
+    v25State.aspect = e.target.value;
+    v25UpdateOptionsBar();
+    // Cross-section preview in v25DrawPreview is keyed off v25State.aspect, so
+    // a render kick makes the ghost section appear / disappear immediately.
+    if (typeof requestRender === 'function') requestRender();
+  });
+  wire('v25o-openside', e => { v25State.openSide = e.target.value; });
+  wire('v25o-plate-aspect', e => {
+    v25Last.plateAspect = e.target.value;
+    // Reset in-progress placement state so a half-drawn elev polygon doesn't
+    // bleed into section mode (and vice-versa).
+    if (typeof v25State === 'object') {
+      v25State.polyPts = [];
+      v25State.plateDownPx = null;
+      v25State.plateDownWorld = null;
+    }
+    v25UpdateOptionsBar();
+    if (typeof requestRender === 'function') requestRender();
+  });
+  wire('v25o-plate-thk', e => {
+    v25Last.plateThk = parseInt(e.target.value, 10) || 10;
+    if (typeof requestRender === 'function') requestRender();
+  });
   const pickBtn = bar.querySelector('#v25o-sect-pick');
   if (pickBtn) pickBtn.addEventListener('click', (ev) => {
     ev.stopPropagation();

@@ -81,6 +81,22 @@ function rFillRect(blk, u, v, w, h) {
   ctx.fillRect(p.x, p.y, sw, sh);
 }
 
+// Fill a real-world polygon. `pts` is an array of {u, v} in real-world coords.
+// Used by drawSHS when joint trimming turns the body into a non-rectangular
+// quadrilateral (mitred ends).
+function rFillPoly(blk, pts) {
+  if (!pts || pts.length < 3) return;
+  ctx.beginPath();
+  const p0 = real2px(blk, pts[0].u, pts[0].v);
+  ctx.moveTo(p0.x, p0.y);
+  for (let i = 1; i < pts.length; i++) {
+    const p = real2px(blk, pts[i].u, pts[i].v);
+    ctx.lineTo(p.x, p.y);
+  }
+  ctx.closePath();
+  ctx.fill();
+}
+
 // Stroke a circle at real-world (cu, cv) with real-world diameter d
 function rCircle(blk, cu, cv, d) {
   const p = real2px(blk, cu, cv);

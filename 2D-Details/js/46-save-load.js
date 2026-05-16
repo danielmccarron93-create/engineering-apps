@@ -16,6 +16,13 @@ function saveProject() {
     objects3D: objects3D,
     entities2D: entities2D,
     weldOverrides: weldOverrides,
+    // V14-J — per-pair joint overrides. mitrePairs is the legacy 3D + V25
+    // mitre flag (V25 default is now mitre, so V25 entries here are no-ops
+    // but kept for back-compat reads). priorityForPairV25 stores the user's
+    // explicit "this member is priority" choice for a V25 pair; absent means
+    // mitre. Per-object weldPriorityBoost is round-tripped via objects3D.
+    mitrePairs: (typeof mitrePairs !== 'undefined') ? mitrePairs : {},
+    priorityForPairV25: (typeof priorityForPairV25 !== 'undefined') ? priorityForPairV25 : {},
     sheetInfo: sheetInfo,
     blocks: blocks.map(b => ({ viewKey: b.viewKey, sheetX: b.sheetX, sheetY: b.sheetY, boxW: b.boxW, boxH: b.boxH, hidden: b.hidden }))
   };
@@ -42,6 +49,12 @@ function loadProject(file) {
       if (data.secCutX !== undefined) secCutX = data.secCutX;
       if (data.planCutY !== undefined) planCutY = data.planCutY;
       if (data.weldOverrides) weldOverrides = data.weldOverrides; else weldOverrides = {};
+      if (typeof mitrePairs !== 'undefined') {
+        mitrePairs = data.mitrePairs || {};
+      }
+      if (typeof priorityForPairV25 !== 'undefined') {
+        priorityForPairV25 = data.priorityForPairV25 || {};
+      }
       if (data.sheetInfo) Object.assign(sheetInfo, data.sheetInfo);
       // Restore block positions
       if (data.blocks) {
