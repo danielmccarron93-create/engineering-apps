@@ -195,6 +195,34 @@ function v25Plate2Centroid(ent) {
   return { u: (b.L + b.R) / 2, v: (b.B + b.T) / 2 };
 }
 
+// Axis-aligned snap edges in the v25Mem2Edges-compatible shape
+// ({axis, value, label}) so v25ApplySnap can soft-snap a moving plate to
+// nearby mem2 outer faces during body drag. Only fires for plates whose
+// orientation is within ±5° of an axis — rotated plates emit nothing, same
+// rule v25Mem2Edges uses for diagonal members.
+function v25Plate2EdgesForSnap(ent) {
+  const edges = [];
+  if (!ent || ent.type !== 'plate2') return edges;
+  const b = v25Plate2Bounds(ent);
+  if (!b) return edges;
+  // Only emit axis-aligned snap edges when the entity is on-axis. Rect/poly
+  // elevation plates with rot ≈ 0 always pass; sec cleats pass when their
+  // rot is near 0 / 90 / 180 / 270 (so their length+thickness edges align
+  // with u and v).
+  const rotDeg = ((ent.rot || 0) % 360 + 360) % 360;
+  const nearAxis = (Math.abs(rotDeg % 90) < 5) || (Math.abs((rotDeg % 90) - 90) < 5);
+  if (!nearAxis) return edges;
+  const lbl = 'PLATE edge';
+  // Use bbox edges — works for rect, polygon (bbox approximation), and sec.
+  // For axis-aligned plates these are the actual visible edges; we already
+  // gated on nearAxis above so bbox == real edges.
+  edges.push({ axis: 'u', value: b.L, label: lbl });
+  edges.push({ axis: 'u', value: b.R, label: lbl });
+  edges.push({ axis: 'v', value: b.B, label: lbl });
+  edges.push({ axis: 'v', value: b.T, label: lbl });
+  return edges;
+}
+
 // ============================================================
 // HOST-FACE SNAP (first click)
 // ============================================================

@@ -1034,7 +1034,12 @@ function initEvents() {
         // or rotation handle), so end-edits stay precise. Mutates ent.u/ent.v
         // when a snap catches; activeEdgeSnaps drives the dashed feedback
         // line via the existing drawEdgeSnapLines() in the main render path.
-        if (v25Drag.handle === 'body' && v25Drag.ent && v25Drag.ent.type === 'mem2') {
+        // Body-translation soft-snap. Only fires on whole-entity drag (not
+        // end-handle / vertex / rotate handles, so per-handle edits stay
+        // precise). Mem2 and plate2 both participate — plates body-snap to
+        // nearby mem2 outer faces and to other plate edges.
+        if (v25Drag.handle === 'body' && v25Drag.ent
+            && (v25Drag.ent.type === 'mem2' || v25Drag.ent.type === 'plate2')) {
           activeEdgeSnaps = v25ApplySnap(activeBlock, [v25Drag.ent]);
         }
         v25Drag.lastU = u; v25Drag.lastV = v;
@@ -1284,8 +1289,13 @@ function initEvents() {
               if (typeof v25UpdateInspector === 'function') v25UpdateInspector();
             }
           }
+        } else if (a.snapped) {
+          // No drag, but the down position locked onto a snapped host edge.
+          // Start a two-click rect flow: first edge is anchored at the
+          // snap point, next click commits the opposite corner.
+          v25State.plateRectAnchor = { u: a.u, v: a.v, blk: a.blk };
         } else {
-          // No drag — push the snapped/raw down position as first polygon vertex.
+          // No drag, no snap — push as first polygon vertex (free polygon).
           v25State.polyPts.push({ u: a.u, v: a.v });
         }
       }

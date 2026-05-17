@@ -200,11 +200,13 @@ function initKeyboard() {
       // V25 — cancel a v25 tool's in-progress action
       if (tool && tool.startsWith('v25-')) {
         const had = v25State.dragStart || v25State.polyPts.length
-                  || v25State.hatchDownPx || v25State.plateDownPx;
+                  || v25State.hatchDownPx || v25State.plateDownPx
+                  || v25State.plateRectAnchor;
         if (had) {
           v25State.dragStart = null; v25State.polyPts = [];
           v25State.hatchDownPx = null; v25State.hatchDownWorld = null;
           v25State.plateDownPx = null; v25State.plateDownWorld = null;
+          v25State.plateRectAnchor = null;
           v25SnapInfo = null;
           requestRender();
         } else {

@@ -310,15 +310,40 @@ function v25TryHandleClick(blk, cu, cv, e) {
       return true;
     }
     // Elevation aspect.
+    // Two-click rect commit — if the user previously clicked-and-released on
+    // a snapped host edge (which set plateRectAnchor), this click commits a
+    // rectangle from the anchor to the cursor.
+    if (v25State.plateRectAnchor) {
+      const a = v25State.plateRectAnchor;
+      const u = Math.min(a.u, cu), v = Math.min(a.v, cv);
+      const w = Math.abs(cu - a.u), h = Math.abs(cv - a.v);
+      const thk = (typeof v25Last === 'object' && v25Last.plateThk)
+        ? v25Last.plateThk
+        : ((typeof V25_PLATE_DEFAULT_THK !== 'undefined') ? V25_PLATE_DEFAULT_THK : 10);
+      if (w > 1 && h > 1 && typeof v25Add === 'function') {
+        const ent = v25Add('plate2', {
+          aspect: 'elev', shape: 'rect', u, v, w, h, thk,
+        });
+        if (ent && typeof v25Selected !== 'undefined') {
+          v25Selected = [ent.id];
+          if (typeof v25UpdateInspector === 'function') v25UpdateInspector();
+        }
+      }
+      v25State.plateRectAnchor = null;
+      requestRender();
+      return true;
+    }
     if (v25State.polyPts.length === 0) {
       // Fresh start: soft-snap first vertex to nearest host edge, then defer
-      // the rect-vs-poly decision to mouseup.
+      // the rect-vs-poly decision to mouseup. Record `snapped:true` so the
+      // mouseup branch can pick "two-click rect" instead of "polygon start"
+      // when the user releases without dragging on a snapped edge.
       const snap = (typeof v25Plate2SnapHost === 'function')
         ? v25Plate2SnapHost(blk, cu, cv) : null;
       const aU = snap ? snap.u : cu;
       const aV = snap ? snap.v : cv;
       v25State.plateDownPx = { x: e.clientX, y: e.clientY };
-      v25State.plateDownWorld = { u: aU, v: aV, blk };
+      v25State.plateDownWorld = { u: aU, v: aV, blk, snapped: !!snap };
     } else {
       // Polygon already in progress — extend, or close if click lands near
       // the first vertex (Bluebeam-style click-to-close, ≥3 vertices).
@@ -702,6 +727,21 @@ function v25DrawPreview(blk, cs) {
           rot: rotDeg,
           opacity: 0.45,
         }, cs);
+        ctx.restore();
+      }
+    }
+    // Two-click rect preview — between the first click on a snapped edge
+    // and the second click that commits. Mirrors the drag preview shape.
+    if (aspect === 'elev' && v25State.plateRectAnchor) {
+      const a = v25State.plateRectAnchor;
+      const w = Math.abs(cu - a.u), h = Math.abs(cv - a.v);
+      const u = Math.min(a.u, cu), v = Math.min(a.v, cv);
+      if (w > 1 || h > 1) {
+        ctx.save();
+        ctx.strokeStyle = colorAlpha(col, 0.7);
+        ctx.lineWidth = 1;
+        ctx.setLineDash([6, 4]);
+        rRect(blk, u, v, Math.max(0.01, w), Math.max(0.01, h));
         ctx.restore();
       }
     }

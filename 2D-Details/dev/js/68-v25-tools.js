@@ -819,13 +819,25 @@ function v25ApplySnap(blk, draggedEnts) {
   const arr = entities2D[blk.viewKey] || [];
   const draggedIds = new Set(draggedEnts.map(e => e && e.id).filter(id => id != null));
 
-  // Collect target edges from every other mem2 in this view.
+  // Edge collection — polymorphic across mem2 + plate2 so plates body-drag-
+  // snap to member faces (and vice-versa, eventually) without per-type
+  // gating littering this function.
+  const edgesFor = (ent) => {
+    if (!ent) return [];
+    if (ent.type === 'mem2') return v25Mem2Edges(ent);
+    if (ent.type === 'plate2' && typeof v25Plate2EdgesForSnap === 'function') {
+      return v25Plate2EdgesForSnap(ent);
+    }
+    return [];
+  };
+
+  // Collect target edges from every other mem2 + plate2 in this view.
   const targets = [];
   for (const e of arr) {
-    if (!e || e.type !== 'mem2') continue;
+    if (!e) continue;
+    if (e.type !== 'mem2' && e.type !== 'plate2') continue;
     if (draggedIds.has(e.id)) continue;
-    const eList = v25Mem2Edges(e);
-    for (const edge of eList) targets.push(edge);
+    for (const edge of edgesFor(e)) targets.push(edge);
   }
   if (targets.length === 0) {
     v25ResetSnapState();
@@ -836,8 +848,8 @@ function v25ApplySnap(blk, draggedEnts) {
   let bestU = null, bestDistU = Infinity;
   let bestV = null, bestDistV = Infinity;
   for (const ent of draggedEnts) {
-    if (!ent || ent.type !== 'mem2') continue;
-    const myEdges = v25Mem2Edges(ent);
+    if (!ent || (ent.type !== 'mem2' && ent.type !== 'plate2')) continue;
+    const myEdges = edgesFor(ent);
     for (const me of myEdges) {
       for (const te of targets) {
         if (me.axis !== te.axis) continue;
@@ -853,8 +865,19 @@ function v25ApplySnap(blk, draggedEnts) {
     }
   }
 
-  const applyU = (delta) => draggedEnts.forEach(e => { if (e) e.u = (e.u || 0) + delta; });
-  const applyV = (delta) => draggedEnts.forEach(e => { if (e) e.v = (e.v || 0) + delta; });
+  // Translate u/v plus any pts[] children — polygon plates store their
+  // geometry in pts[] rather than the ent.u/v fields, so a snap that only
+  // touched ent.u would leave the visible outline behind.
+  const applyU = (delta) => draggedEnts.forEach(e => {
+    if (!e) return;
+    e.u = (e.u || 0) + delta;
+    if (Array.isArray(e.pts)) e.pts.forEach(p => { p.u += delta; });
+  });
+  const applyV = (delta) => draggedEnts.forEach(e => {
+    if (!e) return;
+    e.v = (e.v || 0) + delta;
+    if (Array.isArray(e.pts)) e.pts.forEach(p => { p.v += delta; });
+  });
 
   // U-axis soft-snap state machine.
   if (_v25SnappedAxisU) {

@@ -968,23 +968,76 @@ function v25Move(ent, du, dv, handle) {
     return;
   }
 
-  // V25 plate2 — vertex drag for polygon plates (same shape as mat poly).
+  // V25 plate2 — vertex drag for polygon plates.
+  //   Default: move only the dragged vertex (matches mat poly pattern).
+  //   Shift held: bbox-scale all vertices proportionally around the
+  //   opposite bbox corner — symmetric inverse of the rect-Shift behaviour.
   if (ent.type === 'plate2' && ent.aspect === 'elev' && ent.shape === 'poly'
       && typeof handle === 'string' && handle.startsWith('pt:')) {
     const idx = parseInt(handle.slice(3));
-    if (ent.pts && ent.pts[idx]) {
-      ent.pts[idx].u += du;
-      ent.pts[idx].v += dv;
+    if (!ent.pts || !ent.pts[idx]) return;
+    const shift = (typeof shiftHeld !== 'undefined' && shiftHeld);
+    if (shift && typeof v25Plate2Bounds === 'function') {
+      const b = v25Plate2Bounds(ent);
+      if (b && (b.R - b.L) > 0.5 && (b.T - b.B) > 0.5) {
+        const oldP = ent.pts[idx];
+        const newU = oldP.u + du, newV = oldP.v + dv;
+        // Anchor = the bbox corner OPPOSITE the side the dragged vertex sits
+        // on. So a vertex near the right side anchors to the left, and so on.
+        const midU = (b.L + b.R) / 2, midV = (b.B + b.T) / 2;
+        const anchorU = oldP.u > midU ? b.L : b.R;
+        const anchorV = oldP.v > midV ? b.B : b.T;
+        const denomU = oldP.u - anchorU;
+        const denomV = oldP.v - anchorV;
+        // Avoid divide-by-zero on degenerate vertices (e.g. anchor === oldP).
+        const scaleU = Math.abs(denomU) < 0.1 ? 1 : (newU - anchorU) / denomU;
+        const scaleV = Math.abs(denomV) < 0.1 ? 1 : (newV - anchorV) / denomV;
+        ent.pts.forEach(p => {
+          p.u = anchorU + (p.u - anchorU) * scaleU;
+          p.v = anchorV + (p.v - anchorV) * scaleV;
+        });
+        return;
+      }
     }
+    // Default — translate only the picked vertex.
+    ent.pts[idx].u += du;
+    ent.pts[idx].v += dv;
     return;
   }
 
-  // V25 plate2 — corner drag for rectangle elevation plates. Recompute u,v,w,h
-  // from min/max of the four corners after the drag so the rect stays axis-
-  // aligned even if the dragged corner crosses the opposite edge.
+  // V25 plate2 — corner drag for rectangle elevation plates.
+  //   Default: rectangle resize with opposite corner anchored (4 corners
+  //   stay synced as an axis-aligned rect via min/max of all four).
+  //   Shift held: morph the entity to shape='poly' (freezing the current 4
+  //   corners as pts[BL, BR, TR, TL]) and translate only the dragged corner.
+  //   The entity stays as a poly afterwards so subsequent grip drags use
+  //   the poly pipeline.
   if (ent.type === 'plate2' && ent.aspect === 'elev' && ent.shape === 'rect'
       && typeof handle === 'string' && handle.startsWith('corner:')) {
     const corner = handle.slice(7);
+    const cornerIdxMap = { bl: 0, br: 1, tr: 2, tl: 3 };
+    const idx = cornerIdxMap[corner];
+    const shift = (typeof shiftHeld !== 'undefined' && shiftHeld);
+    if (shift && idx != null) {
+      const w = ent.w || 0, h = ent.h || 0;
+      ent.pts = [
+        { u: ent.u,     v: ent.v },
+        { u: ent.u + w, v: ent.v },
+        { u: ent.u + w, v: ent.v + h },
+        { u: ent.u,     v: ent.v + h },
+      ];
+      ent.shape = 'poly';
+      delete ent.w;
+      delete ent.h;
+      // Re-key the active drag so subsequent mousemoves hit the poly pt:N
+      // branch above (no more rect-corner logic for this entity).
+      if (typeof v25Drag === 'object' && v25Drag) v25Drag.handle = 'pt:' + idx;
+      ent.pts[idx].u += du;
+      ent.pts[idx].v += dv;
+      return;
+    }
+    // Default: keep as rect, recompute u,v,w,h from min/max of corners so
+    // the dragged corner is anchored against the diagonally-opposite one.
     const w = ent.w || 0, h = ent.h || 0;
     const bl = { u: ent.u,     v: ent.v };
     const br = { u: ent.u + w, v: ent.v };
