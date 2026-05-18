@@ -43,6 +43,8 @@ function drawEnt2D(blk, ent, cs) {
   else if (ent.type === 'timber-member' && (typeof FEATURE_TIMBER_SCREWS === 'undefined' || FEATURE_TIMBER_SCREWS)) drawTimberMember(blk, ent, cs);
   else if (ent.type === 'steel-plate'  && (typeof FEATURE_TIMBER_SCREWS === 'undefined' || FEATURE_TIMBER_SCREWS)) drawSteelPlate(blk, ent, cs);
   else if (ent.type === 'screw'        && (typeof FEATURE_TIMBER_SCREWS === 'undefined' || FEATURE_TIMBER_SCREWS)) drawScrewEnt(blk, ent, cs);
+  // Phase 3 — Connection overlay (load arrow + bound-member highlight)
+  else if (ent.type === 'connection'   && (typeof FEATURE_TIMBER_SCREWS === 'undefined' || FEATURE_TIMBER_SCREWS)) drawConnection(blk, ent, cs);
   else if (ent.type === 'circle') {
     const p = real2px(blk, ent.cu, ent.cv);
     const r = ent.r * viewport.zoom / drawingScale;

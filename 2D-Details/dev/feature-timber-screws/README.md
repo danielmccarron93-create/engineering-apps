@@ -10,12 +10,13 @@
 
 You're picking this up cold. Do this in order:
 
-1. **Read the project root `CLAUDE.md`** — workflow rules (edit `dev/` only, classic `<script>` files, no build step, Australian Standards, metric), file conventions, the 74‑file numbered structure of `js/`. Non‑negotiable.
+1. **Read the project root `CLAUDE.md`** — workflow rules, file conventions, the 74‑file numbered structure of `js/`, the "Target user / quality bar / two-mode requirement" callout near the top, the "Two-chat workflow" section, and the "Adding a new member, fastener, or hatch type — integration checklist". Non‑negotiable.
 2. **Read this README end‑to‑end.**
-3. **Read `01-domain-knowledge.md`** — the engineering rules. You cannot start coding without this; the rules dictate the data model.
-4. **Skim `04-catalogues.md`** — the transcribed Rothoblaas tables. This is the data layer's source of truth.
-5. **Check `08-open-questions.md`** — if Dan hasn't answered any of these, ask him before writing code.
-6. **Open `07-build-plan.md` Phase 0** and start.
+3. **Read `10-corrective-plan.md` §"Locked architectural decisions" FIRST** — these are the answers to the architectural questions you might otherwise re-derive (timber is a `mem2` variant, steel plate is the existing `plate2`, screw is its own type, etc.). Treat them as fixed inputs.
+4. **Read `01-domain-knowledge.md`** — the engineering rules. You cannot start coding without this; the rules dictate the data model.
+5. **Skim `04-catalogues.md`** — the transcribed Rothoblaas tables. This is the data layer's source of truth.
+6. **Check `08-open-questions.md`** — if Dan hasn't answered any of these, ask him before writing code.
+7. **Open `07-build-plan.md` Phase 5** and start.
 
 After every phase, update `07-build-plan.md` with what was completed, what deviated, and what came up. Append findings (ETA quirks, EC5 footnotes, edge cases discovered while implementing) to `01-domain-knowledge.md` so the next session inherits them.
 
@@ -110,8 +111,12 @@ When in doubt, re‑read project root `CLAUDE.md`. It's authoritative.
 - ✅ Data model drafted (see `02-data-model.md`)
 - ✅ Architecture decided (new files 02b/02c/02d/75–79 — see `05-architecture.md`)
 - 🔶 Open questions: Q2 (AU class scope) and Q5 (default screw) answered. Q1/Q8 (ε vs α in capacity tables) parked with conservative placeholder. Remainder non-blocking for Phases 1–3.
-- ✅ **Phase 1 complete (2026-05-18)**: 4 catalogue files written and verified. All values in Dan's worked example reproduce exactly via console queries. See `07-build-plan.md` progress tracker.
-- ⏳ Phase 2 next: entity types (TimberMember, SteelPlate, Screw drawing)
+- ✅ **Phase 1 complete (2026-05-18)**: 4 catalogue files written and verified. All values in Dan's worked example reproduce exactly via console queries.
+- ✅ **Phase 2 complete (2026-05-18)**: TimberMember, SteelPlate, Screw entity types in `75-timber-conn-entities.js` and `77-screw-entity.js`. Drawing dispatch wired in `34-draw-2d.js`. `FEATURE_TIMBER_SCREWS` flag in `05-state.js`. Static SVG at `verification/phase2-fixture.svg`.
+- ✅ **Phase 3 complete (2026-05-18)**: Connection entity in `78-connection.js`. Factory + binding API. Load arrow + bound-member highlight overlay. `tmbrCreateExampleConnection()` builds the fixture in one call. 36 assertions pass. **Click-tool integration deferred to Phase 3.5.**
+- ✅ **Phase 4 complete (2026-05-18) — v1 acceptance gate MET**: Rule engine `79-checks-timber.js` (~440 lines, pure function). All 8 v1 acceptance tests pass, **74/74 assertions**. Test 1 (Dan's worked example) reproduces every value exactly — η = 0.801.
+- 🔶 **Phase 4-visibility — ROLLBACK PENDING**: an autoloader (`99-tmbr-autoload.js`) and a floating button were added to "make the feature visible" — wrong UI hook. A parallel `SteelPlate` entity was also built when V25 `plate2` is the right tool. See `10-corrective-plan.md` §"Rollback — what to delete".
+- ⏳ **Phase 5 (revised) next**: integrate properly via the V26 BB-rail Members palette. TIMBER as a `mem2` variant, HBS SCREW as its own entity routed through a new `v25-screw` tool, steel plate via existing V25 `plate2`. CONN tile for the click-rear → click-front Connection-creation flow. See `10-corrective-plan.md` for the locked architectural decisions and the new file-by-file change ledger.
 
 ---
 
