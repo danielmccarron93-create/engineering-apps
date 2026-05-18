@@ -31,16 +31,20 @@ A new structural feature gets palette tiles in **both** of these locations and b
 
 ---
 
-## Project structure (post-modular-split, 2026-05-02)
+## Project structure (post-modular-split 2026-05-02, post-PlannedBuilds-restructure 2026-05-18)
 
 ```
 2D-Details/
 ├── index.html                      RELEASED — thin shell (~1,300 lines)
-├── CLAUDE.md                       this file
+├── CLAUDE.md                       this file — the project playbook
 ├── README.md                       quick-start orientation
 ├── CHANGELOG.md                    version notes
-├── MODULAR_REFACTOR_PLAN.md        the refactor plan (now historical)
-├── PROGRESS.md                     live tracker (now historical)
+│
+├── PlannedBuilds/                  canonical home for in-flight planning (NEW 2026-05-18)
+│   ├── README.md                   the dashboard — every idea + status + files touched
+│   ├── _TEMPLATE/                  skeleton folder; copy when starting a new idea
+│   ├── timber-screws/              active — Rothoblaas HBS screw-to-timber connection designer
+│   └── (future ideas — one folder each)
 │
 ├── css/
 │   └── styles.css                  ~1,500 lines, 5 themes, all CSS tokens
@@ -126,14 +130,20 @@ A new structural feature gets palette tiles in **both** of these locations and b
 │   │   ├── 2026-04-29_pre-v25-backup.html
 │   │   ├── 2026-05-01_pre-layout-overhaul.html
 │   │   └── 2026-05-02_pre-modular-split.html  ← rollback for the split itself
+│   ├── completed-plans/            shipped-build planning docs, date-prefixed (2026-05-18)
+│   │   ├── README.md               index of what each file was
+│   │   └── 2026-MM-DD_<idea>.md    one file per archived plan
 │   └── handoff_v2_abandoned.md     stale, kept for context
 │
+├── bin/                            release helper scripts
 ├── Images/                         section thumbnails (PNG)
 ├── Thumbnails-SVG/                 SVG previews
 │
-└── dev/                            gitignored — same structure as root, working copy
+└── dev/                            gitignored — working CODE copy only
     ├── index.html, css/, js/       mirror of root
     └── design-handoff/             V25 design integration tracking (kept)
+                                    NOTE: planning folders no longer live in dev/ —
+                                    they live in PlannedBuilds/ at root from the start.
 ```
 
 ---
@@ -196,35 +206,40 @@ Feature work is done across **two separate chat sessions** so the planning think
 - Read the existing code thoroughly — every integration point in the V25 / V26 BB-rail palette, every existing entity type that might fit, every catalogue / picker / options-bar wiring.
 - Think hard about the idea from the perspective of an Australian structural engineer who will use this daily — not as an abstract product feature, but as a tool in a real-day workflow.
 - Identify every UI surface the feature touches: 3D-mode palette (`60-tile-palette.js`), 2D-mode V26 BB-rail (`74-v26-bb-rail.js`), size picker (`58-size-picker.js`), options bar (`72-v25-options-bar.js`), inspector (`59-inspector.js`), save/load (`46-save-load.js`), export (`44-pdf-export.js`, `45-dxf-export.js`).
-- Produce a planning folder at `dev/feature-<name>/` containing: README, domain knowledge, data model, entity / engine spec, architecture, UX, build plan, open questions, test cases. (See `dev/feature-timber-screws/` for the canonical example — ten markdown files covering everything from EN/ETA rule research through to numbered test fixtures with exact expected outputs.)
+- Produce or update a planning folder at `PlannedBuilds/<idea>/` containing: README, context, design (data model + architecture + integration points), build plan, open questions, test cases (for ideas with logic). Larger ideas can split further; smaller ones can collapse files. See `PlannedBuilds/timber-screws/` for the canonical example — ten markdown files covering everything from EN/ETA rule research through to numbered test fixtures with exact expected outputs.
+- Declare the "Files touched" list in the idea's `02-design.md` (or equivalent) — every released `dev/js/NN-*.js`, `dev/index.html`, `dev/css/styles.css` the build will modify. Updates the dashboard table in `PlannedBuilds/README.md` for multi-build conflict detection.
 - Surface every open question for Dan to answer before any code is written. Recommend one option per question. Don't proceed if a blocking question is unanswered.
 
-**No code is written in the plan chat.** Even if the plan is fully locked, the build happens in the next chat. Documentation files (`CLAUDE.md`, `dev/feature-<name>/*.md`, `CHANGELOG.md`) can be edited in a plan chat — they're planning artefacts, not code.
+**No code is written in the plan chat.** Even if the plan is fully locked, the build happens in the next chat. Documentation files (`CLAUDE.md`, `PlannedBuilds/<idea>/*.md`, `CHANGELOG.md`) can be edited in a plan chat — they're planning artefacts, not code.
 
-**2. Build chat.** Dan opens a fresh chat and points it at the planning folder. The build chat:
+**2. Build chat.** Dan opens a fresh chat and points it at the planning folder(s). The build chat:
 
-- Reads `CLAUDE.md` (this file) + `dev/feature-<name>/README.md` end-to-end on first load.
+- Reads `CLAUDE.md` (this file) + `PlannedBuilds/README.md` + `PlannedBuilds/<idea>/README.md` end-to-end on first load.
 - Confirms every open question is answered before starting Phase 1.
 - Walks the build plan phase by phase, testing at each boundary (`node --check` on every new JS file, headless verification via the existing test patterns, browser smoke-tests through `dev/index.html`).
 - Updates the planning folder's progress tracker after each phase.
 - Stops at planned phase boundaries — does not silently extend scope.
 
+**Multi-idea build chats.** A single build chat can be pointed at multiple `PlannedBuilds/<idea>/` folders at once. The first task in that case is to produce a *consolidation plan* — cross-check the "Files touched" lists, identify overlaps, propose a unified phase ordering that avoids touching the same file twice with conflicting intent. The chat then executes the consolidated plan, updating each idea's progress tracker independently so the state of each remains legible.
+
 **3. Review.** Dan reads the diff, smoke-tests `dev/index.html` in the browser, comes back with comments.
 
 **4. Iterate.** A short follow-on chat (or the same build chat) addresses the comments.
 
-**5. Mirror dev → root.** Run the helper sequence in "Mirroring" above. The planning folder `dev/feature-<name>/` is also mirrored to root (`feature-<name>/`) so future sessions and GitHub readers can find it — the standard mirror script copies only `index.html` / `css/` / `js/`, so the planning folder needs an explicit `cp -r`.
+**5. Mirror dev → root.** Run the helper sequence in "Mirroring" above. The planning folder lives at `PlannedBuilds/<idea>/` from the start (it's at root, not in `dev/`), so it's already in the right place — no extra copy step. Update the dashboard table in `PlannedBuilds/README.md` to reflect the new status.
 
 **6. Push.** Dan handles git from there.
+
+**7. Archive on ship.** Once the feature is in released code, move the idea folder to `archive/completed-plans/<YYYY-MM-DD>_<idea>/` (date = ship date), remove its row from the in-flight dashboard, and add a one-line summary to `archive/completed-plans/README.md`.
 
 ---
 
 ## How to add a feature (build-chat micro-process)
 
-This is the per-step micro-process for a build chat. The plan chat's deliverable is the `dev/feature-<name>/` folder per the Two-chat workflow above — by the time these steps run, that folder exists and is authoritative.
+This is the per-step micro-process for a build chat. The plan chat's deliverable is the `PlannedBuilds/<idea>/` folder per the Two-chat workflow above — by the time these steps run, that folder exists and is authoritative.
 
 1. **Read this file end-to-end.** Especially the variable conventions, the file map, the "Target user / quality bar / two-mode requirement" section, and the "Adding a new member, fastener, or hatch type" integration checklist below.
-2. **Read the feature's planning folder** (`dev/feature-<name>/README.md` + the supporting markdown files) and confirm every open question is answered.
+2. **Read the feature's planning folder** (`PlannedBuilds/<idea>/README.md` + the supporting markdown files) and confirm every open question is answered. Cross-check the dashboard at `PlannedBuilds/README.md` for any other in-flight ideas that touch the same files.
 3. **Identify which `js/NN-*.js` file the change belongs in.** If it doesn't fit, that's a signal the file boundaries need a tweak — flag it before adding a new file.
 4. **Make the change in `dev/js/NN-*.js`.** Run `node --check` on the file.
 5. **Open `dev/index.html` in a browser.** DevTools console must stay clean.

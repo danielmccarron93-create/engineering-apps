@@ -65,7 +65,7 @@ For the Connection: **front/rear refs now point to `mem2` or `plate2` entity IDs
 | `dev/index.html` | Remove `<script src="js/99-tmbr-autoload.js">` line | Companion to above |
 | `dev/js/75-timber-conn-entities.js` | Remove `mkSteelPlate`, `drawSteelPlate`, `steelPlateBounds` (keep the timber-member helpers as reusable building blocks for the `mem2`-timber sub-renderer); also remove `mkTimberMember` + `drawTimberMember` (refactor into a sub-renderer that operates on a `mem2` instead) | Use V25 `plate2` and `mem2`-timber variant instead |
 | `dev/js/34-draw-2d.js` | Remove the `'timber-member'` and `'steel-plate'` dispatch cases. Keep the `'screw'` and `'connection'` cases. | Timber routes through `mem2` (V25 dispatcher), plate routes through `plate2` (V25 dispatcher) |
-| `dev/feature-timber-screws/verification/phase2-fixture.svg`, `phase3-fixture.svg` | Keep — they're historical verification artefacts | No reason to delete |
+| `PlannedBuilds/timber-screws/verification/phase2-fixture.svg`, `phase3-fixture.svg` | Keep — they're historical verification artefacts | No reason to delete |
 
 After rollback the feature still has the catalogue, the Connection model, the rule engine, and the screw entity. It just no longer has the misguided UI hook.
 
