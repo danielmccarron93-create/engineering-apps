@@ -1,0 +1,1223 @@
+/* ============================================================
+   StructuralSketch — Component Redesign
+   ============================================================
+   This file restyles the EXISTING class names from the original
+   styles.css. It is purely additive — link AFTER styles.css and
+   AFTER 02-design-tokens.css. No HTML class names need to change.
+
+   Load order in index.html:
+     <link rel="stylesheet" href="css/styles.css">        <- original
+     <link rel="stylesheet" href="css/02-design-tokens.css">
+     <link rel="stylesheet" href="css/03-component-redesign.css">
+   ============================================================ */
+
+/* ─────────────────────────────────────────────────────────────
+   GLOBAL — type and base
+   ───────────────────────────────────────────────────────────── */
+html, body {
+  font-family: var(--ss-font-sans);
+  font-size: 13px;
+  background: var(--ss-bg-app);
+  color: var(--ss-ink-1);
+  font-feature-settings: "ss01", "cv11";
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+::selection { background: var(--ss-accent-soft); color: var(--ss-accent-ink); }
+
+/* Scrollbars */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--ss-line-2);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--ss-ink-4);
+  background-clip: padding-box;
+  border: 2px solid transparent;
+}
+
+/* ─────────────────────────────────────────────────────────────
+   HEADER (original: <header> with .app-title etc.)
+   ───────────────────────────────────────────────────────────── */
+#app > header,
+header {
+  height: var(--ss-h-header);
+  padding: 0 18px;
+  background: var(--ss-bg-surface);
+  border-bottom: 1px solid var(--ss-line-1);
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+header .app-title {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--ss-ink-1);
+}
+
+header .app-subtitle {
+  font-family: var(--ss-font-serif);
+  font-style: italic;
+  font-size: 12px;
+  color: var(--ss-ink-3);
+  font-weight: 400;
+  letter-spacing: 0;
+}
+
+/* Header .tbtn — refined to match button system */
+header .tbtn {
+  height: 28px;
+  padding: 0 10px !important;
+  font-size: 12px !important;
+  font-weight: 500;
+  color: var(--ss-ink-2);
+  border-radius: var(--ss-r-2);
+  background: transparent;
+  border: 1px solid transparent;
+  transition: background var(--ss-dur-fast) var(--ss-ease),
+              color var(--ss-dur-fast) var(--ss-ease);
+}
+header .tbtn:hover {
+  background: var(--ss-bg-hover);
+  color: var(--ss-ink-1);
+  border-color: transparent;
+}
+
+/* Make "Export PDF" the primary action */
+header #btn-export-pdf {
+  background: var(--ss-accent);
+  color: var(--ss-accent-fg);
+  border-color: var(--ss-accent);
+  font-weight: 500;
+}
+header #btn-export-pdf:hover {
+  background: var(--ss-accent-hover);
+  border-color: var(--ss-accent-hover);
+  color: var(--ss-accent-fg);
+}
+
+/* ─────────────────────────────────────────────────────────────
+   THEME TOGGLE (segmented pill, top right of header)
+   See 06-theme-toggle.md for HTML.
+   ───────────────────────────────────────────────────────────── */
+.ss-theme-seg {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px;
+  height: 28px;
+  background: var(--ss-bg-sunken);
+  border: 1px solid var(--ss-line-1);
+  border-radius: var(--ss-r-pill);
+  margin-left: 6px;
+  user-select: none;
+}
+.ss-theme-seg button {
+  height: 22px;
+  padding: 0 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--ss-font-sans);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--ss-ink-3);
+  background: transparent;
+  border: none;
+  border-radius: var(--ss-r-pill);
+  cursor: pointer;
+  transition: background var(--ss-dur-base) var(--ss-ease),
+              color var(--ss-dur-base) var(--ss-ease),
+              box-shadow var(--ss-dur-base) var(--ss-ease);
+}
+.ss-theme-seg button:hover { color: var(--ss-ink-1); }
+.ss-theme-seg button.is-on {
+  background: var(--ss-bg-elevated);
+  color: var(--ss-ink-1);
+  box-shadow: var(--ss-shadow-2);
+}
+.ss-theme-seg .ss-dot {
+  width: 8px; height: 8px;
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+.ss-theme-seg .ss-dot[data-theme="warm"] {
+  background: oklch(0.62 0.135 40);
+}
+.ss-theme-seg .ss-dot[data-theme="mono"] {
+  background: linear-gradient(135deg, #fff 0 50%, #0e1116 50% 100%);
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,0.2);
+}
+.ss-theme-seg .ss-dot[data-theme="dark"] {
+  background: radial-gradient(circle at 30% 30%,
+              oklch(0.34 0.012 50), oklch(0.16 0.008 50));
+}
+
+/* ─────────────────────────────────────────────────────────────
+   RIBBON TOOLBAR (.toolbar)
+   ───────────────────────────────────────────────────────────── */
+.toolbar {
+  height: var(--ss-h-ribbon);
+  padding: 8px 12px 0 12px;
+  background: var(--ss-bg-app);
+  border-bottom: 1px solid var(--ss-line-1);
+}
+
+.ribbon-panel {
+  padding: 0 6px;
+}
+.ribbon-panel + .ribbon-panel {
+  border-left: 1px solid var(--ss-line-1);
+}
+
+.ribbon-panel-tools {
+  padding: 4px 4px 6px 4px;
+}
+
+.ribbon-panel-label {
+  background: transparent;
+  border-top: none;
+  font-size: 9.5px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ss-ink-4);
+  padding-top: 3px;
+}
+
+.ribbon-sep { display: none; } /* group separators now come from border-left above */
+
+/* Large ribbon button */
+.rbtn {
+  min-width: 56px;
+  padding: 6px 8px 5px 8px;
+  border-radius: var(--ss-r-2);
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--ss-ink-2);
+  transition:
+    background var(--ss-dur-fast) var(--ss-ease),
+    color var(--ss-dur-fast) var(--ss-ease);
+}
+.rbtn svg { stroke: var(--ss-ink-2); }
+.rbtn .rbtn-label {
+  font-size: 10.5px;
+  font-weight: 500;
+  color: var(--ss-ink-2);
+  letter-spacing: -0.005em;
+}
+.rbtn:hover {
+  background: var(--ss-bg-hover);
+  border-color: transparent;
+  color: var(--ss-ink-1);
+}
+.rbtn:hover svg { stroke: var(--ss-ink-1); }
+.rbtn:hover .rbtn-label { color: var(--ss-ink-1); }
+
+.rbtn:active {
+  background: var(--ss-bg-active);
+  transform: translateY(0.5px);
+}
+
+.rbtn.active {
+  background: var(--ss-accent-soft);
+  border-color: transparent;
+  box-shadow: none;
+}
+.rbtn.active svg { stroke: var(--ss-accent-ink); }
+.rbtn.active .rbtn-label {
+  color: var(--ss-accent-ink);
+  font-weight: 600;
+}
+
+/* Small inline ribbon button */
+.rbtn-sm {
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--ss-ink-2);
+  border-radius: var(--ss-r-2);
+  border: 1px solid transparent;
+  background: transparent;
+  padding: 4px 9px;
+}
+.rbtn-sm:hover {
+  background: var(--ss-bg-hover);
+  color: var(--ss-ink-1);
+  border-color: transparent;
+}
+.rbtn-sm.active {
+  background: var(--ss-accent-soft);
+  color: var(--ss-accent-ink);
+  border-color: transparent;
+}
+.rbtn-sm svg { stroke: currentColor; }
+
+/* Split button */
+.rbtn-split > .rbtn,
+.rbtn-split > .rbtn-split-arrow {
+  background: transparent;
+  border-color: transparent;
+}
+.rbtn-split:hover > .rbtn,
+.rbtn-split:hover > .rbtn-split-arrow {
+  background: var(--ss-bg-hover);
+  border-color: transparent;
+}
+.rbtn-split.active > .rbtn,
+.rbtn-split.active > .rbtn-split-arrow {
+  background: var(--ss-accent-soft);
+  border-color: transparent;
+}
+.rbtn-split.active > .rbtn svg,
+.rbtn-split.active > .rbtn-split-arrow svg { stroke: var(--ss-accent-ink); }
+
+.rbtn-split-arrow {
+  border-left-color: var(--ss-line-1);
+}
+
+.rbtn-split-menu {
+  background: var(--ss-bg-elevated);
+  border: 1px solid var(--ss-line-1);
+  border-radius: var(--ss-r-2);
+  box-shadow: var(--ss-shadow-3);
+  padding: 4px;
+}
+
+/* Legacy .tbtn outside header */
+.tbtn {
+  height: 24px;
+  padding: 0 9px;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--ss-ink-2);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--ss-r-2);
+  transition: background var(--ss-dur-fast) var(--ss-ease),
+              color var(--ss-dur-fast) var(--ss-ease);
+}
+.tbtn:hover {
+  background: var(--ss-bg-hover);
+  color: var(--ss-ink-1);
+  border-color: transparent;
+}
+.tbtn.active {
+  background: var(--ss-accent-soft);
+  color: var(--ss-accent-ink);
+  border-color: transparent;
+}
+
+.toolbar select {
+  height: 26px;
+  font-family: var(--ss-font-mono);
+  font-size: 11.5px;
+  color: var(--ss-ink-1);
+  background: var(--ss-bg-elevated);
+  border: 1px solid var(--ss-line-2);
+  border-radius: var(--ss-r-1);
+  padding: 0 8px;
+}
+.toolbar select:focus {
+  outline: none;
+  border-color: var(--ss-accent-line);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--ss-accent) 18%, transparent);
+}
+
+/* Toolbar dim sub-bar */
+.dim-sub-toolbar {
+  height: 28px;
+  background: var(--ss-bg-sunken);
+  border-bottom: 1px solid var(--ss-line-1);
+}
+.dim-sub-toolbar .rbtn-sm {
+  background: var(--ss-bg-elevated);
+  border: 1px solid var(--ss-line-2);
+  height: 22px;
+}
+.dim-sub-toolbar .rbtn-sm.active {
+  background: var(--ss-accent-soft);
+  border-color: var(--ss-accent-line);
+  color: var(--ss-accent-ink);
+}
+
+/* ─────────────────────────────────────────────────────────────
+   CANVAS CONTAINER + STATUS BAR
+   ───────────────────────────────────────────────────────────── */
+#canvas-container {
+  background: var(--ss-bg-canvas);
+}
+
+#status-bar {
+  height: var(--ss-h-status);
+  padding: 0 16px;
+  background: var(--ss-bg-surface);
+  border-top: 1px solid var(--ss-line-1);
+  font-size: 11.5px;
+  color: var(--ss-ink-3);
+  font-family: var(--ss-font-mono);
+  gap: 18px;
+}
+.status-label {
+  font-family: var(--ss-font-sans);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ss-ink-4);
+}
+.status-value { color: var(--ss-ink-1); font-weight: 500; }
+
+/* ─────────────────────────────────────────────────────────────
+   FLOATING PANELS — layers + properties
+   ───────────────────────────────────────────────────────────── */
+#layer-panel,
+#props-panel {
+  background: color-mix(in oklab, var(--ss-bg-elevated) 92%, transparent);
+  backdrop-filter: blur(16px) saturate(1.3);
+  -webkit-backdrop-filter: blur(16px) saturate(1.3);
+  border: 1px solid var(--ss-line-1);
+  border-radius: var(--ss-r-3);
+  box-shadow: var(--ss-shadow-3);
+  font-size: 12px;
+  top: 16px;
+}
+#layer-panel { right: 16px; width: 220px; }
+#props-panel { left: 16px;  width: 248px; }
+
+.layer-panel-hdr,
+.props-hdr {
+  padding: 10px 12px 8px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ss-ink-3);
+  border-bottom: 1px solid var(--ss-line-1);
+}
+.props-hdr .props-type {
+  color: var(--ss-accent-ink);
+  font-family: var(--ss-font-mono);
+  font-size: 11px;
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 600;
+}
+
+.layer-row {
+  padding: 6px 10px;
+  border-radius: var(--ss-r-1);
+  margin: 1px 4px;
+  transition: background var(--ss-dur-fast);
+}
+.layer-row:hover { background: var(--ss-bg-hover); }
+.layer-row.active { background: var(--ss-accent-soft); }
+.layer-row.active .layer-name { color: var(--ss-accent-ink); font-weight: 600; }
+
+.layer-swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,0.08);
+}
+.layer-name { font-size: 12px; color: var(--ss-ink-1); font-weight: 500; }
+
+.layer-vis {
+  width: 22px;
+  height: 22px;
+  border-radius: var(--ss-r-1);
+  color: var(--ss-ink-3);
+}
+.layer-vis:hover { background: var(--ss-bg-active); color: var(--ss-ink-1); }
+
+/* Property rows */
+.prop-row {
+  padding: 5px 10px;
+  border-bottom: 1px solid transparent;
+  border-radius: var(--ss-r-1);
+  margin: 1px 4px;
+}
+.prop-row:hover { background: var(--ss-bg-hover); }
+.prop-label {
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ss-ink-3);
+}
+.prop-value {
+  font-family: var(--ss-font-mono);
+  font-size: 12px;
+  color: var(--ss-ink-1);
+  font-weight: 500;
+}
+
+.prop-input, .prop-inline-input, .prop-select-edit {
+  background: var(--ss-bg-elevated);
+  border: 1px solid var(--ss-line-2);
+  border-radius: var(--ss-r-1);
+  font-family: var(--ss-font-mono);
+  font-size: 12px;
+  color: var(--ss-ink-1);
+  padding: 3px 6px;
+  height: 24px;
+}
+.prop-input:focus, .prop-inline-input:focus, .prop-select-edit:focus {
+  outline: none;
+  border-color: var(--ss-accent-line);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--ss-accent) 18%, transparent);
+}
+
+/* Bulk properties section */
+.bulk-props-section { padding: 6px 10px; border-bottom: 1px solid var(--ss-line-1); }
+.bulk-props-type-header {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ss-accent-ink);
+  background: var(--ss-accent-soft);
+  padding: 4px 8px;
+  border-radius: var(--ss-r-1);
+}
+
+/* ─────────────────────────────────────────────────────────────
+   MODALS — generic chrome
+   Covers: .modal-overlay/.modal-box, #tb-edit-dialog,
+   #notes-panel-modal, #table-modal, #slab-callout-modal,
+   #shortcuts-panel, #level-manager, #section-overlay,
+   #schedule-overlay, raft design dialogs, etc.
+   ───────────────────────────────────────────────────────────── */
+.modal-overlay,
+#tb-edit-dialog,
+#notes-panel-modal,
+#table-modal,
+#slab-callout-modal,
+#shortcuts-panel,
+#level-manager,
+#section-overlay,
+#schedule-overlay,
+.marker-modal-overlay,
+#raft-design-overlay,
+#calc-sheet-overlay,
+#tonnage-overlay {
+  background: color-mix(in oklab, var(--ss-ink-1) 32%, transparent) !important;
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+}
+
+.modal-box,
+.tb-edit-box,
+.notes-panel-box,
+.table-modal-box,
+.slab-callout-box,
+.shortcuts-box,
+.level-mgr-box,
+.section-box,
+.marker-modal-box,
+.schedule-box,
+.raft-design-box,
+.calc-sheet-box,
+.tonnage-box {
+  background: var(--ss-bg-elevated) !important;
+  border: 1px solid var(--ss-line-1);
+  border-radius: var(--ss-r-4) !important;
+  box-shadow: var(--ss-shadow-4) !important;
+  color: var(--ss-ink-1);
+  overflow: hidden;
+}
+
+/* Modal title hierarchy */
+.modal-box h3,
+.tb-edit-box h3,
+.shortcuts-box h3,
+.level-mgr-box h3,
+.notes-panel-box h3,
+.schedule-box h3,
+.raft-design-box h3 {
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.012em;
+  color: var(--ss-ink-1);
+  margin: 0 0 14px 0;
+}
+
+.modal-box p { color: var(--ss-ink-3); font-size: 13px; line-height: 1.55; }
+
+.modal-box label,
+.tb-field label,
+.notes-panel-box label {
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ss-ink-3);
+  margin-bottom: 5px;
+}
+
+.modal-box input,
+.tb-field input,
+.notes-panel-box input,
+.notes-panel-box textarea {
+  height: 32px;
+  padding: 0 10px;
+  font-size: 13px;
+  font-family: var(--ss-font-sans);
+  background: var(--ss-bg-surface);
+  border: 1px solid var(--ss-line-2);
+  border-radius: var(--ss-r-2);
+  color: var(--ss-ink-1);
+}
+.modal-box input[type="number"] { font-family: var(--ss-font-mono); }
+.modal-box input:focus,
+.tb-field input:focus,
+.notes-panel-box input:focus,
+.notes-panel-box textarea:focus {
+  outline: none;
+  border-color: var(--ss-accent-line);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--ss-accent) 18%, transparent);
+}
+
+/* Modal action buttons */
+.modal-actions button,
+.tb-edit-box button,
+.notes-panel-box button {
+  height: 32px;
+  padding: 0 14px;
+  font-size: 12.5px;
+  font-weight: 500;
+  border-radius: var(--ss-r-2);
+  border: 1px solid var(--ss-line-2);
+  background: var(--ss-bg-elevated);
+  color: var(--ss-ink-1);
+  transition: background var(--ss-dur-fast),
+              border-color var(--ss-dur-fast);
+}
+.modal-actions button:hover {
+  background: var(--ss-bg-hover);
+  border-color: var(--ss-line-3);
+}
+.modal-actions .btn-primary {
+  background: var(--ss-accent);
+  border-color: var(--ss-accent);
+  color: var(--ss-accent-fg);
+}
+.modal-actions .btn-primary:hover {
+  background: var(--ss-accent-hover);
+  border-color: var(--ss-accent-hover);
+  color: var(--ss-accent-fg);
+}
+.modal-actions .btn-cancel {
+  background: transparent;
+  border-color: transparent;
+  color: var(--ss-ink-2);
+}
+.modal-actions .btn-cancel:hover {
+  background: var(--ss-bg-hover);
+  color: var(--ss-ink-1);
+}
+
+/* ─────────────────────────────────────────────────────────────
+   RAFT DESIGN PANEL — specific elements
+   ───────────────────────────────────────────────────────────── */
+.raft-panel-header,
+.raft-section-title {
+  background: transparent;
+}
+.raft-panel-title {
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.012em;
+  color: var(--ss-ink-1);
+}
+.raft-panel-subtitle {
+  font-family: var(--ss-font-mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--ss-ink-3);
+  padding: 2px 8px;
+  border-radius: var(--ss-r-1);
+  background: var(--ss-bg-sunken);
+  border: 1px solid var(--ss-line-1);
+}
+.raft-section-title {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ss-ink-3);
+  margin: 14px 0 8px 0;
+}
+.raft-hint {
+  font-family: var(--ss-font-serif);
+  font-style: italic;
+  font-size: 12.5px;
+  color: var(--ss-ink-3);
+  line-height: 1.5;
+}
+.raft-input {
+  height: 30px;
+  padding: 0 10px;
+  font-size: 12.5px;
+  font-family: var(--ss-font-mono);
+  color: var(--ss-ink-1);
+  background: var(--ss-bg-surface);
+  border: 1px solid var(--ss-line-2);
+  border-radius: var(--ss-r-2);
+}
+.raft-input:focus {
+  outline: none;
+  border-color: var(--ss-accent-line);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--ss-accent) 18%, transparent);
+}
+.raft-btn {
+  height: 32px;
+  padding: 0 14px;
+  font-size: 12.5px;
+  font-weight: 500;
+  border-radius: var(--ss-r-2);
+  border: 1px solid var(--ss-line-2);
+  background: var(--ss-bg-elevated);
+  color: var(--ss-ink-1);
+  transition: background var(--ss-dur-fast);
+}
+.raft-btn:hover {
+  background: var(--ss-bg-hover);
+  border-color: var(--ss-line-3);
+}
+.raft-btn.primary {
+  background: var(--ss-accent);
+  border-color: var(--ss-accent);
+  color: var(--ss-accent-fg);
+}
+.raft-btn.primary:hover {
+  background: var(--ss-accent-hover);
+  border-color: var(--ss-accent-hover);
+}
+.raft-btn.secondary { /* default — already styled above */ }
+.raft-btn[disabled] {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.raft-check {
+  padding: 10px 12px;
+  border-radius: var(--ss-r-2);
+  font-size: 12.5px;
+  font-weight: 500;
+  border: 1px solid;
+}
+.raft-check.pass {
+  background: color-mix(in oklab, var(--ss-ok) 8%, var(--ss-bg-elevated));
+  border-color: color-mix(in oklab, var(--ss-ok) 30%, transparent);
+  color: var(--ss-ok);
+}
+.raft-check.fail {
+  background: color-mix(in oklab, var(--ss-danger) 8%, var(--ss-bg-elevated));
+  border-color: color-mix(in oklab, var(--ss-danger) 30%, transparent);
+  color: var(--ss-danger);
+}
+.raft-check-row {
+  padding: 6px 10px;
+  font-size: 12px;
+  font-family: var(--ss-font-mono);
+  border-radius: var(--ss-r-1);
+  margin-top: 4px;
+}
+.raft-check-row.pass { color: var(--ss-ok); background: color-mix(in oklab, var(--ss-ok) 5%, transparent); }
+.raft-check-row.fail { color: var(--ss-danger); background: color-mix(in oklab, var(--ss-danger) 5%, transparent); }
+
+.raft-vertex-list {
+  background: var(--ss-bg-elevated);
+  border: 1px solid var(--ss-line-1);
+  border-radius: var(--ss-r-2);
+  padding: 6px;
+  font-family: var(--ss-font-mono);
+  font-size: 11.5px;
+  color: var(--ss-ink-2);
+  max-height: 140px;
+  overflow-y: auto;
+}
+.raft-vertex-item {
+  padding: 4px 8px;
+  border-radius: var(--ss-r-1);
+}
+.raft-vertex-item:hover { background: var(--ss-bg-hover); }
+
+.raft-preset-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.raft-summary {
+  font-family: var(--ss-font-mono);
+  font-size: 11.5px;
+  color: var(--ss-ink-2);
+  padding: 8px 10px;
+  background: var(--ss-bg-sunken);
+  border-radius: var(--ss-r-2);
+  margin-top: 8px;
+}
+
+/* ─────────────────────────────────────────────────────────────
+   SCHEDULE TABLE
+   ───────────────────────────────────────────────────────────── */
+.schedule-tab {
+  height: 40px;
+  padding: 0 14px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--ss-ink-3);
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  transition: color var(--ss-dur-base), border-color var(--ss-dur-base);
+}
+.schedule-tab:hover { color: var(--ss-ink-1); }
+.schedule-tab.active {
+  color: var(--ss-ink-1);
+  font-weight: 600;
+  border-bottom-color: var(--ss-accent);
+}
+
+#schedule-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+#schedule-table thead th {
+  position: sticky;
+  top: 0;
+  background: var(--ss-bg-sunken);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ss-ink-3);
+  text-align: left;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--ss-line-2);
+  white-space: nowrap;
+}
+#schedule-table tbody td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--ss-line-1);
+  color: var(--ss-ink-1);
+  font-family: var(--ss-font-mono);
+  font-size: 12px;
+}
+#schedule-table tbody tr { transition: background var(--ss-dur-fast); }
+#schedule-table tbody tr:hover { background: var(--ss-bg-hover); }
+#schedule-table tbody tr:last-child td { border-bottom: none; }
+
+#schedule-table .edit-cell {
+  cursor: pointer;
+  border-radius: var(--ss-r-1);
+}
+#schedule-table .edit-cell:hover {
+  background: var(--ss-bg-active);
+}
+#schedule-table .edit-cell.empty {
+  color: var(--ss-ink-4);
+  font-style: italic;
+  font-family: var(--ss-font-serif);
+}
+
+#schedule-table .sched-select {
+  height: 26px;
+  font-family: var(--ss-font-mono);
+  font-size: 11.5px;
+  color: var(--ss-ink-1);
+  background: var(--ss-bg-elevated);
+  border: 1px solid var(--ss-line-2);
+  border-radius: var(--ss-r-1);
+  padding: 0 6px;
+  width: 100%;
+}
+
+#schedule-table .delete-btn {
+  font-size: 11px;
+  color: var(--ss-danger);
+  background: transparent;
+  border: 1px solid color-mix(in oklab, var(--ss-danger) 30%, var(--ss-line-2));
+  border-radius: var(--ss-r-1);
+  height: 24px;
+  padding: 0 8px;
+  cursor: pointer;
+}
+#schedule-table .delete-btn:hover {
+  background: color-mix(in oklab, var(--ss-danger) 8%, transparent);
+}
+
+.dim-spinner button {
+  width: 18px; height: 14px;
+  font-size: 8px;
+  color: var(--ss-ink-3);
+  background: var(--ss-bg-sunken);
+  border: 1px solid var(--ss-line-2);
+  cursor: pointer;
+}
+.dim-spinner button:hover { background: var(--ss-bg-active); color: var(--ss-ink-1); }
+
+/* ─────────────────────────────────────────────────────────────
+   LEVEL BAR
+   ───────────────────────────────────────────────────────────── */
+#level-bar {
+  height: 36px;
+  background: var(--ss-bg-surface);
+  border-bottom: 1px solid var(--ss-line-1);
+}
+.level-tab {
+  font-size: 12px;
+  color: var(--ss-ink-3);
+  border-bottom: 2px solid transparent;
+  padding: 5px 14px;
+  border-right: none;
+  background: transparent;
+}
+.level-tab:hover { color: var(--ss-ink-1); background: var(--ss-bg-hover); }
+.level-tab.active {
+  color: var(--ss-ink-1);
+  font-weight: 600;
+  background: transparent;
+  border-bottom-color: var(--ss-accent);
+}
+.level-tab.active .level-ht {
+  color: var(--ss-accent-ink);
+  opacity: 1;
+}
+.level-ht {
+  font-family: var(--ss-font-mono);
+  font-size: 10.5px;
+  color: var(--ss-ink-4);
+}
+.level-nav-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--ss-r-1);
+  color: var(--ss-ink-2);
+}
+.level-nav-btn:hover {
+  background: var(--ss-bg-hover);
+  color: var(--ss-ink-1);
+}
+
+/* ─────────────────────────────────────────────────────────────
+   BANNERS (tool-banner, calib-banner)
+   ───────────────────────────────────────────────────────────── */
+.tool-banner,
+.calib-banner {
+  background: color-mix(in oklab, var(--ss-bg-elevated) 96%, transparent);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid var(--ss-line-1);
+  border-radius: var(--ss-r-3);
+  box-shadow: var(--ss-shadow-3);
+  color: var(--ss-ink-1);
+  font-size: 12.5px;
+  font-weight: 500;
+}
+.tool-banner strong,
+.calib-banner strong {
+  color: var(--ss-accent-ink);
+}
+.banner-btn {
+  height: 26px;
+  padding: 0 12px;
+  font-size: 11.5px;
+  font-weight: 500;
+  background: var(--ss-bg-elevated);
+  border: 1px solid var(--ss-line-2);
+  border-radius: var(--ss-r-1);
+  color: var(--ss-ink-1);
+}
+.banner-btn:hover { background: var(--ss-bg-hover); }
+.banner-btn.primary {
+  background: var(--ss-accent);
+  border-color: var(--ss-accent);
+  color: var(--ss-accent-fg);
+}
+.banner-btn.primary:hover { background: var(--ss-accent-hover); }
+
+/* ─────────────────────────────────────────────────────────────
+   CONTEXT MENU
+   ───────────────────────────────────────────────────────────── */
+#context-menu {
+  background: var(--ss-bg-elevated);
+  border: 1px solid var(--ss-line-1);
+  border-radius: var(--ss-r-2);
+  box-shadow: var(--ss-shadow-3);
+  padding: 4px;
+}
+.ctx-item {
+  padding: 6px 14px;
+  font-size: 12.5px;
+  color: var(--ss-ink-1);
+  border-radius: var(--ss-r-1);
+}
+.ctx-item:hover {
+  background: var(--ss-accent-soft);
+  color: var(--ss-accent-ink);
+}
+.ctx-shortcut {
+  font-family: var(--ss-font-mono);
+  font-size: 10.5px;
+  color: var(--ss-ink-4);
+}
+.ctx-divider {
+  background: var(--ss-line-1);
+  margin: 4px 0;
+}
+
+/* ─────────────────────────────────────────────────────────────
+   ORTHO BADGE + STATUS BADGES
+   ───────────────────────────────────────────────────────────── */
+.ortho-badge {
+  font-family: var(--ss-font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  padding: 3px 8px;
+  border-radius: var(--ss-r-pill);
+}
+.ortho-badge.on {
+  background: var(--ss-accent-soft);
+  color: var(--ss-accent-ink);
+  border: 1px solid var(--ss-accent-line);
+}
+.ortho-badge.off {
+  background: var(--ss-bg-sunken);
+  color: var(--ss-ink-4);
+  border: 1px solid var(--ss-line-1);
+}
+
+/* ─────────────────────────────────────────────────────────────
+   SHORTCUTS PANEL
+   ───────────────────────────────────────────────────────────── */
+.shortcut-grid { font-size: 12.5px; }
+.shortcut-key {
+  font-family: var(--ss-font-mono);
+  font-size: 11px;
+  padding: 2px 8px;
+  background: var(--ss-bg-sunken);
+  border: 1px solid var(--ss-line-1);
+  border-radius: var(--ss-r-1);
+  color: var(--ss-ink-2);
+}
+.shortcut-desc { color: var(--ss-ink-2); }
+.shortcut-divider {
+  border-top-color: var(--ss-line-1);
+}
+
+/* ─────────────────────────────────────────────────────────────
+   COLUMN DIRECTION POPUP
+   ───────────────────────────────────────────────────────────── */
+.col-popup {
+  background: var(--ss-bg-elevated);
+  border: 1px solid var(--ss-line-1);
+  border-radius: var(--ss-r-2);
+  box-shadow: var(--ss-shadow-3);
+}
+.col-popup-btn {
+  font-size: 11.5px;
+  border-radius: var(--ss-r-1);
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--ss-ink-1);
+}
+.col-popup-btn:hover {
+  background: var(--ss-bg-hover);
+}
+
+/* ─────────────────────────────────────────────────────────────
+   MEASURE READOUT
+   ───────────────────────────────────────────────────────────── */
+.measure-readout {
+  background: var(--ss-ink-1);
+  color: var(--ss-bg-elevated);
+  font-family: var(--ss-font-mono);
+  font-size: 11.5px;
+  font-weight: 500;
+  padding: 5px 9px;
+  border-radius: var(--ss-r-1);
+  border: none;
+  box-shadow: var(--ss-shadow-3);
+}
+
+/* ─────────────────────────────────────────────────────────────
+   SELECTION BOX
+   ───────────────────────────────────────────────────────────── */
+.selection-box {
+  border: 1px solid var(--ss-accent);
+  background: color-mix(in oklab, var(--ss-accent) 8%, transparent);
+}
+.selection-box.crossing {
+  border-style: dashed;
+  background: color-mix(in oklab, var(--ss-ok) 10%, transparent);
+  border-color: var(--ss-ok);
+}
+
+/* ─────────────────────────────────────────────────────────────
+   FLOOR MODE INDICATORS
+   ───────────────────────────────────────────────────────────── */
+body.floor-mode-active {
+  /* Accent the canvas edge to signal floor mode */
+}
+body.floor-mode-active #canvas-container::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  box-shadow: inset 0 0 0 2px var(--ss-accent);
+  border-radius: 0;
+  z-index: 30;
+  opacity: 0.5;
+}
+.fm-exit-btn {
+  background: var(--ss-accent-soft) !important;
+  color: var(--ss-accent-ink) !important;
+}
+.fm-exit-btn svg { stroke: var(--ss-accent-ink) !important; }
+
+.fm-soon { opacity: 0.45; }
+
+/* ─────────────────────────────────────────────────────────────
+   FOCUS RING — universal
+   ───────────────────────────────────────────────────────────── */
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+[tabindex]:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--ss-accent) 25%, transparent);
+}
+
+/* ════════════════════════════════════════════════════════════
+   PHASE 5 — TARGETED OVERRIDES FOR OFF-PATTERN PANELS
+   ════════════════════════════════════════════════════════════
+   These panels were added as the app grew and are styled outside
+   the standard modal system (some in styles.css, some via inline
+   styles, some via an inline <style> block in index.html). Without
+   these overrides they stay light in Dark mode and feel "tacked on".
+   Every selector here is scoped tightly so it cannot bleed.
+   ════════════════════════════════════════════════════════════ */
+
+/* ── Raft Slab Designer — docked panel (#raft-design-panel) ──
+   The .raft-* inner elements are themed by the rules above; this
+   themes the panel container, header text and section dividers.
+   styles.css uses #raft-design-panel / .raft-section at equal
+   specificity, and this file loads later, so no !important needed. */
+#raft-design-panel {
+  background: var(--ss-bg-elevated);
+  border-left: 1px solid var(--ss-line-1);
+  color: var(--ss-ink-1);
+  font-family: var(--ss-font-sans);
+}
+.raft-panel-header { color: var(--ss-ink-1); }
+.raft-panel-subtitle { color: var(--ss-ink-3); }
+.raft-section { border-bottom: 1px solid var(--ss-line-1); }
+.raft-section-title.clickable:hover { color: var(--ss-accent); }
+
+/* ── Founding Strata panel (#founding-panel) ──
+   The .fp-* inner elements already use the bridged tokens. */
+#founding-panel {
+  background: color-mix(in oklab, var(--ss-bg-elevated) 97%, transparent);
+  border: 1px solid var(--ss-line-1);
+  box-shadow: var(--ss-shadow-3);
+  color: var(--ss-ink-1);
+}
+.fp-total-box {
+  background: var(--ss-accent-soft);
+  border: 1px solid var(--ss-accent-line);
+}
+
+/* ── Levels & RL editor modal (#levels-rl-overlay / .levels-rl-box) ── */
+.levels-rl-box {
+  background: var(--ss-bg-elevated);
+  box-shadow: var(--ss-shadow-4);
+  color: var(--ss-ink-1);
+}
+.rl-datum-row {
+  background: var(--ss-accent-soft);
+  border: 1px solid var(--ss-accent-line);
+}
+
+/* ── Calc Sheet modal (#cs-modal — Floor / Joist designer) ──
+   Themes the modal chrome only. The .cs-sheet itself stays white:
+   it is a printable A4 calc page (see the @media print block in
+   index.html). #cs-modal-prefixed selectors out-rank the inline
+   <style> block in index.html, so no !important is needed. */
+#cs-modal .cs-modal-frame {
+  background: var(--ss-bg-elevated);
+  border: 1px solid var(--ss-line-1);
+  box-shadow: var(--ss-shadow-4);
+}
+#cs-modal .cs-toolbar {
+  background: var(--ss-bg-sunken);
+  color: var(--ss-ink-1);
+  border-bottom: 1px solid var(--ss-line-1);
+}
+#cs-modal .cs-toolbar-title { color: var(--ss-ink-1); }
+#cs-modal .cs-toolbar-actions button {
+  background: var(--ss-bg-elevated);
+  color: var(--ss-ink-1);
+  border: 1px solid var(--ss-line-2);
+  border-radius: var(--ss-r-1);
+}
+#cs-modal .cs-toolbar-actions button:hover {
+  background: var(--ss-bg-hover);
+}
+#cs-modal .cs-sheet-wrap {
+  background: var(--ss-bg-sunken);
+}
+
+/* ── Tonnage + Bracing widgets (#tonnage-panel, #bracing-summary-panel) ──
+   These render their bodies from JavaScript with light-mode text
+   colours baked in, so the card surface stays light in every theme
+   to keep that text readable. We refine the frame to the system's
+   radius / hairline border / soft shadow so it reads as designed
+   rather than tacked-on. !important is required only because the
+   frame styles are inline on the element in index.html.
+   Fully theming these for Dark mode needs a small JS change to the
+   tonnage/bracing renderers — deliberately out of scope here. */
+#tonnage-panel,
+#bracing-summary-panel {
+  border: 1px solid var(--ss-line-2) !important;
+  border-radius: var(--ss-r-3) !important;
+  box-shadow: var(--ss-shadow-3) !important;
+}
+#bracing-summary-panel .bracing-summary-table th,
+#bracing-summary-panel .bracing-summary-table td {
+  border-bottom-color: var(--ss-line-1);
+}
+
+/* ════════════════════════════════════════════════════════════
+   PHASE 6 — MONOCHROME RIBBON ICON COLOUR
+   ════════════════════════════════════════════════════════════
+   Most ribbon icons bake in no colour and already follow the theme
+   via ".rbtn svg { stroke }". A handful of simple line/glyph icons
+   bake in #4b5563 (the standard monochrome UI grey), which is
+   low-contrast in Dark mode. These rules retarget just that one
+   colour to the theme ink. The multi-colour isometric illustrations
+   (beams, columns, joists, footings) use their own warm/blue
+   palettes and are deliberately left untouched, per the brief.
+   CSS overrides the SVG presentation attributes — no HTML is edited.
+   ════════════════════════════════════════════════════════════ */
+.toolbar svg[stroke="#4b5563" i],
+.toolbar svg [stroke="#4b5563" i],
+header svg [stroke="#4b5563" i] { stroke: var(--ss-ink-2); }
+
+.toolbar svg[fill="#4b5563" i],
+.toolbar svg [fill="#4b5563" i],
+header svg [fill="#4b5563" i] { fill: var(--ss-ink-2); }
+
+.rbtn.active svg[stroke="#4b5563" i],
+.rbtn.active svg [stroke="#4b5563" i] { stroke: var(--ss-accent-ink); }
+
+.rbtn.active svg[fill="#4b5563" i],
+.rbtn.active svg [fill="#4b5563" i] { fill: var(--ss-accent-ink); }

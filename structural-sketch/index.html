@@ -4,8 +4,12 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>StructuralSketch</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&family=Source+Serif+4:ital,wght@0,400;0,500;1,400;1,500&display=swap" rel="stylesheet">
     <link href="https://fonts.googleapis.com/css2?family=Architects+Daughter&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="css/styles.css">
+    <link rel="stylesheet" href="css/redesign.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
@@ -22,6 +26,17 @@
             <button class="tbtn" id="btn-load" title="Open Project" style="padding:3px 10px;">Open</button>
             <input type="file" id="load-file-input" accept=".sdraw,.json" style="display:none;">
             <button class="tbtn" id="btn-export-pdf" title="Export drawing as PDF" style="font-weight:600; padding:3px 12px;">Export PDF</button>
+            <div class="ss-theme-seg" role="tablist" aria-label="Theme">
+                <button type="button" data-ss-theme="warm" title="Warm — terracotta">
+                    <span class="ss-dot" data-theme="warm"></span>Warm
+                </button>
+                <button type="button" data-ss-theme="mono" title="Mono — Revit B&amp;W">
+                    <span class="ss-dot" data-theme="mono"></span>Mono
+                </button>
+                <button type="button" data-ss-theme="dark" title="Dark — premium">
+                    <span class="ss-dot" data-theme="dark"></span>Dark
+                </button>
+            </div>
             <button class="tbtn" id="btn-shortcuts" title="Keyboard Shortcuts (?)" style="padding:3px 8px; font-weight:700;">?</button>
         </header>
 
@@ -1620,6 +1635,41 @@
     </div>
 
     <!-- StructuralSketch V28 — Modular JS -->
+    <!-- Theme toggle (Warm / Mono / Dark) — sets data-theme before the app initialises -->
+    <script>
+    (function () {
+        'use strict';
+        var KEY = 'ss-theme';
+        var DEFAULT = 'warm';
+        var VALID = ['warm', 'mono', 'dark'];
+
+        function apply(theme) {
+            if (VALID.indexOf(theme) === -1) theme = DEFAULT;
+            document.documentElement.setAttribute('data-theme', theme);
+            var buttons = document.querySelectorAll('.ss-theme-seg [data-ss-theme]');
+            for (var i = 0; i < buttons.length; i++) {
+                var b = buttons[i];
+                if (b.getAttribute('data-ss-theme') === theme) {
+                    b.classList.add('is-on');
+                } else {
+                    b.classList.remove('is-on');
+                }
+            }
+            try { localStorage.setItem(KEY, theme); } catch (e) {}
+        }
+
+        var saved = DEFAULT;
+        try { saved = localStorage.getItem(KEY) || DEFAULT; } catch (e) {}
+        apply(saved);
+
+        document.addEventListener('click', function (e) {
+            var b = e.target.closest && e.target.closest('[data-ss-theme]');
+            if (!b) return;
+            apply(b.getAttribute('data-ss-theme'));
+        });
+    })();
+    </script>
+
     <script src="js/01-core.js"></script>
     <script src="js/02-canvas-engine.js"></script>
     <script src="js/03-app-init.js"></script>

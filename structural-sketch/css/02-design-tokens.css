@@ -1,0 +1,260 @@
+/* ============================================================
+   StructuralSketch — Design Tokens (3 themes)
+   ============================================================
+   Drop this file into css/ and link it in index.html AFTER
+   the existing styles.css. Toggle themes by setting
+   data-theme="warm" | "mono" | "dark" on the <html> element.
+   ============================================================ */
+
+:root {
+  /* Type families ---------------------------------------- */
+  --ss-font-sans:  "Geist", "Söhne", -apple-system, system-ui, sans-serif;
+  --ss-font-serif: "Source Serif 4", "Tiempos", Georgia, serif;
+  --ss-font-mono:  "Geist Mono", "JetBrains Mono", "SF Mono", monospace;
+
+  /* Radii ----------------------------------------------- */
+  --ss-r-1: 4px;    /* inputs, small chips */
+  --ss-r-2: 6px;    /* buttons */
+  --ss-r-3: 10px;   /* cards, floating panels */
+  --ss-r-4: 14px;   /* modals */
+  --ss-r-pill: 999px;
+
+  /* Layout heights -------------------------------------- */
+  --ss-h-header:  48px;
+  --ss-h-ribbon:  92px;
+  --ss-h-status:  32px;
+
+  /* Motion ---------------------------------------------- */
+  --ss-ease: cubic-bezier(.2, .7, .2, 1);
+  --ss-dur-fast: 120ms;
+  --ss-dur-base: 200ms;
+  --ss-dur-slow: 360ms;
+}
+
+/* ============================================================
+   THEME 1 — WARM (default)
+   Terracotta accent on cream paper. Warm shadows.
+   ============================================================ */
+:root,
+[data-theme="warm"] {
+  /* Surfaces — light-to-mid scale */
+  --ss-bg-app:        oklch(0.965 0.012 70);
+  --ss-bg-surface:    oklch(0.985 0.008 70);
+  --ss-bg-canvas:     oklch(0.945 0.013 65);
+  --ss-bg-elevated:   oklch(0.995 0.006 70);
+  --ss-bg-sunken:     oklch(0.935 0.014 65);
+  --ss-bg-hover:      oklch(0.94 0.018 60);
+  --ss-bg-active:     oklch(0.91 0.024 55);
+
+  /* Ink (text) — primary to disabled */
+  --ss-ink-1:         oklch(0.22 0.018 40);
+  --ss-ink-2:         oklch(0.42 0.016 40);
+  --ss-ink-3:         oklch(0.58 0.012 50);
+  --ss-ink-4:         oklch(0.74 0.010 60);
+  --ss-ink-5:         oklch(0.84 0.008 60);
+
+  /* Borders / dividers */
+  --ss-line-1:        oklch(0.91 0.012 60);
+  --ss-line-2:        oklch(0.86 0.014 55);
+  --ss-line-3:        oklch(0.78 0.018 50);
+
+  /* Accent — terracotta */
+  --ss-accent:        oklch(0.60 0.135 40);
+  --ss-accent-hover:  oklch(0.54 0.145 40);
+  --ss-accent-soft:   oklch(0.94 0.038 50);
+  --ss-accent-line:   oklch(0.84 0.07 45);
+  --ss-accent-ink:    oklch(0.36 0.12 40);
+  --ss-accent-fg:     #ffffff;        /* text on accent fill */
+
+  /* Semantic */
+  --ss-ok:            oklch(0.58 0.12 145);
+  --ss-warn:          oklch(0.68 0.13 75);
+  --ss-danger:        oklch(0.55 0.18 25);
+
+  /* Plan / drawing colors (used by canvas overlays / SVG icons) */
+  --ss-plan-paper:    oklch(0.985 0.012 75);
+  --ss-plan-grid:     oklch(0.90 0.014 60);
+  --ss-plan-grid-mj:  oklch(0.82 0.018 55);
+  --ss-plan-ink:      oklch(0.28 0.020 45);
+  --ss-plan-dim:      oklch(0.56 0.014 50);
+  --ss-plan-beam:     oklch(0.58 0.13 40);
+  --ss-plan-column:   oklch(0.22 0.018 40);
+  --ss-plan-wall:     oklch(0.34 0.022 50);
+  --ss-plan-zone:     oklch(0.72 0.11 45);
+
+  /* Shadows — warm-tinted */
+  --ss-shadow-1: 0 1px 0 var(--ss-line-1);
+  --ss-shadow-2: 0 1px 2px rgba(70,40,20,0.05), 0 1px 1px rgba(70,40,20,0.03);
+  --ss-shadow-3: 0 6px 24px rgba(70,40,20,0.07), 0 2px 6px rgba(70,40,20,0.04);
+  --ss-shadow-4: 0 24px 60px rgba(70,40,20,0.14), 0 8px 20px rgba(70,40,20,0.07);
+
+  /* Bridge tokens — map to the existing styles.css variable names
+     so the old CSS rules pick up the new colors WITHOUT us
+     having to rewrite them. */
+  --bg-app:        var(--ss-bg-app);
+  --bg-toolbar:    var(--ss-bg-surface);
+  --bg-panel:      var(--ss-bg-elevated);
+  --bg-hover:      var(--ss-bg-hover);
+  --bg-active:     var(--ss-bg-active);
+  --bg-input:      var(--ss-bg-elevated);
+  --bg-canvas:     var(--ss-bg-canvas);
+
+  --border-subtle:  var(--ss-line-1);
+  --border-default: var(--ss-line-2);
+  --border-strong:  var(--ss-line-3);
+
+  --text-primary:   var(--ss-ink-1);
+  --text-secondary: var(--ss-ink-2);
+  --text-tertiary:  var(--ss-ink-3);
+  --text-disabled:  var(--ss-ink-5);
+
+  --accent:         var(--ss-accent);
+  --accent-hover:   var(--ss-accent-hover);
+  --accent-subtle:  var(--ss-accent-soft);
+  --accent-muted:   var(--ss-accent-line);
+
+  --success:        var(--ss-ok);
+  --danger:         var(--ss-danger);
+  --warning:        var(--ss-warn);
+}
+
+/* ============================================================
+   THEME 2 — MONO (Revit-style B&W)
+   Clean whites, cool greys, a single measured blue accent.
+   ============================================================ */
+[data-theme="mono"] {
+  --ss-bg-app:        #fafafa;
+  --ss-bg-surface:    #ffffff;
+  --ss-bg-canvas:     #f1f2f3;
+  --ss-bg-elevated:   #ffffff;
+  --ss-bg-sunken:     #ececed;
+  --ss-bg-hover:      #eef0f2;
+  --ss-bg-active:     #e3e6ea;
+
+  --ss-ink-1:         #0e1116;
+  --ss-ink-2:         #3a4047;
+  --ss-ink-3:         #62696f;
+  --ss-ink-4:         #98a0a8;
+  --ss-ink-5:         #c6ccd1;
+
+  --ss-line-1:        #e6e8eb;
+  --ss-line-2:        #d6d9dd;
+  --ss-line-3:        #b8bdc3;
+
+  --ss-accent:        #1f6feb;
+  --ss-accent-hover:  #1359c9;
+  --ss-accent-soft:   #e8f0fe;
+  --ss-accent-line:   #b5d0fb;
+  --ss-accent-ink:    #0b3a86;
+  --ss-accent-fg:     #ffffff;
+
+  --ss-ok:            #1f8a4c;
+  --ss-warn:          #c47f00;
+  --ss-danger:        #c43030;
+
+  --ss-plan-paper:    #ffffff;
+  --ss-plan-grid:     #e4e6e9;
+  --ss-plan-grid-mj:  #c7ccd1;
+  --ss-plan-ink:      #1a1d22;
+  --ss-plan-dim:      #5d6268;
+  --ss-plan-beam:     #1a1d22;
+  --ss-plan-column:   #0e1116;
+  --ss-plan-wall:     #2a2e34;
+  --ss-plan-zone:     #1f6feb;
+
+  --ss-shadow-1: 0 1px 0 var(--ss-line-1);
+  --ss-shadow-2: 0 1px 2px rgba(0,0,0,0.05), 0 1px 1px rgba(0,0,0,0.03);
+  --ss-shadow-3: 0 6px 24px rgba(0,0,0,0.07), 0 2px 6px rgba(0,0,0,0.04);
+  --ss-shadow-4: 0 24px 60px rgba(0,0,0,0.14), 0 8px 20px rgba(0,0,0,0.07);
+
+  /* Bridge */
+  --bg-app: var(--ss-bg-app);  --bg-toolbar: var(--ss-bg-surface);
+  --bg-panel: var(--ss-bg-elevated);  --bg-hover: var(--ss-bg-hover);
+  --bg-active: var(--ss-bg-active);  --bg-input: var(--ss-bg-elevated);
+  --bg-canvas: var(--ss-bg-canvas);
+  --border-subtle: var(--ss-line-1);  --border-default: var(--ss-line-2);
+  --border-strong: var(--ss-line-3);
+  --text-primary: var(--ss-ink-1);  --text-secondary: var(--ss-ink-2);
+  --text-tertiary: var(--ss-ink-3);  --text-disabled: var(--ss-ink-5);
+  --accent: var(--ss-accent);  --accent-hover: var(--ss-accent-hover);
+  --accent-subtle: var(--ss-accent-soft);  --accent-muted: var(--ss-accent-line);
+  --success: var(--ss-ok);  --danger: var(--ss-danger);  --warning: var(--ss-warn);
+}
+
+/* ============================================================
+   THEME 3 — DARK (premium)
+   Warm charcoal surfaces, amber-terracotta accent at higher
+   lightness for night legibility.
+   ============================================================ */
+[data-theme="dark"] {
+  --ss-bg-app:        oklch(0.20 0.008 50);
+  --ss-bg-surface:    oklch(0.235 0.009 50);
+  --ss-bg-canvas:     oklch(0.155 0.006 50);
+  --ss-bg-elevated:   oklch(0.265 0.010 50);
+  --ss-bg-sunken:     oklch(0.18 0.007 50);
+  --ss-bg-hover:      oklch(0.285 0.012 50);
+  --ss-bg-active:     oklch(0.33 0.016 48);
+
+  --ss-ink-1:         oklch(0.95 0.006 60);
+  --ss-ink-2:         oklch(0.80 0.008 60);
+  --ss-ink-3:         oklch(0.64 0.008 60);
+  --ss-ink-4:         oklch(0.48 0.008 55);
+  --ss-ink-5:         oklch(0.38 0.008 55);
+
+  --ss-line-1:        oklch(0.31 0.008 50);
+  --ss-line-2:        oklch(0.37 0.010 48);
+  --ss-line-3:        oklch(0.45 0.012 48);
+
+  --ss-accent:        oklch(0.72 0.115 45);
+  --ss-accent-hover:  oklch(0.78 0.125 45);
+  --ss-accent-soft:   oklch(0.32 0.07 45);
+  --ss-accent-line:   oklch(0.46 0.10 45);
+  --ss-accent-ink:    oklch(0.85 0.10 45);
+  --ss-accent-fg:     oklch(0.16 0.008 50);
+
+  --ss-ok:            oklch(0.72 0.13 145);
+  --ss-warn:          oklch(0.78 0.13 80);
+  --ss-danger:        oklch(0.68 0.17 25);
+
+  --ss-plan-paper:    oklch(0.22 0.010 50);
+  --ss-plan-grid:     oklch(0.28 0.008 50);
+  --ss-plan-grid-mj:  oklch(0.36 0.010 50);
+  --ss-plan-ink:      oklch(0.88 0.008 55);
+  --ss-plan-dim:      oklch(0.66 0.008 55);
+  --ss-plan-beam:     oklch(0.72 0.115 45);
+  --ss-plan-column:   oklch(0.92 0.008 55);
+  --ss-plan-wall:     oklch(0.70 0.008 60);
+  --ss-plan-zone:     oklch(0.62 0.11 45);
+
+  --ss-shadow-1: 0 1px 0 rgba(0,0,0,0.4);
+  --ss-shadow-2: 0 1px 2px rgba(0,0,0,0.4), 0 1px 1px rgba(0,0,0,0.2);
+  --ss-shadow-3: 0 6px 24px rgba(0,0,0,0.45), 0 2px 6px rgba(0,0,0,0.25);
+  --ss-shadow-4: 0 24px 60px rgba(0,0,0,0.55), 0 8px 20px rgba(0,0,0,0.35);
+
+  /* Bridge */
+  --bg-app: var(--ss-bg-app);  --bg-toolbar: var(--ss-bg-surface);
+  --bg-panel: var(--ss-bg-elevated);  --bg-hover: var(--ss-bg-hover);
+  --bg-active: var(--ss-bg-active);  --bg-input: var(--ss-bg-elevated);
+  --bg-canvas: var(--ss-bg-canvas);
+  --border-subtle: var(--ss-line-1);  --border-default: var(--ss-line-2);
+  --border-strong: var(--ss-line-3);
+  --text-primary: var(--ss-ink-1);  --text-secondary: var(--ss-ink-2);
+  --text-tertiary: var(--ss-ink-3);  --text-disabled: var(--ss-ink-5);
+  --accent: var(--ss-accent);  --accent-hover: var(--ss-accent-hover);
+  --accent-subtle: var(--ss-accent-soft);  --accent-muted: var(--ss-accent-line);
+  --success: var(--ss-ok);  --danger: var(--ss-danger);  --warning: var(--ss-warn);
+}
+
+/* ============================================================
+   Smooth theme transitions for top-level surfaces only.
+   (Don't transition every element — it's expensive.)
+   ============================================================ */
+html, body, #app, .toolbar, .ribbon-panel-label,
+.modal-overlay, .modal-box,
+#layer-panel, #props-panel,
+#status-bar, header {
+  transition:
+    background-color var(--ss-dur-slow) var(--ss-ease),
+    color var(--ss-dur-slow) var(--ss-ease),
+    border-color var(--ss-dur-slow) var(--ss-ease);
+}

@@ -1,0 +1,25 @@
+/* ============================================================
+   StructuralSketch — Redesign entry point  (the "kill switch")
+   ============================================================
+   Linked in index.html immediately AFTER css/styles.css:
+
+     <link rel="stylesheet" href="css/styles.css">
+     <link rel="stylesheet" href="css/redesign.css">   <-- this file
+
+   It imports, in order:
+     1. 02-design-tokens.css      — the 3 themes (Warm / Mono / Dark)
+     2. 03-component-redesign.css — restyles existing component classes
+
+   TO REVERT THE ENTIRE REDESIGN:
+   comment out the redesign.css <link> tag in index.html. The app
+   returns to its original look — zero data loss, no JavaScript
+   affected.
+
+   The original css/styles.css is never edited. All new styling is
+   additive and layered on top.
+
+   Full style guide: see the design-system/ folder.
+   ============================================================ */
+
+@import url("02-design-tokens.css");
+@import url("03-component-redesign.css");
