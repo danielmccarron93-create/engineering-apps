@@ -33,6 +33,16 @@ let polyPts = [];
 let dimStep = 0, dimP1 = null, dimP2 = null;
 let placing = null;
 
+// ---- TIMBER-SCREW CONNECTION FEATURE (2026-05-18, Phase 2) ----
+// All new globals for this feature use the `tmbr` prefix per
+// dev/feature-timber-screws/05-architecture.md §9.
+//
+// tmbrCurrentConnectionId — id of the Connection entity that newly-placed
+//   screws bind to. Null when no connection is active (Phase 2 default; Phase 3
+//   wires the "Start connection" flow that sets it). When non-null, the screw
+//   placement tool stamps `connectionId` on each new screw entity.
+let tmbrCurrentConnectionId = null;
+
 // ---- TWO-CLICK DRAW-MEMBER STATE ----
 let drawMember = null;       // { type, section, ... } — what we're drawing (set from library)
 let drawStart = null;        // { blk, cu, cv } — first click point (real-world view coords)

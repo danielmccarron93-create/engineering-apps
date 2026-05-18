@@ -9,6 +9,13 @@
 // and _drawBoltPlanB_V14 in the RENDERING section.
 const V14_NEW_BOLTS = true;
 
+// 2026-05-18 feature flag: timber-screw connection designer (Rothoblaas HBS
+// Plate). Phase 2 ships entity types (TimberMember, SteelPlate, Screw); the
+// Connection entity and live checks land in Phase 3+. When off, the dispatch
+// cases in 34-draw-2d.js short-circuit so v1.x release builds can gate the
+// feature behind a runtime toggle. See dev/feature-timber-screws/.
+let FEATURE_TIMBER_SCREWS = true;
+
 // V17 feature flags: sketch-theme wobble + paper grain. Both default OFF so
 // straight-out-of-the-box output stays crisp; user opts in via toolbar toggle
 // (wired by populateLibrary). When `sketchOn` is true, rLine / rPath / rRect
