@@ -37,6 +37,14 @@ function drawEnt2D(blk, ent, cs) {
 
   if (ent.type === 'line') rLine(blk, ent.u1, ent.v1, ent.u2, ent.v2);
   else if (ent.type === 'rect') rRect(blk, ent.u, ent.v, ent.w, ent.h);
+  // 2026-05-18 — timber-screw connection entities (Phase 2). Gated behind
+  // FEATURE_TIMBER_SCREWS so a release build can mask them off. The drawers
+  // live in 75-timber-conn-entities.js and 76-screw-entity.js.
+  else if (ent.type === 'timber-member' && (typeof FEATURE_TIMBER_SCREWS === 'undefined' || FEATURE_TIMBER_SCREWS)) drawTimberMember(blk, ent, cs);
+  else if (ent.type === 'steel-plate'  && (typeof FEATURE_TIMBER_SCREWS === 'undefined' || FEATURE_TIMBER_SCREWS)) drawSteelPlate(blk, ent, cs);
+  else if (ent.type === 'screw'        && (typeof FEATURE_TIMBER_SCREWS === 'undefined' || FEATURE_TIMBER_SCREWS)) drawScrewEnt(blk, ent, cs);
+  // Phase 3 — Connection overlay (load arrow + bound-member highlight)
+  else if (ent.type === 'connection'   && (typeof FEATURE_TIMBER_SCREWS === 'undefined' || FEATURE_TIMBER_SCREWS)) drawConnection(blk, ent, cs);
   else if (ent.type === 'circle') {
     const p = real2px(blk, ent.cu, ent.cv);
     const r = ent.r * viewport.zoom / drawingScale;

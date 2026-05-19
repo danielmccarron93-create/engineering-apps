@@ -1,8 +1,9 @@
 # StructDraw — Timber Screw Connection Designer
 
 > **v1 target: Rothoblaas HBS Plate, steel‑to‑timber, elevation view.**
-> Feature planning folder. Pre‑implementation — no code written yet.
-> Last updated: 2026‑05‑18
+> Feature planning folder. Phases 1–4 built in `dev/` (v1 acceptance gate met, η = 0.801);
+> Phase 5 palette-integration corrective pending — see `10-corrective-plan.md`.
+> Last updated: 2026‑05‑19
 
 ---
 

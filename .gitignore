@@ -22,6 +22,12 @@ __pycache__/
 .idea/
 *.iml
 
+# --- Node / npm (dev-time test tooling only) ---
+# StructDraw's architecture-v2 test suite uses Vitest + JSDOM. The apps
+# themselves have NO build step and no runtime npm dependency — node_modules
+# exists only for `npm test`. Never commit it.
+node_modules/
+
 # --- Backups & zips (store locally, never in repo) ---
 GITHUB BACKUP ZIP FILE/
 *.zip

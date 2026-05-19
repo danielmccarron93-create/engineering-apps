@@ -1,0 +1,14 @@
+{
+  "name": "structdraw-dev",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Dev-time test harness for StructDraw. NOT a build dependency: the app (index.html) runs in a browser with no build step. This package.json and node_modules/ exist ONLY for `npm test` (Vitest + JSDOM unit tests of the architecture-v2 model layer). See PlannedBuilds/architecture-v2/.",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "jsdom": "^29.1.1",
+    "vitest": "^4.1.6"
+  }
+}

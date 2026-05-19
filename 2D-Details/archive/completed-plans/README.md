@@ -2,7 +2,7 @@
 
 Build briefs / planning docs / reviews from features that have shipped. Kept for posterity (audit trail of decisions and rationale), not for reference during active work — the actual behaviour is in the released code and the CHANGELOG.
 
-Files are date-prefixed (`YYYY-MM-DD_topic.md`) so they sort chronologically. Two date conventions: the date is when the doc was authored, not when the build shipped.
+Entries are date-prefixed so they sort chronologically. **Naming convention (hybrid, by content shape):** a shipped plan that is a single document is archived as a flat `YYYY-MM-DD_<idea>.md` file; a plan that is a multi-file folder (e.g. `PlannedBuilds/timber-screws/`, with its ten-plus markdown files) is archived as a `YYYY-MM-DD_<idea>/` folder. The eight entries below predate this rule and are all in single-file `.md` form. The date is when the doc was authored, not when the build shipped.
 
 | File | Origin | What it was |
 |---|---|---|

@@ -35,7 +35,7 @@ A new structural feature gets palette tiles in **both** of these locations and b
 
 ```
 2D-Details/
-├── index.html                      RELEASED — thin shell (~1,300 lines)
+├── index.html                      the app shell (~1,300 lines)
 ├── CLAUDE.md                       this file — the project playbook
 ├── README.md                       quick-start orientation
 ├── CHANGELOG.md                    version notes
@@ -49,7 +49,7 @@ A new structural feature gets palette tiles in **both** of these locations and b
 ├── css/
 │   └── styles.css                  ~1,500 lines, 5 themes, all CSS tokens
 │
-├── js/                             73 numbered classic <script> files
+├── js/                             classic <script> files (01-99) + the v2/ tree
 │   ├── 01-config.js                A1 sheet config, drawing area
 │   ├── 02-data-sections.js         UB/UC/SHS/PFC/RHS/CHS/EA/UA catalogues
 │   ├── 03-data-bolts.js            AS 1252 bolt catalogue + connection defaults
@@ -71,7 +71,8 @@ A new structural feature gets palette tiles in **both** of these locations and b
 │   ├── 20-render-proxy.js          V24 per-view rendering proxy
 │   ├── 21-bolt-grip.js             V14 bolt grip auto-detection
 │   ├── 22-render-core.js           render() / requestRender / drawSheet
-│   ├── 23-auto-weld.js             V14 auto-weld detection + popup (676 lines)
+│   ├── 23-auto-weld.js             V14 auto-weld detection + popup (682 lines)
+│   ├── 23a-shs-joints.js           SHS/RHS/CHS mitre + priority-joint trimming, 3D + V25 (1,182 lines)
 │   ├── 24-draw-primitives.js       rLine etc. + V17 sketch wobble
 │   ├── 25-parametric-holes.js      bolt-driven hole computation
 │   ├── 26-as1100-hatch.js          steel cross-hatching
@@ -87,7 +88,7 @@ A new structural feature gets palette tiles in **both** of these locations and b
 │   ├── 36-selection-highlights.js  selection highlights
 │   ├── 37-view-labels.js           view labels
 │   ├── 38-crosshair.js             crosshair + click preview
-│   ├── 39-events.js                initEvents (1,415 lines — Phase 2 target)
+│   ├── 39-events.js                initEvents (1,601 lines — Phase 2 target)
 │   ├── 40-placement.js             component placement, two-click, polygon
 │   ├── 41-tools.js                 tool state + setTool
 │   ├── 42-keyboard.js              initKeyboard
@@ -115,42 +116,66 @@ A new structural feature gets palette tiles in **both** of these locations and b
 │   ├── 64-3d-engine.js             Three.js r128 iso engine (468 lines)
 │   ├── 65-v25-data-mode.js         V25 catalogues + mode switching
 │   ├── 66-v25-helpers-frame.js     V25 entity helpers + detail frame
-│   ├── 67-v25-materials.js         V25 hatch patterns (596 lines)
-│   ├── 68-v25-tools.js             V25 placement tools (1,149 lines)
+│   ├── 67-v25-materials.js         V25 hatch patterns (601 lines)
+│   ├── 68-v25-tools.js             V25 placement tools (1,403 lines)
 │   ├── 69-v25-dispatch.js          V25 dispatch + 2D-mode palette + chords
 │   ├── 70-v25-render.js            V25 lineset + text + swatch previews
-│   ├── 71-v25-selection.js         V25 selection / hit-test / drag (1,336 lines)
+│   ├── 71-v25-selection.js         V25 selection / hit-test / drag (1,484 lines)
 │   ├── 72-v25-options-bar.js       V25 quick options + 4 monkey patches
 │   ├── 73-init.js                  DOMContentLoaded bootstrap
-│   └── 74-v26-bb-rail.js           V26 BB-rail IIFE (registers AFTER 73-init)
+│   ├── 74-v26-bb-rail.js           V26 BB-rail IIFE (registers AFTER 73-init)
+│   └── 76-v25-plate.js             V25 2D-mode plate entity (plate2) (422 lines)
 │
 ├── archive/
-│   ├── v1/                         pre-V25 V1 archive (DO NOT EDIT)
 │   ├── snapshots/                  point-in-time backups (gitignored)
 │   │   ├── 2026-04-29_pre-v25-backup.html
 │   │   ├── 2026-05-01_pre-layout-overhaul.html
 │   │   └── 2026-05-02_pre-modular-split.html  ← rollback for the split itself
 │   ├── completed-plans/            shipped-build planning docs, date-prefixed (2026-05-18)
-│   │   ├── README.md               index of what each file was
-│   │   └── 2026-MM-DD_<idea>.md    one file per archived plan
+│   │   ├── README.md               index of what each archived plan was
+│   │   ├── 2026-MM-DD_<idea>.md    single-file plan archived as a flat .md
+│   │   └── 2026-MM-DD_<idea>/      multi-file plan archived as a folder
 │   └── handoff_v2_abandoned.md     stale, kept for context
 │
-├── bin/                            release helper scripts
 ├── Images/                         section thumbnails (PNG)
 ├── Thumbnails-SVG/                 SVG previews
-│
-└── dev/                            gitignored — working CODE copy only
-    ├── index.html, css/, js/       mirror of root
-    └── design-handoff/             V25 design integration tracking (kept)
-                                    NOTE: planning folders no longer live in dev/ —
-                                    they live in PlannedBuilds/ at root from the start.
+├── design-handoff/                 V25 design integration tracking (kept)
+└── .claude/                        Claude Code settings + git worktrees
 ```
+
+*File-map as of 2026-05-19. `js/` has 84 numbered classic-script files (`01`–`99`, including the sub-letter `23a`) plus the `v2/` architecture tree (see `PlannedBuilds/architecture-v2/`). Nine of the numbered files are the in-flight timber-screws feature — see "In-flight feature files" below.*
+
+**In-flight feature files.** `js/` carries nine files for the not-yet-finished Rothoblaas HBS timber-screw connection feature: timber catalogues `02b-data-timber.js` / `02c-data-screws.js` / `02d-data-rothoblaas-rules.js` / `02e-catalogue-lookups.js`; entity modules `75-timber-conn-entities.js` / `77-screw-entity.js` / `78-connection.js`; rule engine `79-checks-timber.js`; and `99-tmbr-autoload.js`. See `PlannedBuilds/timber-screws/`. ⚠ `99-tmbr-autoload.js` is an autoload demo + floating button of exactly the kind this playbook says doesn't ship; it is slated for deletion when the timber-screws corrective (`PlannedBuilds/timber-screws/10-corrective-plan.md`, Phase 5) runs.
+
+---
+
+## File-number bands
+
+The flat `01`–`76` numbering encodes topical bands. The bands below are policy on top of the existing layout — **no file moves** — so a fresh chat can place a new file by number and know its product affiliation.
+
+| Band | Numbers | Layer | Affiliation |
+|---|---|---|---|
+| 1 | `01–08` | Config, data, state, coords | shared |
+| 2 | `09–22` | Snap, projection, occlusion, frames, render-core | shared |
+| 3 | `23–28` | Joints, primitives, hatch, rotation, block dispatch | shared |
+| 4 | `29–33` | 3D-mode section renderers (UB, SHS, PFC/RHS/CHS/EA/UA, plate, bolt) | 3D-mode only |
+| 5 | `34–38` | V22-era 2D entities, weld symbol, selection, view labels, crosshair | mixed |
+| 6 | `39–47` | Events, tools, placement, clipboard, export, save/load, status | shared |
+| 7 | `48–63` | Connection wizard, sheet browser, project, UI palette, inspector, toolbar, layout | shared UI |
+| 8 | `64` | Three.js iso engine | 3D-mode only |
+| 9 | `65–72, 74, 76` | V25 2D-mode core, V26 BB-rail, V25 plate | 2D-mode only |
+| 10 | `73` | DOMContentLoaded bootstrap | shared |
+| 11 | `02b–02e, 75, 77–79, 99` | In-flight timber-screws feature | not yet finished — see `PlannedBuilds/timber-screws/` |
+
+**Sub-letter numbers** (`02b`, `23a`, …) are sibling modules at the same band — they let a file slot in without renumbering everything after it. Reserved ranges: `80–89` future shared modules, `90–95` future 3D-mode, `96–98` future 2D-mode, `99` bootstrap/init only.
+
+A per-file `LAYER:` header comment (naming the band plus the file's global READS/WRITES surface) is a convention planned for the architecture-v2 rebuild — see `PlannedBuilds/architecture-v2/`. v1 files are not retrofitted with it; v2 files carry it from the start.
 
 ---
 
 ## Workflow rules (non-negotiable)
 
-1. **Edit `dev/` only — never the root files directly.** `dev/` is gitignored. After Dan tests dev/ in a browser and approves, mirror dev/ → root with the helper script (see "Mirroring" below). The root files are the released version.
+1. **One source tree — edit `index.html`, `js/`, `css/` directly.** There is no `dev/` copy and no mirror step. Git is the staging and the backup: the uncommitted working tree is "in progress", a commit is a checkpoint, and `git push` is the off-machine backup. Test in a browser before committing.
 2. **Dan handles all git commits and pushes himself.** Don't stage, commit, push, or branch. Leave the working tree clean.
 3. **No build step.** Open `index.html` in a browser and it runs. No bundler, no npm, no transpiler. Three.js r128 + jsPDF 2.5.1 via CDN.
 4. **Metric only.** Y is up in world coordinates, down on canvas (flipped in `real2px`).
@@ -159,7 +184,7 @@ A new structural feature gets palette tiles in **both** of these locations and b
 7. **Each `js/NN-name.js` file starts with `'use strict';`** — classic scripts are per-file strict, so missing this changes behaviour.
 8. **All scripts are classic `<script>`, NOT `<script type="module">`.** Globals flow between files. Don't add `export`/`import`.
 9. **Bug fixes do not bundle with structural refactors.** A bug fix touches one module; it doesn't get rolled into reorganisation work.
-10. **Do not delete `archive/v1/` or `archive/snapshots/`.** They're the rollback path of last resort.
+10. **Do not delete `archive/snapshots/`.** The dated HTML backups there are the rollback path of last resort.
 
 ## Variable conventions
 
@@ -173,6 +198,16 @@ A new structural feature gets palette tiles in **both** of these locations and b
 | `v3d` prefix | Three.js 3D engine member |
 | `v25` prefix | V25 2D-Studio module member |
 | `bb` prefix | V26 Bluebeam-style left rail |
+| `tmbr` prefix | in-flight timber-screws feature member |
+| `view` field | on every 2D entity (`view: 'elevation' \| 'sectionA' \| …`) — set by `mkEnt2D`; names the `entities2D[viewKey]` bucket the entity renders into |
+| `drawingScale` | layer-wide global — the active sheet's drawing scale; read by every drawer alongside `viewport.zoom` |
+
+**Other conventions a fresh chat should know:**
+
+- **Sub-letter file numbers** (`02b`, `23a`) — sibling modules at the same band; see "File-number bands" above.
+- **Load-order IIFEs.** `74-v26-bb-rail.js` is an IIFE that registers its UI *after* `73-init.js`'s `DOMContentLoaded` bootstrap has finished — a deliberate "register after init" pattern, not a numbering accident.
+- **`--timber-color` theme variable.** The timber-screws feature reads a `--timber-color` CSS custom property for timber grain/fill. It is **not yet defined** in `css/styles.css`, so the lookup currently falls back to `--entity-color`; the decided value is warm tan `#d2a76a` per theme, to be added to all five themes when the timber-screws feature is finished.
+- **`ROTHOBLAAS_RULESET_VERSION` stamp.** Every timber `connection` entity carries a ruleset-version string (`'rothoblaas-hbs-plate-eta-11-0030-2019'`) so future rule changes can migrate older saved connections forward.
 
 ## AS 1100 lineweights (constant `LW`)
 
@@ -180,20 +215,11 @@ A new structural feature gets palette tiles in **both** of these locations and b
 
 ---
 
-## Mirroring `dev/` → root
+## Testing & shipping
 
-After dev/ is verified working in a browser:
-
-```bash
-cp dev/index.html index.html
-rm -rf css/ js/
-cp -r dev/css/ ./css/
-cp -r dev/js/ ./js/
-```
-
-Then Dan tests root, then commits.
-
-(A `bin/release.sh` helper is on the Phase-2 wishlist.)
+No build step, no staging copy. Open `index.html` in a browser to test (or
+`python3 -m http.server` if `file://` causes issues). When it works, Dan commits
+and pushes — git history is the backup and the record of what shipped.
 
 ---
 
@@ -207,7 +233,7 @@ Feature work is done across **two separate chat sessions** so the planning think
 - Think hard about the idea from the perspective of an Australian structural engineer who will use this daily — not as an abstract product feature, but as a tool in a real-day workflow.
 - Identify every UI surface the feature touches: 3D-mode palette (`60-tile-palette.js`), 2D-mode V26 BB-rail (`74-v26-bb-rail.js`), size picker (`58-size-picker.js`), options bar (`72-v25-options-bar.js`), inspector (`59-inspector.js`), save/load (`46-save-load.js`), export (`44-pdf-export.js`, `45-dxf-export.js`).
 - Produce or update a planning folder at `PlannedBuilds/<idea>/` containing: README, context, design (data model + architecture + integration points), build plan, open questions, test cases (for ideas with logic). Larger ideas can split further; smaller ones can collapse files. See `PlannedBuilds/timber-screws/` for the canonical example — ten markdown files covering everything from EN/ETA rule research through to numbered test fixtures with exact expected outputs.
-- Declare the "Files touched" list in the idea's `02-design.md` (or equivalent) — every released `dev/js/NN-*.js`, `dev/index.html`, `dev/css/styles.css` the build will modify. Updates the dashboard table in `PlannedBuilds/README.md` for multi-build conflict detection.
+- Declare the "Files touched" list in the idea's `02-design.md` (or equivalent) — every `js/NN-*.js`, `index.html`, `css/styles.css` the build will modify. Updates the dashboard table in `PlannedBuilds/README.md` for multi-build conflict detection.
 - Surface every open question for Dan to answer before any code is written. Recommend one option per question. Don't proceed if a blocking question is unanswered.
 
 **No code is written in the plan chat.** Even if the plan is fully locked, the build happens in the next chat. Documentation files (`CLAUDE.md`, `PlannedBuilds/<idea>/*.md`, `CHANGELOG.md`) can be edited in a plan chat — they're planning artefacts, not code.
@@ -216,21 +242,19 @@ Feature work is done across **two separate chat sessions** so the planning think
 
 - Reads `CLAUDE.md` (this file) + `PlannedBuilds/README.md` + `PlannedBuilds/<idea>/README.md` end-to-end on first load.
 - Confirms every open question is answered before starting Phase 1.
-- Walks the build plan phase by phase, testing at each boundary (`node --check` on every new JS file, headless verification via the existing test patterns, browser smoke-tests through `dev/index.html`).
+- Walks the build plan phase by phase, testing at each boundary (`node --check` on every new JS file, headless verification via the existing test patterns, browser smoke-tests through `index.html`).
 - Updates the planning folder's progress tracker after each phase.
 - Stops at planned phase boundaries — does not silently extend scope.
 
 **Multi-idea build chats.** A single build chat can be pointed at multiple `PlannedBuilds/<idea>/` folders at once. The first task in that case is to produce a *consolidation plan* — cross-check the "Files touched" lists, identify overlaps, propose a unified phase ordering that avoids touching the same file twice with conflicting intent. The chat then executes the consolidated plan, updating each idea's progress tracker independently so the state of each remains legible.
 
-**3. Review.** Dan reads the diff, smoke-tests `dev/index.html` in the browser, comes back with comments.
+**3. Review.** Dan reads the diff, smoke-tests `index.html` in the browser, comes back with comments.
 
 **4. Iterate.** A short follow-on chat (or the same build chat) addresses the comments.
 
-**5. Mirror dev → root.** Run the helper sequence in "Mirroring" above. The planning folder lives at `PlannedBuilds/<idea>/` from the start (it's at root, not in `dev/`), so it's already in the right place — no extra copy step. Update the dashboard table in `PlannedBuilds/README.md` to reflect the new status.
+**5. Commit & push.** Once Dan has reviewed the diff and browser-tested, he commits and pushes — git history is the record of what shipped. Update the dashboard table in `PlannedBuilds/README.md` to reflect the new status.
 
-**6. Push.** Dan handles git from there.
-
-**7. Archive on ship.** Once the feature is in released code, move the idea folder to `archive/completed-plans/<YYYY-MM-DD>_<idea>/` (date = ship date), remove its row from the in-flight dashboard, and add a one-line summary to `archive/completed-plans/README.md`.
+**6. Archive on ship.** Once the feature has shipped, move the idea's planning docs to `archive/completed-plans/` (date = ship date) — a single-document plan as a flat `<YYYY-MM-DD>_<idea>.md` file, a multi-file folder as `<YYYY-MM-DD>_<idea>/`. Remove its row from the in-flight dashboard, and add a one-line summary to `archive/completed-plans/README.md`.
 
 ---
 
@@ -241,13 +265,13 @@ This is the per-step micro-process for a build chat. The plan chat's deliverable
 1. **Read this file end-to-end.** Especially the variable conventions, the file map, the "Target user / quality bar / two-mode requirement" section, and the "Adding a new member, fastener, or hatch type" integration checklist below.
 2. **Read the feature's planning folder** (`PlannedBuilds/<idea>/README.md` + the supporting markdown files) and confirm every open question is answered. Cross-check the dashboard at `PlannedBuilds/README.md` for any other in-flight ideas that touch the same files.
 3. **Identify which `js/NN-*.js` file the change belongs in.** If it doesn't fit, that's a signal the file boundaries need a tweak — flag it before adding a new file.
-4. **Make the change in `dev/js/NN-*.js`.** Run `node --check` on the file.
-5. **Open `dev/index.html` in a browser.** DevTools console must stay clean.
+4. **Make the change in `js/NN-*.js`.** Run `node --check` on the file.
+5. **Open `index.html` in a browser.** DevTools console must stay clean.
 6. **Test the feature manually.** Click everything that touches it — in both 2D and 3D modes if it's a structural member or fastener.
-7. **If you change global state** (e.g. add a new top-level `let`), it goes in `dev/js/07-globals.js` — NOT scattered. Use a feature-specific prefix (e.g. `tmbr` for the timber-screw feature).
+7. **If you change global state** (e.g. add a new top-level `let`), it goes in `js/07-globals.js` — NOT scattered. Use a feature-specific prefix (e.g. `tmbr` for the timber-screw feature).
 8. **Update `CHANGELOG.md`** with one line per user-visible change.
 9. **Update the planning folder's progress tracker** with what was completed and any deviations.
-10. **Hand off to Dan for review and the dev → root mirror.**
+10. **Hand off to Dan for review — he commits and pushes.**
 
 ## How to fix a bug
 
@@ -275,19 +299,32 @@ This is the checklist that would have prevented the timber-screw Phase-4 misstep
 1. **Read the V25 entity types.** They cover most structural concepts already:
    - `mem2` (V25 member, `68-v25-tools.js`) — any rectangular structural member with a section catalogue and a long axis. UB, UC, SHS, PFC, RHS today; timber GLT slots in as `memberType: 'timber'`.
    - `plate2` (`76-v25-plate.js`) — any rectangular steel plate with a thickness. Supports both elevation (face-on) and section (edge-on) aspects via the `aspect` field. `thk` is the thickness.
-   - `screw`, `anchor`, `mat` (hatch material), `blockWall`, `reoBar`, `mesh`, `leader2`, `frame` — the other established 2D entity types.
+   - `screw`, `connection` — the in-flight timber-screws fastener + connection-grouping types (see `PlannedBuilds/timber-screws/`).
+   - `anchor`, `mat` (hatch material), `blockWall`, `reoBar`, `mesh`, `leader2`, `frame` — the other established 2D entity types.
 2. **Decide: variant of an existing type, or a new type?** Default to extending an existing type if the structural concept fits. A new structural member is almost always a `mem2` variant. A new fastener gets its own type only if it has a distinct interaction model (e.g., the existing `screw` type — single-click placement, fastener catalogue rather than section catalogue, parallels `anchor`). Don't invent a parallel type for something that fits `mem2` or `plate2`. If a new type is genuinely needed, justify it in the planning folder's `02-data-model.md`.
 3. **Both modes are mandatory.** Place a tile in the 3D-mode Model palette (`60-tile-palette.js` `getPaletteDef().model`) AND the 2D-mode V26 BB-rail Members section (`74-v26-bb-rail.js` `getDrawTabDef()`). Test placement and rendering in both. A feature that only works in one mode is incomplete and doesn't ship.
-4. **Map every integration point in the planning folder before coding.** A new member or fastener typically touches:
-   - `dev/js/02-data-*.js` — its catalogue (section / fastener sizes, mechanical params, modifier tables).
-   - `dev/js/60-tile-palette.js` — its tile in the 3D-mode palette under "Sections" or "Fasteners".
-   - `dev/js/74-v26-bb-rail.js` — its tile in the 2D-mode V26 BB-rail "Members" section (function `getDrawTabDef()`).
-   - `dev/js/69-v25-dispatch.js` — its entry in `V25_MEM_DEFAULTS` (if a `mem2` variant), or its branch in `v25TryHandleClick` (if it's a new tool path like `v25-screw`).
-   - `dev/js/58-size-picker.js` — its size picker if it has a section catalogue.
-   - `dev/js/72-v25-options-bar.js` — its branch in the top options bar (Section / Aspect / Thk / Spec dropdowns).
-   - The relevant `drawMem2D` / `drawPlate2D` / dedicated dispatcher — for the actual rendering.
-   - Save/load — usually automatic via `entities2D[viewKey]` JSON serialisation, no edits needed.
-   - Inspector (`59-inspector.js`) — properties panel for the selected entity.
+4. **Map every integration point in the planning folder before coding.** The wiring differs by mode. A genuinely-shared structural concept (member, plate, fastener) is wired through *both* lists below; a 2D-only entity (dimension, leader, hatch, callout) needs only the 2D-mode list.
+
+   **3D-mode (model-first) wiring:**
+   - `js/02-data-*.js` — its catalogue (section sizes, mechanical params).
+   - `js/64-3d-engine.js` — its `v3dBuild<Type>` so the iso block renders it.
+   - `js/29`–`33` — its per-view drawer, or a branch in the unified `31-draw-section.js`.
+   - `js/28-draw-block.js` — its branch in the block-content dispatcher.
+   - `js/60-tile-palette.js` — its tile in the 3D-mode Model palette (`getPaletteDef().model`).
+   - `js/58-size-picker.js` — its size-picker column, if it has a section catalogue.
+   - `js/59-inspector.js` — its properties panel.
+   - Export — PDF (`44`) and DXF (`45`) usually pick it up automatically via the shared draw fns; verify with a test sheet.
+
+   **2D-mode (V25 paper-space) wiring:**
+   - `js/02-data-*.js` or `65-v25-data-mode.js` — its catalogue.
+   - The renderer — a `memberType` branch in `drawMem2D` (`68-v25-tools.js`) for a `mem2` variant, or a `drawX2D` function in its own band-9 file for a new type.
+   - `js/69-v25-dispatch.js` — its `V25_MEM_DEFAULTS` entry (`mem2` variant), or its `v25TryHandleClick` branch (new tool path, e.g. `v25-screw`).
+   - `js/74-v26-bb-rail.js` — its tile in the V26 BB-rail "Members" section (`getDrawTabDef()`).
+   - `js/58-size-picker.js` — its size-picker column, if it has a section catalogue.
+   - `js/72-v25-options-bar.js` — its branch in the top quick-options bar (Section / Aspect / Thk / Spec).
+   - `js/71-v25-selection.js` — its hit-test and grip handles.
+   - `js/59-inspector.js` — its properties panel.
+   - `js/45-dxf-export.js` — its DXF branch. Save/load is automatic via `entities2D[viewKey]` JSON; PDF picks up the shared draw fns.
 5. **AS 1100 lineweights, always.** Use the `LW` constants in `03-data-bolts.js`. Cuts heavy (`LW.CUT`), visible medium (`LW.VIS_HEAVY` / `LW.VIS`), hidden / centre / dimensions thin (`LW.HID` / `LW.CL` / `LW.DIM`), construction fine. No hand-rolled line widths.
 6. **Quality bar check before "done".** Render a test detail using the new entity and compare side-by-side with an STP 6011 detail of the same type. Adjustments to hatching, lineweight, label placement, leader styling happen before the feature is called done — not as a follow-on polish PR.
 
@@ -299,8 +336,8 @@ This is the checklist that would have prevented the timber-screw Phase-4 misstep
 
 These survived the modular split unchanged. They are pre-existing and need their own focused PRs.
 
-1. **`function v25Mem2Thickness(ent)` is defined twice in `68-v25-tools.js`** (lines ~734 and ~880). Both come from the original monolith (lines 18615 and 18761). The second definition wins at runtime — same behaviour as the original. Fix: deduplicate, verify no caller depends on the second one's specific implementation.
-2. **`initEvents` in `39-events.js` is 1,415 lines** — one mousedown/move/up/keydown tree handling all tools. Phase 2 target: replace with a tool-handler dispatch table.
+1. **`function v25Mem2Thickness(ent)` is defined twice in `68-v25-tools.js`** (lines ~946 and ~1127). Both come from the original monolith (lines 18615 and 18761). The second definition wins at runtime — same behaviour as the original. Fix: deduplicate, verify no caller depends on the second one's specific implementation.
+2. **`initEvents` in `39-events.js` is 1,601 lines** — one mousedown/move/up/keydown tree handling all tools. Phase 2 target: replace with a tool-handler dispatch table.
 3. **V25 monkey patches in `72-v25-options-bar.js`** wrap `undo`, `v25Add`, `v25SetTool`, `v25TryHandleClick`. Wrappers + originals in different files. Phase 2 target: replace with a proper extension hook on each function.
 4. **All mutable globals are top-level**, scattered across `07-globals.js` and `05-state.js` and others. Phase 2 target: lift into a single `appState` object.
 5. **`.sd2.json` save format has no schema version field.** Phase 2 target: add `schemaVersion: 1` and a load-time migration scaffold.

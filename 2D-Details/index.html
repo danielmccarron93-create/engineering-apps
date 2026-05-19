@@ -1232,6 +1232,11 @@
      ============================================================ -->
 <script src="js/01-config.js"></script>
 <script src="js/02-data-sections.js"></script>
+<!-- Timber-screw connection feature (added 2026-05-18). See PlannedBuilds/timber-screws/. -->
+<script src="js/02b-data-timber.js"></script>
+<script src="js/02c-data-screws.js"></script>
+<script src="js/02d-data-rothoblaas-rules.js"></script>
+<script src="js/02e-catalogue-lookups.js"></script>
 <script src="js/03-data-bolts.js"></script>
 <script src="js/05-state.js"></script>
 <script src="js/06-detail-block.js"></script>
@@ -1304,7 +1309,121 @@
 <script src="js/72-v25-options-bar.js"></script>
 <script src="js/73-init.js"></script>
 <script src="js/74-v26-bb-rail.js"></script>
+<!-- Timber-screw connection feature — Phase 2 entity types (added 2026-05-18).
+     Note: file 76 was already taken by 76-v25-plate.js when the feature landed,
+     so the screw entity moved to 77. See PlannedBuilds/timber-screws/05-architecture.md. -->
+<script src="js/75-timber-conn-entities.js"></script>
+<script src="js/77-screw-entity.js"></script>
+<!-- Timber-screw connection feature — Phase 3 Connection entity (added 2026-05-18). -->
+<script src="js/78-connection.js"></script>
+<!-- Timber-screw connection feature — Phase 4 rule engine (added 2026-05-18). -->
+<script src="js/79-checks-timber.js"></script>
+<!-- Timber-screw connection feature — autoload + UI button (added 2026-05-18). -->
+<script src="js/99-tmbr-autoload.js"></script>
 <script src="js/76-v25-plate.js"></script>
+
+<!-- ============================================================
+     ARCHITECTURE v2 — model + transactions layer (Phase 0b).
+     Classic <script>, window.v2.* namespace, NO build step. Loading
+     these files only defines the v2 namespace and its pure factory
+     functions — they have no side effect on the running app. v1
+     above stays authoritative until a later phase wires v2 in.
+     See PlannedBuilds/architecture-v2/03-model-layer.md.
+     ============================================================ -->
+<script src="js/v2/_namespace.js"></script>
+<script src="js/v2/model/id.js"></script>
+<script src="js/v2/model/geometry.js"></script>
+<script src="js/v2/model/element.js"></script>
+<script src="js/v2/model/material.js"></script>
+<script src="js/v2/model/view.js"></script>
+<script src="js/v2/model/sheet.js"></script>
+<script src="js/v2/model/model.js"></script>
+<script src="js/v2/transactions/place-element.js"></script>
+<script src="js/v2/transactions/delete-element.js"></script>
+<script src="js/v2/transactions/move-element.js"></script>
+<script src="js/v2/transactions/edit-element.js"></script>
+<script src="js/v2/transactions/batch.js"></script>
+<script src="js/v2/transactions/view-transactions.js"></script>
+<script src="js/v2/transactions/sheet-transactions.js"></script>
+<script src="js/v2/transactions/material-transactions.js"></script>
+<script src="js/v2/transactions/index.js"></script>
+
+<!-- ============================================================
+     ARCHITECTURE v2 — catalogue layer (Phase 0c).
+     Categories, families, types, materials, rules, hatches,
+     lineweights, line-styles. Pure data + pure lookup functions;
+     classic <script>, window.v2.* namespace, NO build step.
+     Family / rule files import the v1 catalogue data (the bare-global
+     const DBs declared by js/02*.js and js/03-data-bolts.js above)
+     rather than duplicating it — see 04-catalogue-system.md §11.
+     _catalogue-namespace.js loads first; each *index.js loads last.
+     See PlannedBuilds/architecture-v2/04-catalogue-system.md.
+     ============================================================ -->
+<script src="js/v2/catalogues/_catalogue-namespace.js"></script>
+<script src="js/v2/catalogues/categories.js"></script>
+<script src="js/v2/catalogues/hatches.js"></script>
+<script src="js/v2/catalogues/line-styles.js"></script>
+<script src="js/v2/catalogues/lineweights.js"></script>
+<script src="js/v2/catalogues/families/annotation-detail-callout.js"></script>
+<script src="js/v2/catalogues/families/annotation-dimension.js"></script>
+<script src="js/v2/catalogues/families/annotation-leader.js"></script>
+<script src="js/v2/catalogues/families/annotation-revision.js"></script>
+<script src="js/v2/catalogues/families/annotation-section-mark.js"></script>
+<script src="js/v2/catalogues/families/annotation-tag.js"></script>
+<script src="js/v2/catalogues/families/beam-chs.js"></script>
+<script src="js/v2/catalogues/families/beam-clt.js"></script>
+<script src="js/v2/catalogues/families/beam-custom-rect.js"></script>
+<script src="js/v2/catalogues/families/beam-ea.js"></script>
+<script src="js/v2/catalogues/families/beam-glt.js"></script>
+<script src="js/v2/catalogues/families/beam-pfc.js"></script>
+<script src="js/v2/catalogues/families/beam-rhs.js"></script>
+<script src="js/v2/catalogues/families/beam-shs.js"></script>
+<script src="js/v2/catalogues/families/beam-ua.js"></script>
+<script src="js/v2/catalogues/families/beam-ub.js"></script>
+<script src="js/v2/catalogues/families/beam-uc.js"></script>
+<script src="js/v2/catalogues/families/beam-wb.js"></script>
+<script src="js/v2/catalogues/families/detail-component-breakline.js"></script>
+<script src="js/v2/catalogues/families/detail-component-slot.js"></script>
+<script src="js/v2/catalogues/families/detail-component-weld-symbol.js"></script>
+<script src="js/v2/catalogues/families/fastener-anchor-bolt.js"></script>
+<script src="js/v2/catalogues/families/fastener-as1252-bolt.js"></script>
+<script src="js/v2/catalogues/families/fastener-rothoblaas-hbs.js"></script>
+<script src="js/v2/catalogues/families/fastener-shear-stud.js"></script>
+<script src="js/v2/catalogues/families/masonry-cmu.js"></script>
+<script src="js/v2/catalogues/families/plate-flat.js"></script>
+<script src="js/v2/catalogues/families/reinforcement-bar.js"></script>
+<script src="js/v2/catalogues/families/reinforcement-mesh.js"></script>
+<script src="js/v2/catalogues/families/sheet-titleblock.js"></script>
+<script src="js/v2/catalogues/families/index.js"></script>
+<script src="js/v2/catalogues/materials/bolt-as1252-grade-10.9.js"></script>
+<script src="js/v2/catalogues/materials/bolt-as1252-grade-8.8.js"></script>
+<script src="js/v2/catalogues/materials/concrete-n20.js"></script>
+<script src="js/v2/catalogues/materials/concrete-n25.js"></script>
+<script src="js/v2/catalogues/materials/concrete-n32.js"></script>
+<script src="js/v2/catalogues/materials/concrete-n40.js"></script>
+<script src="js/v2/catalogues/materials/concrete-n50.js"></script>
+<script src="js/v2/catalogues/materials/masonry-cmu190.js"></script>
+<script src="js/v2/catalogues/materials/reinforcement-n500.js"></script>
+<script src="js/v2/catalogues/materials/screw-galv-grade-c1022.js"></script>
+<script src="js/v2/catalogues/materials/steel-s275.js"></script>
+<script src="js/v2/catalogues/materials/steel-s300.js"></script>
+<script src="js/v2/catalogues/materials/steel-s355.js"></script>
+<script src="js/v2/catalogues/materials/timber-clt-c24.js"></script>
+<script src="js/v2/catalogues/materials/timber-gl18h.js"></script>
+<script src="js/v2/catalogues/materials/timber-gl22h.js"></script>
+<script src="js/v2/catalogues/materials/timber-mgp10.js"></script>
+<script src="js/v2/catalogues/materials/timber-mgp12.js"></script>
+<script src="js/v2/catalogues/materials/index.js"></script>
+<script src="js/v2/catalogues/rules/as1720/cl3-2-bending.js"></script>
+<script src="js/v2/catalogues/rules/as1720/cl4-4-modification-factors.js"></script>
+<script src="js/v2/catalogues/rules/as4100/cl5-2-member-moment-capacity.js"></script>
+<script src="js/v2/catalogues/rules/as4100/cl9-3-bolted-connections.js"></script>
+<script src="js/v2/catalogues/rules/as4100/cl9-7-fillet-welds.js"></script>
+<script src="js/v2/catalogues/rules/eta-11-0030/min-distances.js"></script>
+<script src="js/v2/catalogues/rules/eta-11-0030/tab7-axial-withdrawal.js"></script>
+<script src="js/v2/catalogues/rules/eta-11-0030/tab8-lateral-capacity.js"></script>
+<script src="js/v2/catalogues/rules/index.js"></script>
+<script src="js/v2/catalogues/index.js"></script>
 
 </body>
 </html>

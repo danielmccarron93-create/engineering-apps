@@ -35,33 +35,34 @@ Or just double-click `index.html` — most features work from `file://` too.
 
 ```
 2D-Details/
-├── index.html              thin shell — released version
+├── index.html              the app shell
 ├── css/styles.css          ~1,500 lines, 5 themes
-├── js/                     73 numbered JS files (classic <script>)
+├── js/                     numbered JS files (classic <script>) + v2/ tree
 │   ├── 01-config.js        sheet config
 │   ├── ...
 │   └── 74-v26-bb-rail.js   left-rail module (loads last)
 │
-├── archive/                historical snapshots and v1 archive
+├── archive/                historical snapshots and shipped-plan archive
 ├── Images/                 section thumbnails (PNG)
-├── Thumbnails-SVG/         SVG previews
-└── dev/                    gitignored working copy
+└── Thumbnails-SVG/         SVG previews
 ```
 
 See [CLAUDE.md](CLAUDE.md) for the full file map and developer playbook.
 
 ## Development workflow
 
-1. Edit files in `dev/` only — never the root files directly.
-2. Test in browser at `http://localhost:8765/`.
-3. When ready: `cp dev/index.html index.html && cp -r dev/css/ ./css/ && cp -r dev/js/ ./js/`
-4. Test root, commit.
+One source tree — `index.html`, `css/`, `js/`. No build step, no staging copy.
 
-The `dev/` directory is gitignored. The root `index.html` + `css/` + `js/` is the "released" version.
+1. Edit the files directly.
+2. Test in a browser at `http://localhost:8765/`.
+3. Commit when it works; push to GitHub.
+
+Git is the safety net: the uncommitted working tree is "in progress", a commit
+is a checkpoint, and a push is the off-machine backup.
 
 ## Architecture in one paragraph
 
-A 22,000-line app split into 73 numbered classic-script files plus one CSS file. All globals stay top-level — `tool`, `blocks`, `viewport`, `ctx`, etc. are accessible across files because classic `<script>` tags share global scope. No build step, no bundler, no transpiler — every file runs in any modern browser as-is. Dependencies are Three.js r128 and jsPDF 2.5.1, loaded from CDN at the top of the shell. The thin shell `index.html` (1,308 lines) is the HTML body + `<link>` for CSS + 73 `<script src>` tags in numeric load order.
+A 22,000-line app split into 75 numbered classic-script files plus one CSS file. All globals stay top-level — `tool`, `blocks`, `viewport`, `ctx`, etc. are accessible across files because classic `<script>` tags share global scope. No build step, no bundler, no transpiler — every file runs in any modern browser as-is. Dependencies are Three.js r128 and jsPDF 2.5.1, loaded from CDN at the top of the shell. The thin shell `index.html` (1,310 lines) is the HTML body + `<link>` for CSS + 75 `<script src>` tags in numeric load order.
 
 ## Standards
 
