@@ -3,7 +3,13 @@
  * window so the v2 test files can exercise window.v2.* exactly as a browser
  * would.
  *
- * THREE groups load here, in order:
+ * FOUR groups load here, in order:
+ *
+ *  0. Three.js r128 (Phase 0g). Vitest can `import` the npm `three` package
+ *     (devDependency pinned to 0.128.0 — see package.json) and republish the
+ *     namespace as `globalThis.THREE`, exactly the way a browser's CDN
+ *     `<script src="three.min.js">` does. Loaded FIRST because v2 render/
+ *     threejs files reference `THREE.Scene` / `THREE.Group` etc. at top level.
  *
  *  1. v1 catalogue DATA files (js/02*.js, js/03-data-bolts.js). The v2
  *     catalogue layer imports these rather than duplicating them
@@ -17,15 +23,22 @@
  *     v2 catalogue scripts resolve. No v1 source file is modified.
  *
  *  2. The v2 model + transactions layer (Phase 0b).
- *  3. The v2 catalogue layer (Phase 0c).
+ *  3. The v2 catalogue + io + engine + render layers (Phases 0c–0g).
  *
  * Groups 2 & 3 are classic scripts that publish on window.v2.* directly, so
  * plain indirect eval suffices. Vitest runs setupFiles once per test file (each
  * in a fresh JSDOM), so every test file gets its own clean window.v2.
  */
+import * as THREE from 'three';
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+// --- Group 0: Three.js r128 -------------------------------------------------
+// Republish the npm package onto globalThis so the v2 threejs scripts (which
+// reference `THREE.Scene`, `THREE.ExtrudeGeometry`, etc.) resolve the same way
+// they do in the browser. Pinned to r128 per CLAUDE.md rule 6.
+globalThis.THREE = THREE;
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const V2_ROOT = resolve(HERE, '../../js/v2');
@@ -143,6 +156,52 @@ const LOAD_ORDER = [
   'catalogues/rules/eta-11-0030/tab8-lateral-capacity.js',
   'catalogues/rules/index.js',
   'catalogues/index.js',
+  // --- io + engine layer (Phases 0d + 0e) — appState + dirty-bus + migrator
+  //     + io scaffold (serialise / deserialise / save / load), then the
+  //     v1-bridge, then init.js last (same order as index.html).
+  'appState.js',
+  'engine/dirty-bus.js',
+  'io/migrations/v1-to-v2.js',
+  'io/serialise.js',
+  'io/deserialise.js',
+  'io/save.js',
+  'io/load.js',
+  'engine/v1-bridge.js',
+  'engine/init.js',
+  // --- render layer (Phase 0f) — namespace first, then primitives (data only),
+  //     then view helpers and render-context (build the per-element ctx), then
+  //     the canvas2d backend + dispatch table, then the worked draw + hit-test
+  //     files that self-register into the dispatch tables on load.
+  'render/_render-namespace.js',
+  'render/primitives/line.js',
+  'render/primitives/polyline.js',
+  'render/primitives/polygon.js',
+  'render/primitives/arc.js',
+  'render/primitives/text.js',
+  'render/primitives/hatch.js',
+  'render/view-helpers.js',
+  'render/render-context.js',
+  'render/canvas2d/backend.js',
+  'render/canvas2d/index.js',
+  'render/canvas2d/draw-beam-ub.js',
+  'render/canvas2d/draw-beam-shs.js',
+  'render/canvas2d/draw-plate.js',
+  'render/canvas2d/draw-fastener-as1252-bolt.js',
+  'render/canvas2d/hit-test-linear.js',
+  'render/canvas2d/hit-test-plate.js',
+  // --- threejs renderer (Phase 0g) — engine + materials before index, index
+  //     before mesh builders. Mirrors the canvas2d order (`backend.js` →
+  //     `index.js` → draw fns). The renderer outputs to a HIDDEN scene; the
+  //     user-facing iso block keeps using v1's js/64-3d-engine.js through
+  //     Phase 0g and only swaps over when the Phase 1 pilot makes plates
+  //     v2-authoritative.
+  'render/threejs/engine.js',
+  'render/threejs/materials.js',
+  'render/threejs/index.js',
+  'render/threejs/build-mesh-beam-ub.js',
+  'render/threejs/build-mesh-beam-shs.js',
+  'render/threejs/build-mesh-plate.js',
+  'render/threejs/build-mesh-fastener-as1252-bolt.js',
 ];
 
 for (const rel of LOAD_ORDER) {

@@ -1318,8 +1318,13 @@
 <script src="js/78-connection.js"></script>
 <!-- Timber-screw connection feature — Phase 4 rule engine (added 2026-05-18). -->
 <script src="js/79-checks-timber.js"></script>
-<!-- Timber-screw connection feature — autoload + UI button (added 2026-05-18). -->
+<!-- Timber-screw connection feature — autoload + UI button (added 2026-05-18).
+     UNWIRED 2026-05-20 during architecture-v2 Phase 0e so the running app
+     starts on a clean sheet (the autoload+floating-button is the anti-pattern
+     CLAUDE.md flags; full deletion lives in timber-screws/10-corrective-plan.md
+     Phase 5). Re-add this script tag to restore the demo.
 <script src="js/99-tmbr-autoload.js"></script>
+-->
 <script src="js/76-v25-plate.js"></script>
 
 <!-- ============================================================
@@ -1424,6 +1429,69 @@
 <script src="js/v2/catalogues/rules/eta-11-0030/tab8-lateral-capacity.js"></script>
 <script src="js/v2/catalogues/rules/index.js"></script>
 <script src="js/v2/catalogues/index.js"></script>
+
+<!-- ============================================================
+     ARCHITECTURE v2 — i/o + engine layer (Phase 0d).
+     The v1 -> v2 "shadow model" bridge. Loaded LAST: after every v1
+     <script> AND the v2 model + catalogue layers above. Loading these
+     files only defines window.v2.{io, appState, engine}; engine/init.js
+     then installs the bridge on DOMContentLoaded, AFTER v1's own
+     bootstrap (js/73-init.js). v1 stays authoritative for the running
+     app — v2 only SHADOWS v1 state into v2.appState.model.
+     See PlannedBuilds/architecture-v2/07-migration-strategy.md.
+     ============================================================ -->
+<script src="js/v2/appState.js"></script>
+<script src="js/v2/engine/dirty-bus.js"></script>
+<script src="js/v2/io/migrations/v1-to-v2.js"></script>
+<script src="js/v2/io/serialise.js"></script>
+<script src="js/v2/io/deserialise.js"></script>
+<script src="js/v2/io/save.js"></script>
+<script src="js/v2/io/load.js"></script>
+<script src="js/v2/engine/v1-bridge.js"></script>
+<script src="js/v2/engine/init.js"></script>
+
+<!-- ============================================================
+     V2 RENDER LAYER (PHASE 0f — Canvas2D scaffold)
+
+     Classic <script>, window.v2.* namespace, NO build step. Loading these
+     scripts has NO side effect on the running app — they only populate the
+     v2.render.* namespaces and self-register draw / hit-test fns into
+     v2.render.canvas2d.RENDERERS / HIT_TESTS. The user-facing canvas keeps
+     using v1's render pipeline; the v2 renderer outputs to a hidden canvas
+     only (Phase 1 pilot wires it through for plates).
+     See PlannedBuilds/architecture-v2/05-render-pipeline.md and
+     PlannedBuilds/architecture-v2/09-build-plan.md Phase 0f.
+     ============================================================ -->
+<script src="js/v2/render/_render-namespace.js"></script>
+<script src="js/v2/render/primitives/line.js"></script>
+<script src="js/v2/render/primitives/polyline.js"></script>
+<script src="js/v2/render/primitives/polygon.js"></script>
+<script src="js/v2/render/primitives/arc.js"></script>
+<script src="js/v2/render/primitives/text.js"></script>
+<script src="js/v2/render/primitives/hatch.js"></script>
+<script src="js/v2/render/view-helpers.js"></script>
+<script src="js/v2/render/render-context.js"></script>
+<script src="js/v2/render/canvas2d/backend.js"></script>
+<script src="js/v2/render/canvas2d/index.js"></script>
+<script src="js/v2/render/canvas2d/draw-beam-ub.js"></script>
+<script src="js/v2/render/canvas2d/draw-beam-shs.js"></script>
+<script src="js/v2/render/canvas2d/draw-plate.js"></script>
+<script src="js/v2/render/canvas2d/draw-fastener-as1252-bolt.js"></script>
+<script src="js/v2/render/canvas2d/hit-test-linear.js"></script>
+<script src="js/v2/render/canvas2d/hit-test-plate.js"></script>
+<!-- Phase 0g: ThreeJS renderer scaffold. Outputs to a HIDDEN scene (no new
+     <canvas> or <div> in this file) — the user-facing iso block keeps using
+     v1's js/64-3d-engine.js through Phase 0g and only swaps over when the
+     Phase 1 pilot makes plates v2-authoritative. Scripts load in dependency
+     order (engine + materials before index, index before mesh builders), the
+     same order tests/v2/setup.mjs uses for the JSDOM harness. -->
+<script src="js/v2/render/threejs/engine.js"></script>
+<script src="js/v2/render/threejs/materials.js"></script>
+<script src="js/v2/render/threejs/index.js"></script>
+<script src="js/v2/render/threejs/build-mesh-beam-ub.js"></script>
+<script src="js/v2/render/threejs/build-mesh-beam-shs.js"></script>
+<script src="js/v2/render/threejs/build-mesh-plate.js"></script>
+<script src="js/v2/render/threejs/build-mesh-fastener-as1252-bolt.js"></script>
 
 </body>
 </html>

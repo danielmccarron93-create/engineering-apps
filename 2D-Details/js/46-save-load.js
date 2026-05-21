@@ -74,6 +74,14 @@ function loadProject(file) {
       if (typeof v3dMarkDirty === 'function') v3dMarkDirty();
       invalidateWeldCache();
       fitToView(); requestRender();
+      // architecture-v2 Phase 0e — close the Phase-0d async-load gap. After
+      // every v1 global is repopulated, re-migrate the live v1 state into the
+      // v2 shadow model (`v2.appState.model`). Guarded — the lookup is a
+      // no-op if the v2 layer isn't loaded.
+      if (window.v2 && v2.io && v2.io.load &&
+          typeof v2.io.load.afterV1Load === 'function') {
+        v2.io.load.afterV1Load('loadProject');
+      }
     } catch (err) {
       alert('Error loading file: ' + err.message);
     }

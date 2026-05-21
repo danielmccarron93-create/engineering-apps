@@ -1,0 +1,140 @@
+{
+  "format": "structdraw-project",
+  "version": 1,
+  "savedAt": "2026-05-19T22:53:17.278Z",
+  "project": {
+    "sheets": [
+      {
+        "id": 1,
+        "name": "Sheet 1",
+        "mode": "2d",
+        "sheetInfo": {
+          "project": "Project Name",
+          "client": "Client",
+          "description": "Structural Detail",
+          "drawingNo": "S-XXX",
+          "revision": "A",
+          "date": "2026-05-19",
+          "designer": "DM",
+          "checker": "",
+          "drawnBy": "",
+          "sheetOf": "1 of 1",
+          "firmName": "Bligh Tanner",
+          "firmTagline": "Structural Engineers — Brisbane"
+        },
+        "objects3D": [
+          {
+            "id": 1,
+            "type": "ub",
+            "section": "360UB 50.7",
+            "x": 0,
+            "y": 0,
+            "z": 0,
+            "length": 600,
+            "axis": {
+              "x": 1,
+              "y": 0,
+              "z": 0
+            },
+            "up": {
+              "x": 0,
+              "y": 1,
+              "z": 0
+            }
+          },
+          {
+            "id": 2,
+            "type": "shs",
+            "section": "150x6",
+            "x": -435,
+            "y": 0,
+            "z": 0,
+            "length": 500,
+            "axis": {
+              "x": 0,
+              "y": 1,
+              "z": 0
+            },
+            "up": {
+              "x": -1,
+              "y": 0,
+              "z": 0
+            }
+          }
+        ],
+        "entities2D": {
+          "elevation": [
+            {
+              "id": 1,
+              "type": "plate2",
+              "view": "elevation",
+              "layer": "0",
+              "lw": 0.35,
+              "ls": "solid",
+              "_v25": true,
+              "aspect": "elev",
+              "shape": "poly",
+              "u": -2110,
+              "v": 400,
+              "pts": [
+                {
+                  "u": -2110,
+                  "v": 400
+                },
+                {
+                  "u": -1480,
+                  "v": 400
+                },
+                {
+                  "u": -1460,
+                  "v": -120
+                }
+              ],
+              "thk": 10
+            },
+            {
+              "id": 2,
+              "type": "plate2",
+              "view": "elevation",
+              "layer": "0",
+              "lw": 0.35,
+              "ls": "solid",
+              "_v25": true,
+              "aspect": "elev",
+              "shape": "poly",
+              "u": -770,
+              "v": 990,
+              "pts": [
+                {
+                  "u": -770,
+                  "v": 990
+                },
+                {
+                  "u": -230,
+                  "v": 990
+                },
+                {
+                  "u": -230,
+                  "v": 400
+                },
+                {
+                  "u": -740,
+                  "v": 380
+                }
+              ],
+              "thk": 10
+            }
+          ],
+          "sectionA": [],
+          "planB": []
+        },
+        "secCutX": 0,
+        "planCutY": 0,
+        "objIdN": 3,
+        "ent2dIdN": 3
+      }
+    ],
+    "activeSheetIdx": 0,
+    "_nextSheetId": 2
+  }
+}

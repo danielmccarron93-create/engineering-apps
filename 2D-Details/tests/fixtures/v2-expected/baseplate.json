@@ -1,0 +1,326 @@
+{
+  "schemaVersion": 2,
+  "version": 0,
+  "project": {
+    "id": "v1-project",
+    "name": "StructDraw v1 Project",
+    "units": "mm",
+    "createdAt": 0
+  },
+  "elements": [
+    {
+      "id": "v1o:1",
+      "category": "beam",
+      "family": "ub",
+      "type": "360UB 50.7",
+      "geometry": {
+        "kind": "linear",
+        "start": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "end": {
+          "x": 600,
+          "y": 0,
+          "z": 0
+        },
+        "frame": {
+          "axisU": {
+            "x": 1,
+            "y": 0,
+            "z": 0
+          },
+          "axisV": {
+            "x": 0,
+            "y": 0,
+            "z": 1
+          },
+          "axisW": {
+            "x": 0,
+            "y": -1,
+            "z": 0
+          }
+        },
+        "rotation": 0
+      },
+      "materialId": "steel-s300",
+      "params": {
+        "v1Type": "ub",
+        "v1Id": 1,
+        "v1Source": "objects3D"
+      },
+      "createdAt": 1
+    },
+    {
+      "id": "v1o:2",
+      "category": "beam",
+      "family": "shs",
+      "type": "150x6",
+      "geometry": {
+        "kind": "linear",
+        "start": {
+          "x": -435,
+          "y": 0,
+          "z": 0
+        },
+        "end": {
+          "x": -435,
+          "y": 500,
+          "z": 0
+        },
+        "frame": {
+          "axisU": {
+            "x": 0,
+            "y": 1,
+            "z": 0
+          },
+          "axisV": {
+            "x": 0,
+            "y": 0,
+            "z": 1
+          },
+          "axisW": {
+            "x": 1,
+            "y": 0,
+            "z": 0
+          }
+        },
+        "rotation": 0
+      },
+      "materialId": "steel-s355",
+      "params": {
+        "v1Type": "shs",
+        "v1Id": 2,
+        "v1Source": "objects3D"
+      },
+      "createdAt": 2
+    },
+    {
+      "id": "v1e:1",
+      "category": "plate",
+      "family": "plate-flat",
+      "type": null,
+      "geometry": {
+        "kind": "region",
+        "viewId": "v1-view-elevation",
+        "polygon": [
+          {
+            "x": -2110,
+            "y": 400
+          },
+          {
+            "x": -1480,
+            "y": 400
+          },
+          {
+            "x": -1460,
+            "y": -120
+          }
+        ]
+      },
+      "materialId": "steel-s300",
+      "params": {
+        "v1Type": "plate2",
+        "v1Id": 1,
+        "v1Source": "entities2D",
+        "v1View": "elevation"
+      },
+      "createdAt": 1
+    },
+    {
+      "id": "v1e:2",
+      "category": "plate",
+      "family": "plate-flat",
+      "type": null,
+      "geometry": {
+        "kind": "region",
+        "viewId": "v1-view-elevation",
+        "polygon": [
+          {
+            "x": -770,
+            "y": 990
+          },
+          {
+            "x": -230,
+            "y": 990
+          },
+          {
+            "x": -230,
+            "y": 400
+          },
+          {
+            "x": -740,
+            "y": 380
+          }
+        ]
+      },
+      "materialId": "steel-s300",
+      "params": {
+        "v1Type": "plate2",
+        "v1Id": 2,
+        "v1Source": "entities2D",
+        "v1View": "elevation"
+      },
+      "createdAt": 2
+    }
+  ],
+  "materials": [
+    {
+      "id": "steel-s300",
+      "name": "Steel Grade 300",
+      "class": "steel",
+      "grade": "300",
+      "display": {
+        "hatchCut": "as1100-steel-45",
+        "hatchProj": "none",
+        "color": "var(--mat-steel)",
+        "outlineCut": "solid",
+        "outlineProj": "solid"
+      },
+      "structural": {
+        "sourceStandard": "AS/NZS 3679.1-2016",
+        "fy": 300,
+        "fu": 440,
+        "E": 200000,
+        "G": 80000,
+        "density": 7850,
+        "poissonRatio": 0.3
+      }
+    },
+    {
+      "id": "steel-s355",
+      "name": "Steel S355",
+      "class": "steel",
+      "grade": "S355",
+      "display": {
+        "hatchCut": "as1100-steel-45",
+        "hatchProj": "none",
+        "color": "var(--mat-steel)",
+        "outlineCut": "solid",
+        "outlineProj": "solid"
+      },
+      "structural": {
+        "sourceStandard": "AS/NZS 3678-2016",
+        "fy": 355,
+        "fu": 490,
+        "E": 200000,
+        "G": 80000,
+        "density": 7850,
+        "poissonRatio": 0.3
+      }
+    }
+  ],
+  "views": [
+    {
+      "id": "v1-view-elevation",
+      "type": "elevation",
+      "name": "Elevation",
+      "modelTransform": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "scale": 1,
+      "showAnnotationsOnly": false
+    },
+    {
+      "id": "v1-view-sectionA",
+      "type": "section",
+      "name": "Section A",
+      "modelTransform": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "scale": 1,
+      "showAnnotationsOnly": false
+    },
+    {
+      "id": "v1-view-planB",
+      "type": "plan",
+      "name": "Plan B",
+      "modelTransform": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "scale": 1,
+      "showAnnotationsOnly": false
+    }
+  ],
+  "sheets": [
+    {
+      "id": "v1-sheet",
+      "name": "Sheet 1",
+      "size": "A1",
+      "placements": [
+        {
+          "viewId": "v1-view-elevation",
+          "originOnSheet": {
+            "x": 0,
+            "y": 0
+          },
+          "rotation": 0
+        },
+        {
+          "viewId": "v1-view-sectionA",
+          "originOnSheet": {
+            "x": 0,
+            "y": 0
+          },
+          "rotation": 0
+        },
+        {
+          "viewId": "v1-view-planB",
+          "originOnSheet": {
+            "x": 0,
+            "y": 0
+          },
+          "rotation": 0
+        }
+      ],
+      "titleBlock": null,
+      "revisions": []
+    }
+  ]
+}
