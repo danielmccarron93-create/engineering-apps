@@ -163,9 +163,6 @@
     },
 
     onPointerMove(event, ctx) {
-      // Skip when the flag is off — the tool may still be "active" briefly
-      // between flag toggles; pass through so v1 owns the canvas cursor.
-      if (!v2.featureFlags || !v2.featureFlags.get('plates')) return false;
       const cursor = ctx.cursor;
       if (!cursor) return false;
       const s = ctx.toolState;
@@ -184,7 +181,6 @@
     },
 
     onPointerDown(event, ctx) {
-      if (!v2.featureFlags || !v2.featureFlags.get('plates')) return false;
       if (event && event.button !== 0) return false;   // left click only
       const cursor = ctx.cursor;
       if (!cursor) return false;
@@ -219,7 +215,6 @@
     },
 
     onPointerUp(event, ctx) {
-      if (!v2.featureFlags || !v2.featureFlags.get('plates')) return false;
       const s = ctx.toolState;
       if (s.mode !== 'rect' || !s.anchor || !s.anchorPx || !event) return false;
       // Detect drag vs click: a meaningful pixel-distance move means commit on release.
@@ -236,7 +231,6 @@
     },
 
     onDblClick(event, ctx) {
-      if (!v2.featureFlags || !v2.featureFlags.get('plates')) return false;
       const s = ctx.toolState;
       if (s.mode === 'poly' && s.poly.length >= 3) {
         commitPoly(ctx, s.poly);
@@ -246,7 +240,6 @@
     },
 
     onKey(event, ctx) {
-      if (!v2.featureFlags || !v2.featureFlags.get('plates')) return false;
       if (!event) return false;
       const key = event.key;
       if (key === 'Escape') {

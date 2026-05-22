@@ -89,32 +89,9 @@ function v25UpdateOptionsBar() {
         `</select>`
       );
     }
-  } else if (tool === 'v25-plate') {
-    const aspect = v25Last.plateAspect === 'sec' ? 'sec' : 'elev';
-    const thk = v25Last.plateThk || ((typeof V25_PLATE_DEFAULT_THK !== 'undefined') ? V25_PLATE_DEFAULT_THK : 10);
-    const thkList = (typeof V25_PLATE_THICKNESSES !== 'undefined') ? V25_PLATE_THICKNESSES : [10, 12, 16, 20, 25];
-    html += `<strong>Plate</strong>`;
-    html += fld('Aspect',
-      `<select id="v25o-plate-aspect">` +
-      `<option value="elev"${aspect === 'elev' ? ' selected' : ''}>Elevation</option>` +
-      `<option value="sec"${aspect === 'sec' ? ' selected' : ''}>Cross-section</option>` +
-      `</select>`
-    );
-    // Thickness dropdown is only meaningful in Section aspect — it's the
-    // VISIBLE plate gauge there. In Elevation aspect the value is stored as
-    // metadata only (used for "PL X THK" labels and weld sizing), so we hide
-    // the control to keep the bar minimal. Edit elev plates in the inspector.
-    if (aspect === 'sec') {
-      html += fld('Thickness',
-        `<select id="v25o-plate-thk" style="width:70px">` +
-        thkList.map(t => `<option value="${t}"${t === thk ? ' selected' : ''}>${t} mm</option>`).join('') +
-        `</select>`
-      );
-    }
-    const hint = aspect === 'sec'
-      ? 'Click on a member edge, drag perpendicular to set cleat width.'
-      : 'Drag = rectangle · Click = polygon (dbl-click / Enter to close).';
-    html += `<span style="color:var(--text-mute);font-size:11px">${hint}</span>`;
+  // v1 V25 plate options (Aspect / Thk) retired by architecture-v2 Phase 2.
+  // v2 plate placement options will land on the v2 inspector + size picker
+  // when Phase 11+ stands up the standalone v2 BB-rail.
   } else if (tool === 'v25-leader') {
     html += `<strong>Leader</strong>`;
     html += fld('Default text', `<input id="v25o-leadertxt" value="${(v25Last.leaderText || 'CALLOUT').replace(/"/g, '&quot;')}" style="width:200px"/>`);
@@ -157,22 +134,8 @@ function v25UpdateOptionsBar() {
     if (typeof requestRender === 'function') requestRender();
   });
   wire('v25o-openside', e => { v25State.openSide = e.target.value; });
-  wire('v25o-plate-aspect', e => {
-    v25Last.plateAspect = e.target.value;
-    // Reset in-progress placement state so a half-drawn elev polygon doesn't
-    // bleed into section mode (and vice-versa).
-    if (typeof v25State === 'object') {
-      v25State.polyPts = [];
-      v25State.plateDownPx = null;
-      v25State.plateDownWorld = null;
-    }
-    v25UpdateOptionsBar();
-    if (typeof requestRender === 'function') requestRender();
-  });
-  wire('v25o-plate-thk', e => {
-    v25Last.plateThk = parseInt(e.target.value, 10) || 10;
-    if (typeof requestRender === 'function') requestRender();
-  });
+  // v25o-plate-aspect / v25o-plate-thk wires retired with the v1 plate options
+  // branch above (architecture-v2 Phase 2).
   const pickBtn = bar.querySelector('#v25o-sect-pick');
   if (pickBtn) pickBtn.addEventListener('click', (ev) => {
     ev.stopPropagation();

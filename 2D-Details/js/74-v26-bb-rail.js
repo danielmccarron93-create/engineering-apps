@@ -229,10 +229,17 @@
         { id: 'plate', kind: 'tool', label: 'Plate',
           sub: 'PLATE', icon: 'icon-plate',
           onClick: () => {
-            // 2D mode → new V25 plate2 entity (Aspect / Thk in options bar).
+            // 2D mode → v2 PlacePlateTool via the v2 BB-rail activator.
+            //   See js/v2/ui/palette-bb-rail.js. Architecture-v2 Phase 2
+            //   retired the v1 v25SetPlate path on 2026-05-22.
             // 3D mode → legacy draw-plate (objects3D, polygon flow unchanged).
-            if (sheetMode === '2d' && typeof v25SetPlate === 'function') v25SetPlate();
-            else setTool('draw-plate');
+            //   The 3D-mode plate path is still v1; Phase 4+ migrates it.
+            if (sheetMode === '2d' && window.v2 && v2.ui && v2.ui.paletteBBRail
+                && typeof v2.ui.paletteBBRail.activatePlate === 'function') {
+              v2.ui.paletteBBRail.activatePlate();
+            } else {
+              setTool('draw-plate');
+            }
           } },
       ]},
       { title: 'Hatches', tiles: [

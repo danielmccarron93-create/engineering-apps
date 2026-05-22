@@ -82,9 +82,11 @@
   /**
    * Capture every v2-authoritative element from the current shadow model so
    * the next migrator pass can graft them back on. An element is
-   * "v2-authoritative" when (a) the feature flag for its family-area is on
-   * AND (b) its params.v2Source identifies a v2 tool that created it (rather
-   * than a v1 migration that produced it). Phase 1 covers plates only.
+   * "v2-authoritative" when its `params.v2Source` identifies a v2 tool that
+   * created it (rather than a v1 migration that produced it). Phase 2 retired
+   * the feature-flag gate — plates are now unconditionally v2-native, so the
+   * graft is always on. Future families (bolts, members…) extend this filter
+   * as each migrates.
    * Returns an array of Element objects in their existing form (sharing
    * references with the prior model — the caller hands them to the new model
    * unchanged, so undo replay still works on them).
@@ -93,9 +95,6 @@
   function captureV2Authoritative() {
     const prior = v2.appState && v2.appState.model;
     if (!prior || !(prior.elements instanceof Map)) return [];
-    const platesOn = v2.featureFlags && typeof v2.featureFlags.get === 'function'
-      ? v2.featureFlags.get('plates') : false;
-    if (!platesOn) return [];
     const out = [];
     prior.elements.forEach(function (el) {
       if (!el) return;

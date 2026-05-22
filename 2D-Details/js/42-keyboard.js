@@ -197,16 +197,16 @@ function initKeyboard() {
       }
       // V23.1 — inline connection wizard takes priority on Escape
       if (connWizState) { connWizCancel(); e.preventDefault(); return; }
-      // V25 — cancel a v25 tool's in-progress action
+      // V25 — cancel a v25 tool's in-progress action. Architecture-v2
+      // Phase 2 retired the v1 plate state slots from v25State; v2's
+      // PlacePlateTool handles its own Escape via
+      // js/v2/tools/place-plate-tool.js onKey.
       if (tool && tool.startsWith('v25-')) {
         const had = v25State.dragStart || v25State.polyPts.length
-                  || v25State.hatchDownPx || v25State.plateDownPx
-                  || v25State.plateRectAnchor;
+                  || v25State.hatchDownPx;
         if (had) {
           v25State.dragStart = null; v25State.polyPts = [];
           v25State.hatchDownPx = null; v25State.hatchDownWorld = null;
-          v25State.plateDownPx = null; v25State.plateDownWorld = null;
-          v25State.plateRectAnchor = null;
           v25SnapInfo = null;
           requestRender();
         } else {
@@ -242,14 +242,8 @@ function initKeyboard() {
     if (e.key === 'Enter' && tool === 'v25-line' && typeof v25FinishLineSet === 'function') {
       v25FinishLineSet(); e.preventDefault();
     }
-    // V25 — Enter closes an in-progress plate polygon (≥3 vertices).
-    if (e.key === 'Enter' && tool === 'v25-plate'
-        && typeof v25State === 'object' && v25State.polyPts && v25State.polyPts.length >= 3
-        && typeof v25PlateCommitPoly === 'function') {
-      v25PlateCommitPoly();
-      requestRender();
-      e.preventDefault();
-    }
+    // v1 V25 plate Enter-close retired by architecture-v2 Phase 2; v2's
+    // PlacePlateTool.onKey handles Enter to close its polygon mode.
     // V25 — Delete / Backspace removes selected v25 entities
     if ((e.key === 'Delete' || e.key === 'Backspace') && Array.isArray(v25Selected) && v25Selected.length) {
       if (typeof v25DeleteSelected === 'function') {

@@ -1,10 +1,9 @@
 /**
  * StructDraw v2 · feature-flags
  * LAYER: root — runtime feature flags read by every v2 layer that needs to
- *        decide "am I authoritative for this family yet?". The Phase 1 pilot
- *        introduces `useV2For.plates`; Phase 3 will add `useV2For.bolts`; the
- *        full migration sweep (Phases 4-13) lights one flag per family until
- *        Phase ∞ retires the table.
+ *        decide "am I authoritative for this family yet?". Phase 3 will add
+ *        `useV2For.bolts`; the full migration sweep (Phases 4-13) lights one
+ *        flag per family until Phase ∞ retires the table.
  * READS:  (nothing)
  * WRITES: window.v2.featureFlags
  *
@@ -12,26 +11,25 @@
  * only defines the namespace; it has NO effect on the running app until a flag
  * is flipped.
  *
- * Flags default OFF — Phase 1 ships with `useV2For.plates = false` so Dan's
- * daily-use browser behaviour is byte-identical to today. Dan flips a flag
- * manually in DevTools for soak:
- *
- *     v2.featureFlags.set('plates', true)
+ * Phase 2 retired `useV2For.plates` — plates are now unconditionally v2-
+ * authoritative (the v1 plate path `js/76-v25-plate.js` is deleted), so no
+ * flag is needed to guard the bridge graft or the tool's pointer handlers.
+ * The registry stays in place for Phase 3+ feature flags (bolts, members…).
  *
  * The setter emits `feature-flags-changed` on the dirty bus (when present) so
- * the live integration hooks can re-render the relevant UI surfaces.
- * See PlannedBuilds/architecture-v2/08-pilot-feature.md §4.10 and
- *     PlannedBuilds/architecture-v2/09-build-plan.md "Phase 1".
+ * future live integration hooks can re-render the relevant UI surfaces.
+ * See PlannedBuilds/architecture-v2/09-build-plan.md "Phase 2".
  */
 'use strict';
 (function () {
   const v2 = (window.v2 = window.v2 || {});
 
-  /** The complete set of recognised family flags. Keys here ARE the API. */
-  const FLAG_KEYS = ['plates'];
+  /** The complete set of recognised family flags. Keys here ARE the API.
+   *  Empty until Phase 3 adds 'bolts'; the API still rejects unknown keys. */
+  const FLAG_KEYS = [];
 
   /** The mutable per-family authority map. Keys are family-area names. */
-  const useV2For = { plates: false };
+  const useV2For = {};
 
   function isKnownKey(key) { return FLAG_KEYS.indexOf(key) !== -1; }
 

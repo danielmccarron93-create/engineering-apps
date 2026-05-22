@@ -120,12 +120,6 @@ function v25EntBounds(ent) {
   if (ent.type === 'txtBox') {
     return { L: ent.u, R: ent.u + 200, B: ent.v - 30, T: ent.v + 5 };
   }
-  // V25 plate2 — defer to v25Plate2Bounds in 76-v25-plate.js so the rotated-
-  // cleat case (aspect:'sec' with non-zero rot) gets the correct rotated AABB
-  // from the same face math the renderer / snap / weld pipelines use.
-  if (ent.type === 'plate2' && typeof v25Plate2Bounds === 'function') {
-    return v25Plate2Bounds(ent);
-  }
   return null;
 }
 
@@ -229,24 +223,6 @@ function v25EntHandles(ent) {
     out.push({ key: 'txt', u: ent.txtU, v: ent.txtV });
   } else if (ent.type === 'anchor' && ent.txtU != null && ent.txtV != null) {
     out.push({ key: 'txt', u: ent.txtU, v: ent.txtV });
-  } else if (ent.type === 'plate2') {
-    // Elevation rectangle: 4 corner handles.
-    // Elevation polygon: per-vertex handles (matches mat poly pattern).
-    // Section cleat: outer-end handle to drag the cleat projection length;
-    // the inner end is anchored on the host and shouldn't move.
-    if (ent.aspect === 'elev' && ent.shape === 'rect') {
-      const w = ent.w || 0, h = ent.h || 0;
-      out.push({ key: 'corner:bl', u: ent.u,     v: ent.v });
-      out.push({ key: 'corner:br', u: ent.u + w, v: ent.v });
-      out.push({ key: 'corner:tr', u: ent.u + w, v: ent.v + h });
-      out.push({ key: 'corner:tl', u: ent.u,     v: ent.v + h });
-    } else if (ent.aspect === 'elev' && ent.shape === 'poly' && Array.isArray(ent.pts)) {
-      ent.pts.forEach((p, i) => out.push({ key: 'pt:' + i, u: p.u, v: p.v }));
-    } else if (ent.aspect === 'sec') {
-      const rot = (ent.rot || 0) * Math.PI / 180;
-      const len = ent.length || 0;
-      out.push({ key: 'end-outer', u: ent.u + Math.cos(rot) * len, v: ent.v + Math.sin(rot) * len });
-    }
   }
   // Mat — rotation handle (Bluebeam-style perpendicular ball above the top
   // edge). Same affordance as mem2 so the user has one mental model for
@@ -968,105 +944,9 @@ function v25Move(ent, du, dv, handle) {
     return;
   }
 
-  // V25 plate2 — vertex drag for polygon plates.
-  //   Default: move only the dragged vertex (matches mat poly pattern).
-  //   Shift held: bbox-scale all vertices proportionally around the
-  //   opposite bbox corner — symmetric inverse of the rect-Shift behaviour.
-  if (ent.type === 'plate2' && ent.aspect === 'elev' && ent.shape === 'poly'
-      && typeof handle === 'string' && handle.startsWith('pt:')) {
-    const idx = parseInt(handle.slice(3));
-    if (!ent.pts || !ent.pts[idx]) return;
-    const shift = (typeof shiftHeld !== 'undefined' && shiftHeld);
-    if (shift && typeof v25Plate2Bounds === 'function') {
-      const b = v25Plate2Bounds(ent);
-      if (b && (b.R - b.L) > 0.5 && (b.T - b.B) > 0.5) {
-        const oldP = ent.pts[idx];
-        const newU = oldP.u + du, newV = oldP.v + dv;
-        // Anchor = the bbox corner OPPOSITE the side the dragged vertex sits
-        // on. So a vertex near the right side anchors to the left, and so on.
-        const midU = (b.L + b.R) / 2, midV = (b.B + b.T) / 2;
-        const anchorU = oldP.u > midU ? b.L : b.R;
-        const anchorV = oldP.v > midV ? b.B : b.T;
-        const denomU = oldP.u - anchorU;
-        const denomV = oldP.v - anchorV;
-        // Avoid divide-by-zero on degenerate vertices (e.g. anchor === oldP).
-        const scaleU = Math.abs(denomU) < 0.1 ? 1 : (newU - anchorU) / denomU;
-        const scaleV = Math.abs(denomV) < 0.1 ? 1 : (newV - anchorV) / denomV;
-        ent.pts.forEach(p => {
-          p.u = anchorU + (p.u - anchorU) * scaleU;
-          p.v = anchorV + (p.v - anchorV) * scaleV;
-        });
-        return;
-      }
-    }
-    // Default — translate only the picked vertex.
-    ent.pts[idx].u += du;
-    ent.pts[idx].v += dv;
-    return;
-  }
-
-  // V25 plate2 — corner drag for rectangle elevation plates.
-  //   Default: rectangle resize with opposite corner anchored (4 corners
-  //   stay synced as an axis-aligned rect via min/max of all four).
-  //   Shift held: morph the entity to shape='poly' (freezing the current 4
-  //   corners as pts[BL, BR, TR, TL]) and translate only the dragged corner.
-  //   The entity stays as a poly afterwards so subsequent grip drags use
-  //   the poly pipeline.
-  if (ent.type === 'plate2' && ent.aspect === 'elev' && ent.shape === 'rect'
-      && typeof handle === 'string' && handle.startsWith('corner:')) {
-    const corner = handle.slice(7);
-    const cornerIdxMap = { bl: 0, br: 1, tr: 2, tl: 3 };
-    const idx = cornerIdxMap[corner];
-    const shift = (typeof shiftHeld !== 'undefined' && shiftHeld);
-    if (shift && idx != null) {
-      const w = ent.w || 0, h = ent.h || 0;
-      ent.pts = [
-        { u: ent.u,     v: ent.v },
-        { u: ent.u + w, v: ent.v },
-        { u: ent.u + w, v: ent.v + h },
-        { u: ent.u,     v: ent.v + h },
-      ];
-      ent.shape = 'poly';
-      delete ent.w;
-      delete ent.h;
-      // Re-key the active drag so subsequent mousemoves hit the poly pt:N
-      // branch above (no more rect-corner logic for this entity).
-      if (typeof v25Drag === 'object' && v25Drag) v25Drag.handle = 'pt:' + idx;
-      ent.pts[idx].u += du;
-      ent.pts[idx].v += dv;
-      return;
-    }
-    // Default: keep as rect, recompute u,v,w,h from min/max of corners so
-    // the dragged corner is anchored against the diagonally-opposite one.
-    const w = ent.w || 0, h = ent.h || 0;
-    const bl = { u: ent.u,     v: ent.v };
-    const br = { u: ent.u + w, v: ent.v };
-    const tr = { u: ent.u + w, v: ent.v + h };
-    const tl = { u: ent.u,     v: ent.v + h };
-    if (corner === 'bl') { bl.u += du; bl.v += dv; }
-    else if (corner === 'br') { br.u += du; br.v += dv; }
-    else if (corner === 'tr') { tr.u += du; tr.v += dv; }
-    else if (corner === 'tl') { tl.u += du; tl.v += dv; }
-    const minU = Math.min(bl.u, br.u, tr.u, tl.u);
-    const maxU = Math.max(bl.u, br.u, tr.u, tl.u);
-    const minV = Math.min(bl.v, br.v, tr.v, tl.v);
-    const maxV = Math.max(bl.v, br.v, tr.v, tl.v);
-    ent.u = minU; ent.v = minV;
-    ent.w = Math.max(1, maxU - minU);
-    ent.h = Math.max(1, maxV - minV);
-    return;
-  }
-
-  // V25 plate2 — outer-end drag for section cleats. Project the drag onto the
-  // cleat's length axis so the length grows/shrinks but the rotation stays
-  // locked to the host face. Floor at 5 mm so the cleat doesn't collapse.
-  if (ent.type === 'plate2' && ent.aspect === 'sec' && handle === 'end-outer') {
-    const rot = (ent.rot || 0) * Math.PI / 180;
-    const cosR = Math.cos(rot), sinR = Math.sin(rot);
-    const lenDelta = du * cosR + dv * sinR;
-    ent.length = Math.max(5, (ent.length || 0) + lenDelta);
-    return;
-  }
+  // v1 V25 plate grip drag branches (poly vertex / rect corner / sec outer-
+  // end) retired by architecture-v2 Phase 2. v2 plate grip handles will land
+  // when Phase 10 ("Selection / grip handles") migrates onto the v2 layer.
 
   // Body move — translate primary u,v plus any related coords.
   if (ent.u !== undefined) ent.u += du;

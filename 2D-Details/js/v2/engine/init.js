@@ -17,10 +17,12 @@
  *   1. v1 bridge — keeps the v2 shadow in sync with v1.
  *   2. event dispatch — binds pointer/key listeners to v1's canvas. Listens
  *      in CAPTURE phase so v2 sees events before v1 and can claim them.
- *   3. BB-rail Plate tile wrap — installs the v25SetPlate replacement; the
- *      flag-off branch passes through to v1.
+ *   3. BB-rail Plate tile activator — registers `v2.ui.paletteBBRail.activatePlate`
+ *      which the v26 BB-rail tile in `js/74-v26-bb-rail.js` calls directly.
+ *      Phase 2 retired the v1 `v25SetPlate` wrap; activation is unconditional.
  *   4. live-render shim — wraps drawBlockContent + v3dRebuildScene so v2
- *      plates render on the user-facing canvas + iso block.
+ *      plates render on the user-facing canvas + iso block. Unconditional
+ *      after Phase 2 retired the `useV2For.plates` flag.
  *   5. autosave — debounced localStorage persistence + title dirty indicator.
  *
  * Browser: index.html loads every v1 + v2 <script> before DOMContentLoaded,
@@ -59,8 +61,12 @@
       } catch (e) { warn('eventDispatch.install', e); }
     }
 
-    // Phase 1 — BB-rail Plate tile wrap. v25SetPlate is the v1 entry point;
-    // the wrap routes to the v2 PlacePlateTool when the flag is on.
+    // Phase 1+2 — BB-rail Plate tile activator. Phase 2 turned this into a
+    // no-op install() — the activator function is published unconditionally
+    // when palette-bb-rail.js loads; the v26 BB-rail tile in
+    // js/74-v26-bb-rail.js calls it directly. Kept here for parity with the
+    // other v2 surfaces (and so a future install hook can attach without
+    // changing boot() shape).
     if (v2.ui && v2.ui.paletteBBRail && typeof v2.ui.paletteBBRail.install === 'function') {
       try { v2.ui.paletteBBRail.install(); } catch (e) { warn('paletteBBRail.install', e); }
     }
@@ -89,7 +95,7 @@
 
   function stampBuild() {
     if (!v2.BUILD) return;
-    v2.BUILD.phase = '1';
+    v2.BUILD.phase = '2';
     const layers = v2.BUILD.layers;
     if (Array.isArray(layers)) {
       if (layers.indexOf('io') === -1)            layers.push('io');
@@ -99,13 +105,11 @@
       if (layers.indexOf('feature-flags') === -1) layers.push('feature-flags');
     }
     v2.BUILD.note =
-      'Phase 1 pilot — v2 plates authoritative when useV2For.plates is on. ' +
-      'Model + transactions + catalogue + io (load/save) + engine ' +
-      '(v1->v2 shadow bridge with v2-survivor graft, event dispatch, active-tool registry, ' +
-      'transactional undo/redo, debounced autosave) + render scaffolds ' +
-      '(canvas2d + threejs) + tools (PlacePlateTool) + UI ' +
-      '(palette wrap, plate inspector, generic size picker, live-render shim). ' +
-      'v1 still authoritative when the flag is OFF — Dan flips manually for soak.';
+      'Phase 2 retired the v1 plate path — plates are now unconditionally v2-' +
+      'authoritative. js/76-v25-plate.js deleted; plate2 branches stripped from ' +
+      '68/69/71/72/39/42; 74-v26-bb-rail tile calls v2.ui.paletteBBRail.activatePlate ' +
+      'directly. useV2For.plates flag retired. .sd2.json save extended to embed ' +
+      'the v2 slice via v2.io.save.previewSavePayload so plates round-trip.';
   }
 
   v2.engine.boot = boot;

@@ -26,7 +26,26 @@ function saveProject() {
     sheetInfo: sheetInfo,
     blocks: blocks.map(b => ({ viewKey: b.viewKey, sheetX: b.sheetX, sheetY: b.sheetY, boxW: b.boxW, boxH: b.boxH, hidden: b.hidden }))
   };
-  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  // architecture-v2 Phase 2 — embed the v2 slice when the v2 layer is loaded
+  // so v2-authoritative elements (plates today; bolts/members later) survive
+  // .sd2.json save/load. v2.io.save.previewSavePayload wraps `data` as
+  // { schemaVersion: 2, v2: <serialised v2 model>, v1: <data> }. Without this
+  // graft, a plate placed in the v2 PlacePlateTool would vanish on next load.
+  // Guarded — falls back to bare-v1 save if the v2 layer isn't loaded.
+  let toWrite = data;
+  if (window.v2 && v2.io && v2.io.save &&
+      typeof v2.io.save.previewSavePayload === 'function' &&
+      v2.appState && v2.appState.model) {
+    try {
+      toWrite = v2.io.save.previewSavePayload(v2.appState.model, data);
+    } catch (err) {
+      if (window.console && console.error) {
+        console.error('[v2] previewSavePayload threw, saving bare v1:', err);
+      }
+      toWrite = data;
+    }
+  }
+  const blob = new Blob([JSON.stringify(toWrite, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -39,7 +58,17 @@ function loadProject(file) {
   const reader = new FileReader();
   reader.onload = (ev) => {
     try {
-      const data = JSON.parse(ev.target.result);
+      const parsed = JSON.parse(ev.target.result);
+      // architecture-v2 Phase 2 — schemaVersion >= 2 wraps the v1 slice in
+      // `parsed.v1` and stores v2-authoritative elements (plates today) in
+      // `parsed.v2`. Bare v1 files (schemaVersion absent) still load
+      // unchanged. The v2 slice is grafted onto the shadow further down
+      // (after afterV1Load re-migrates v1 -> v2).
+      const isV2File = parsed && typeof parsed === 'object' &&
+                       typeof parsed.schemaVersion === 'number' &&
+                       parsed.schemaVersion >= 2 &&
+                       parsed.v1 && typeof parsed.v1 === 'object';
+      const data = isV2File ? parsed.v1 : parsed;
       objects3D = data.objects3D || [];
       entities2D = data.entities2D || { elevation: [], sectionA: [], planB: [] };
       // Restore settings
@@ -81,6 +110,38 @@ function loadProject(file) {
       if (window.v2 && v2.io && v2.io.load &&
           typeof v2.io.load.afterV1Load === 'function') {
         v2.io.load.afterV1Load('loadProject');
+      }
+      // architecture-v2 Phase 2 — graft v2-authoritative elements from the
+      // file (plates today; bolts/members later) onto the shadow AFTER
+      // afterV1Load re-migrated v1 -> v2. Without this graft, the migrator's
+      // empty/zero plate output overwrites any plate the user had saved.
+      if (isV2File && parsed.v2 && window.v2 && v2.io &&
+          typeof v2.io.modelFromJSON === 'function' && v2.appState) {
+        try {
+          const v2Model = v2.io.modelFromJSON(parsed.v2);
+          if (v2Model && v2Model.elements instanceof Map &&
+              v2.appState.model && v2.appState.model.elements instanceof Map) {
+            v2Model.elements.forEach(function (el) {
+              if (!el) return;
+              const isV2Plate = el.category === 'plate' && el.params &&
+                                el.params.v2Source === 'place-plate-tool';
+              if (isV2Plate) {
+                v2.appState.model.elements.set(el.id, el);
+              }
+            });
+            // Re-render so v2 plates appear immediately on the canvas + iso.
+            if (v2.engine && v2.engine.dirtyBus &&
+                typeof v2.engine.dirtyBus.emit === 'function') {
+              v2.engine.dirtyBus.emit('model-changed', {
+                source: 'loadProject-v2-graft',
+              });
+            }
+          }
+        } catch (err) {
+          if (window.console && console.error) {
+            console.error('[v2] v2-slice load failed (file load continues):', err);
+          }
+        }
       }
     } catch (err) {
       alert('Error loading file: ' + err.message);

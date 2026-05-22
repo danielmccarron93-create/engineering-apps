@@ -123,8 +123,10 @@ A new structural feature gets palette tiles in **both** of these locations and b
 │   ├── 71-v25-selection.js         V25 selection / hit-test / drag (1,484 lines)
 │   ├── 72-v25-options-bar.js       V25 quick options + 4 monkey patches
 │   ├── 73-init.js                  DOMContentLoaded bootstrap
-│   ├── 74-v26-bb-rail.js           V26 BB-rail IIFE (registers AFTER 73-init)
-│   └── 76-v25-plate.js             V25 2D-mode plate entity (plate2) (422 lines)
+│   └── 74-v26-bb-rail.js           V26 BB-rail IIFE (registers AFTER 73-init)
+│   (Number 76 was 76-v25-plate.js — V25 2D-mode plate2 entity, 422 lines.
+│    Deleted by architecture-v2 Phase 2 on 2026-05-22 once plates became
+│    v2-authoritative via js/v2/tools/place-plate-tool.js. Number reserved.)
 │
 ├── archive/
 │   ├── snapshots/                  point-in-time backups (gitignored)
@@ -143,7 +145,7 @@ A new structural feature gets palette tiles in **both** of these locations and b
 └── .claude/                        Claude Code settings + git worktrees
 ```
 
-*File-map as of 2026-05-19. `js/` has 84 numbered classic-script files (`01`–`99`, including the sub-letter `23a`) plus the `v2/` architecture tree (see `PlannedBuilds/architecture-v2/`). Nine of the numbered files are the in-flight timber-screws feature — see "In-flight feature files" below.*
+*File-map as of 2026-05-22 (architecture-v2 Phase 2). `js/` has 83 numbered classic-script files (`01`–`99`, including the sub-letter `23a`) plus the `v2/` architecture tree (see `PlannedBuilds/architecture-v2/`). Nine of the numbered files are the in-flight timber-screws feature — see "In-flight feature files" below. Number 76 (`76-v25-plate.js`, the V25 2D plate entity) was retired on 2026-05-22 — plates are now v2-authoritative.*
 
 **In-flight feature files.** `js/` carries nine files for the not-yet-finished Rothoblaas HBS timber-screw connection feature: timber catalogues `02b-data-timber.js` / `02c-data-screws.js` / `02d-data-rothoblaas-rules.js` / `02e-catalogue-lookups.js`; entity modules `75-timber-conn-entities.js` / `77-screw-entity.js` / `78-connection.js`; rule engine `79-checks-timber.js`; and `99-tmbr-autoload.js`. See `PlannedBuilds/timber-screws/`. ⚠ `99-tmbr-autoload.js` is an autoload demo + floating button of exactly the kind this playbook says doesn't ship; it is slated for deletion when the timber-screws corrective (`PlannedBuilds/timber-screws/10-corrective-plan.md`, Phase 5) runs.
 
@@ -151,7 +153,7 @@ A new structural feature gets palette tiles in **both** of these locations and b
 
 ## File-number bands
 
-The flat `01`–`76` numbering encodes topical bands. The bands below are policy on top of the existing layout — **no file moves** — so a fresh chat can place a new file by number and know its product affiliation.
+The flat `01`–`79` numbering encodes topical bands. The bands below are policy on top of the existing layout — **no file moves** — so a fresh chat can place a new file by number and know its product affiliation.
 
 | Band | Numbers | Layer | Affiliation |
 |---|---|---|---|
@@ -163,7 +165,7 @@ The flat `01`–`76` numbering encodes topical bands. The bands below are policy
 | 6 | `39–47` | Events, tools, placement, clipboard, export, save/load, status | shared |
 | 7 | `48–63` | Connection wizard, sheet browser, project, UI palette, inspector, toolbar, layout | shared UI |
 | 8 | `64` | Three.js iso engine | 3D-mode only |
-| 9 | `65–72, 74, 76` | V25 2D-mode core, V26 BB-rail, V25 plate | 2D-mode only |
+| 9 | `65–72, 74` | V25 2D-mode core + V26 BB-rail (number 76 retired by architecture-v2 Phase 2 on 2026-05-22 — plates are v2-authoritative via `js/v2/tools/place-plate-tool.js`) | 2D-mode only |
 | 10 | `73` | DOMContentLoaded bootstrap | shared |
 | 11 | `02b–02e, 75, 77–79, 99` | In-flight timber-screws feature | not yet finished — see `PlannedBuilds/timber-screws/` |
 
@@ -298,10 +300,10 @@ This is the checklist that would have prevented the timber-screw Phase-4 misstep
 
 1. **Read the V25 entity types.** They cover most structural concepts already:
    - `mem2` (V25 member, `68-v25-tools.js`) — any rectangular structural member with a section catalogue and a long axis. UB, UC, SHS, PFC, RHS today; timber GLT slots in as `memberType: 'timber'`.
-   - `plate2` (`76-v25-plate.js`) — any rectangular steel plate with a thickness. Supports both elevation (face-on) and section (edge-on) aspects via the `aspect` field. `thk` is the thickness.
+   - Plates — **v2-authoritative** since architecture-v2 Phase 2 (2026-05-22). New plate families register in `js/v2/catalogues/families/` (e.g. `plate-flat.js`); the placement tool lives in `js/v2/tools/place-plate-tool.js`; the v26 BB-rail Plate tile routes to `v2.ui.paletteBBRail.activatePlate()`. See `PlannedBuilds/architecture-v2/09-build-plan.md` "Phase 2". Do NOT add a `plate2` v1 entity — that path is retired.
    - `screw`, `connection` — the in-flight timber-screws fastener + connection-grouping types (see `PlannedBuilds/timber-screws/`).
    - `anchor`, `mat` (hatch material), `blockWall`, `reoBar`, `mesh`, `leader2`, `frame` — the other established 2D entity types.
-2. **Decide: variant of an existing type, or a new type?** Default to extending an existing type if the structural concept fits. A new structural member is almost always a `mem2` variant. A new fastener gets its own type only if it has a distinct interaction model (e.g., the existing `screw` type — single-click placement, fastener catalogue rather than section catalogue, parallels `anchor`). Don't invent a parallel type for something that fits `mem2` or `plate2`. If a new type is genuinely needed, justify it in the planning folder's `02-data-model.md`.
+2. **Decide: variant of an existing type, or a new type?** Default to extending an existing type if the structural concept fits. A new structural member is almost always a `mem2` variant. A new plate family is almost always a new entry in `js/v2/catalogues/families/` reusing the v2 `plate-flat` patterns. A new fastener gets its own type only if it has a distinct interaction model (e.g., the existing `screw` type — single-click placement, fastener catalogue rather than section catalogue, parallels `anchor`). Don't invent a parallel type for something that fits `mem2` or the v2 plate family. If a new type is genuinely needed, justify it in the planning folder's `02-data-model.md`.
 3. **Both modes are mandatory.** Place a tile in the 3D-mode Model palette (`60-tile-palette.js` `getPaletteDef().model`) AND the 2D-mode V26 BB-rail Members section (`74-v26-bb-rail.js` `getDrawTabDef()`). Test placement and rendering in both. A feature that only works in one mode is incomplete and doesn't ship.
 4. **Map every integration point in the planning folder before coding.** The wiring differs by mode. A genuinely-shared structural concept (member, plate, fastener) is wired through *both* lists below; a 2D-only entity (dimension, leader, hatch, callout) needs only the 2D-mode list.
 
@@ -325,6 +327,13 @@ This is the checklist that would have prevented the timber-screw Phase-4 misstep
    - `js/71-v25-selection.js` — its hit-test and grip handles.
    - `js/59-inspector.js` — its properties panel.
    - `js/45-dxf-export.js` — its DXF branch. Save/load is automatic via `entities2D[viewKey]` JSON; PDF picks up the shared draw fns.
+
+   **2D-mode plates (v2-authoritative, post-Phase-2 — different wiring):** for a new PLATE family, wire through the v2 layer instead of the V25 paper-space:
+   - `js/v2/catalogues/families/<plate-family>.js` — new family in the v2 catalogue (e.g. mirror `plate-flat.js`).
+   - `js/v2/tools/place-plate-tool.js` — already supports any plate-flat family/type via `appState.ui.activePlateFamily` / `activeType`; usually no edit needed.
+   - `js/74-v26-bb-rail.js` — the existing Plate tile already routes to `v2.ui.paletteBBRail.activatePlate()`; extend with new tiles only if the new family needs its own button.
+   - `js/v2/ui/inspector-plate.js` — extend if the new family carries family-specific fields.
+   - Save/load is automatic via `v2.io.save.previewSavePayload` + `v2.io.load`.
 5. **AS 1100 lineweights, always.** Use the `LW` constants in `03-data-bolts.js`. Cuts heavy (`LW.CUT`), visible medium (`LW.VIS_HEAVY` / `LW.VIS`), hidden / centre / dimensions thin (`LW.HID` / `LW.CL` / `LW.DIM`), construction fine. No hand-rolled line widths.
 6. **Quality bar check before "done".** Render a test detail using the new entity and compare side-by-side with an STP 6011 detail of the same type. Adjustments to hatching, lineweight, label placement, leader styling happen before the feature is called done — not as a follow-on polish PR.
 

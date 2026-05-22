@@ -14,7 +14,6 @@ function v25DrawEnt(blk, ent, cs) {
   if (ent.type === 'mesh') { drawMesh2D(blk, ent, cs); return true; }
   if (ent.type === 'leader2') { drawLeader2D(blk, ent, cs); return true; }
   if (ent.type === 'mem2') { drawMem2D(blk, ent, cs); return true; }
-  if (ent.type === 'plate2' && typeof drawPlate2D === 'function') { drawPlate2D(blk, ent, cs); return true; }
   if (ent.type === 'lineSet' && typeof drawLineSet2D === 'function') { drawLineSet2D(blk, ent, cs); return true; }
   if (ent.type === 'txtBox' && typeof drawTxtBox2D === 'function') { drawTxtBox2D(blk, ent, cs); return true; }
   return false;
@@ -282,85 +281,11 @@ function v25TryHandleClick(blk, cu, cv, e) {
     return true;
   }
 
-  // V25 — plate placement. Same click-vs-drag distinguishing as the hatch
-  // tool, branched by Aspect (set in the options bar via v25Last.plateAspect):
-  //   Elevation  — drag = rect (down→up); plain click = first polygon vertex
-  //                (subsequent clicks add vertices, dblclick/Enter closes).
-  //   Section    — first click anchors on the nearest mem2/plate face (soft-
-  //                snap ~8 px); drag = cleat projection length; release
-  //                commits a thin rectangle of {thk × drag-length} oriented
-  //                along the host face outward normal.
-  // The actual commit happens in the mouseup hook in 39-events.js; this
-  // branch just records state on first click and extends the polygon on
-  // subsequent clicks.
-  if (tool === 'v25-plate') {
-    const aspect = (typeof v25Last === 'object' && v25Last.plateAspect === 'sec') ? 'sec' : 'elev';
-    if (aspect === 'sec') {
-      const snap = (typeof v25Plate2SnapHost === 'function')
-        ? v25Plate2SnapHost(blk, cu, cv) : null;
-      const aU = snap ? snap.u : cu;
-      const aV = snap ? snap.v : cv;
-      v25State.plateDownPx = { x: e.clientX, y: e.clientY };
-      v25State.plateDownWorld = {
-        u: aU, v: aV, blk,
-        faceAngleRad: snap ? snap.faceAngleRad : null,
-        hostId: snap ? snap.hostId : null,
-      };
-      requestRender();
-      return true;
-    }
-    // Elevation aspect.
-    // Two-click rect commit — if the user previously clicked-and-released on
-    // a snapped host edge (which set plateRectAnchor), this click commits a
-    // rectangle from the anchor to the cursor.
-    if (v25State.plateRectAnchor) {
-      const a = v25State.plateRectAnchor;
-      const u = Math.min(a.u, cu), v = Math.min(a.v, cv);
-      const w = Math.abs(cu - a.u), h = Math.abs(cv - a.v);
-      const thk = (typeof v25Last === 'object' && v25Last.plateThk)
-        ? v25Last.plateThk
-        : ((typeof V25_PLATE_DEFAULT_THK !== 'undefined') ? V25_PLATE_DEFAULT_THK : 10);
-      if (w > 1 && h > 1 && typeof v25Add === 'function') {
-        const ent = v25Add('plate2', {
-          aspect: 'elev', shape: 'rect', u, v, w, h, thk,
-        });
-        if (ent && typeof v25Selected !== 'undefined') {
-          v25Selected = [ent.id];
-          if (typeof v25UpdateInspector === 'function') v25UpdateInspector();
-        }
-      }
-      v25State.plateRectAnchor = null;
-      requestRender();
-      return true;
-    }
-    if (v25State.polyPts.length === 0) {
-      // Fresh start: soft-snap first vertex to nearest host edge, then defer
-      // the rect-vs-poly decision to mouseup. Record `snapped:true` so the
-      // mouseup branch can pick "two-click rect" instead of "polygon start"
-      // when the user releases without dragging on a snapped edge.
-      const snap = (typeof v25Plate2SnapHost === 'function')
-        ? v25Plate2SnapHost(blk, cu, cv) : null;
-      const aU = snap ? snap.u : cu;
-      const aV = snap ? snap.v : cv;
-      v25State.plateDownPx = { x: e.clientX, y: e.clientY };
-      v25State.plateDownWorld = { u: aU, v: aV, blk, snapped: !!snap };
-    } else {
-      // Polygon already in progress — extend, or close if click lands near
-      // the first vertex (Bluebeam-style click-to-close, ≥3 vertices).
-      const last = v25State.polyPts[v25State.polyPts.length - 1];
-      const first = v25State.polyPts[0];
-      const cursorPx = real2px(blk, cu, cv);
-      const firstPx = real2px(blk, first.u, first.v);
-      const nearFirst = Math.hypot(cursorPx.x - firstPx.x, cursorPx.y - firstPx.y) < 14;
-      if (nearFirst && v25State.polyPts.length >= 3 && typeof v25PlateCommitPoly === 'function') {
-        v25PlateCommitPoly();
-      } else if (Math.hypot(cu - last.u, cv - last.v) > 0.1) {
-        v25State.polyPts.push({ u: cu, v: cv });
-      }
-    }
-    requestRender();
-    return true;
-  }
+  // v1 V25 plate placement (v25-plate tool) retired by architecture-v2
+  // Phase 2 on 2026-05-22. Plates now place via the v2 PlacePlateTool,
+  // activated by the v26 BB-rail Plate tile through
+  // v2.ui.paletteBBRail.activatePlate(). The pointer handling lives in
+  // js/v2/tools/place-plate-tool.js and js/v2/engine/event-dispatch.js.
 
   // V25-layout-overhaul — hatch placement (click=poly, drag=rect).
   // The mousedown only RECORDS state. The mouseup hook decides:
@@ -691,111 +616,10 @@ function v25DrawPreview(blk, cs) {
     const a = v25State.dragStart;
     rLine(blk, a.u, a.v, cu, cv);
   }
-  // V25 plate placement preview.
-  //   Elevation rect: rubber-band rect from down-world to cursor while
-  //     the mouse is held after the first click.
-  //   Elevation poly: dashed polyline through committed vertices + rubber-
-  //     band to cursor. Closure hint when cursor is near the first vertex.
-  //   Section cleat:  ghost rectangle anchored at the snapped down-world,
-  //     length = drag distance projected along the host face outward.
-  if (tool === 'v25-plate') {
-    const aspect = (typeof v25Last === 'object' && v25Last.plateAspect === 'sec') ? 'sec' : 'elev';
-    const thk = (typeof v25Last === 'object' && v25Last.plateThk)
-      ? v25Last.plateThk : ((typeof V25_PLATE_DEFAULT_THK !== 'undefined') ? V25_PLATE_DEFAULT_THK : 10);
-    // Section preview while user is dragging
-    if (aspect === 'sec' && v25State.plateDownWorld) {
-      const a = v25State.plateDownWorld;
-      let length, rotDeg;
-      if (a.faceAngleRad != null) {
-        const cosA = Math.cos(a.faceAngleRad), sinA = Math.sin(a.faceAngleRad);
-        const drU = cu - a.u, drV = cv - a.v;
-        const projLen = drU * cosA + drV * sinA;
-        length = Math.abs(projLen);
-        rotDeg = (projLen >= 0 ? a.faceAngleRad : a.faceAngleRad + Math.PI) * 180 / Math.PI;
-      } else {
-        const drU = cu - a.u, drV = cv - a.v;
-        length = Math.hypot(drU, drV);
-        rotDeg = Math.atan2(drV, drU) * 180 / Math.PI;
-      }
-      if (length > 1 && typeof drawPlate2D === 'function') {
-        ctx.save();
-        ctx.setLineDash([]);
-        drawPlate2D(blk, {
-          type: 'plate2', _v25: true, _preview: true, id: -1,
-          aspect: 'sec', shape: 'rect',
-          u: a.u, v: a.v, length, thk,
-          rot: rotDeg,
-          opacity: 0.45,
-        }, cs);
-        ctx.restore();
-      }
-    }
-    // Two-click rect preview — between the first click on a snapped edge
-    // and the second click that commits. Mirrors the drag preview shape.
-    if (aspect === 'elev' && v25State.plateRectAnchor) {
-      const a = v25State.plateRectAnchor;
-      const w = Math.abs(cu - a.u), h = Math.abs(cv - a.v);
-      const u = Math.min(a.u, cu), v = Math.min(a.v, cv);
-      if (w > 1 || h > 1) {
-        ctx.save();
-        ctx.strokeStyle = colorAlpha(col, 0.7);
-        ctx.lineWidth = 1;
-        ctx.setLineDash([6, 4]);
-        rRect(blk, u, v, Math.max(0.01, w), Math.max(0.01, h));
-        ctx.restore();
-      }
-    }
-    // Elevation rectangle preview while user is dragging the first click.
-    if (aspect === 'elev' && v25State.plateDownWorld && v25State.polyPts.length === 0) {
-      const a = v25State.plateDownWorld;
-      const w = Math.abs(cu - a.u), h = Math.abs(cv - a.v);
-      const u = Math.min(a.u, cu), v = Math.min(a.v, cv);
-      // Only render when the drag has moved enough to be a meaningful rect.
-      if (w > 1 || h > 1) {
-        ctx.save();
-        ctx.strokeStyle = colorAlpha(col, 0.7);
-        ctx.lineWidth = 1;
-        ctx.setLineDash([6, 4]);
-        rRect(blk, u, v, Math.max(0.01, w), Math.max(0.01, h));
-        ctx.restore();
-      }
-    }
-    // Elevation polygon preview — committed segments + rubber-band to cursor.
-    if (aspect === 'elev' && v25State.polyPts.length) {
-      ctx.save();
-      ctx.strokeStyle = colorAlpha(col, 0.7);
-      ctx.lineWidth = 1;
-      ctx.setLineDash([6, 4]);
-      for (let i = 0; i < v25State.polyPts.length - 1; i++) {
-        const p = v25State.polyPts[i], q = v25State.polyPts[i + 1];
-        rLine(blk, p.u, p.v, q.u, q.v);
-      }
-      const last = v25State.polyPts[v25State.polyPts.length - 1];
-      rLine(blk, last.u, last.v, cu, cv);
-      // Closure highlight: small ring at the first vertex when the cursor is
-      // near it and we have ≥3 vertices (click here to close).
-      if (v25State.polyPts.length >= 3) {
-        const first = v25State.polyPts[0];
-        const cursorPx = real2px(blk, cu, cv);
-        const firstPx = real2px(blk, first.u, first.v);
-        if (Math.hypot(cursorPx.x - firstPx.x, cursorPx.y - firstPx.y) < 14) {
-          ctx.setLineDash([]);
-          ctx.fillStyle = '#ffffff';
-          ctx.strokeStyle = col;
-          ctx.lineWidth = 1.6;
-          ctx.beginPath();
-          ctx.arc(firstPx.x, firstPx.y, 8, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.stroke();
-          ctx.fillStyle = col;
-          ctx.font = 'bold 10px system-ui';
-          ctx.textBaseline = 'top';
-          ctx.fillText('close', firstPx.x + 12, firstPx.y + 4);
-        }
-      }
-      ctx.restore();
-    }
-  }
+  // v1 V25 plate placement preview retired by architecture-v2 Phase 2. The
+  // v2 PlacePlateTool owns ghost-preview rendering; until the Phase 3+
+  // Canvas2DRenderer wire-up, the v2 live-render shim (js/v2/ui/live-render.js)
+  // paints committed v2 plates each frame.
 
   // Cross-section placement ghost — when the user is in v25-mem with
   // aspect=sec, draw a faint outline of the actual section under the cursor

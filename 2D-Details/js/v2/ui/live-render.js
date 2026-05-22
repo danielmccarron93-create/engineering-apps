@@ -5,9 +5,9 @@
  *        scene. The full v2 renderer (a viewport-aware View + Canvas2DBackend
  *        bound to v1's canvas) lands in Phase 2+ — this file is the smallest
  *        shim that makes the pilot observable to the user.
- * READS:  v2.appState.model; v2.featureFlags.useV2For.plates;
- *           v2.render.threejs.buildMeshPlate; v1 globals (ctx, LW, real2px,
- *           ppm, colorAlpha, v3dGroup, v3dMatPlate, sheetMode) — `typeof`-guarded.
+ * READS:  v2.appState.model; v2.render.threejs.buildMeshPlate; v1 globals
+ *           (ctx, LW, real2px, ppm, colorAlpha, v3dGroup, v3dMatPlate,
+ *           sheetMode) — `typeof`-guarded.
  * WRITES: v2.ui.liveRender (install, uninstall, draw…, build…)
  *
  * Classic <script>, no build step (CLAUDE.md rules 3 & 8). Loading this file
@@ -27,15 +27,16 @@
  *   plate material (`v3dMatPlate`) so the iso block looks visually consistent
  *   with v1's plate rendering.
  *
- * Both wraps short-circuit when the flag is OFF — the wrapped function calls
- * straight through to the original. That preserves the "byte-identical
- * flag-off browser behaviour" non-interference guarantee.
+ * Both wraps run unconditionally — Phase 2 retired the `useV2For.plates`
+ * feature flag, so the shim runs every render frame. When no v2 plates exist,
+ * `eachV2Plate` short-circuits naturally (the model carries zero matching
+ * elements) and the wrapper completes in microseconds.
  *
- * NOTE — this file is the only Phase 1 module that depends on v1's drawing
- * conventions (real2px, LW, ppm). Phase 2's "retire v1 plate path" replaces
- * this with the real Canvas2DRenderer wiring.
- * See PlannedBuilds/architecture-v2/08-pilot-feature.md §4.3 + §4.7 (render
- *     + soak) and 09-build-plan.md "Phase 1" exit criterion.
+ * NOTE — this file is the only module that depends on v1's drawing conventions
+ * (real2px, LW, ppm). Promoting plates to the proper Canvas2DRenderer +
+ * viewport-aware View is Phase 3+ work.
+ * See PlannedBuilds/architecture-v2/08-pilot-feature.md §4.3 + §4.7 and
+ *     PlannedBuilds/architecture-v2/09-build-plan.md "Phase 2".
  */
 'use strict';
 (function () {
@@ -50,10 +51,6 @@
   };
 
   function num(n, dflt) { return (typeof n === 'number' && isFinite(n)) ? n : (dflt === undefined ? 0 : dflt); }
-
-  function flagOn() {
-    return v2.featureFlags && typeof v2.featureFlags.get === 'function' && v2.featureFlags.get('plates');
-  }
 
   function eachV2Plate(fn) {
     const model = v2.appState && v2.appState.model;
@@ -95,7 +92,7 @@
    * @param {CSSStyleDeclaration} cs   getComputedStyle(document.body)
    */
   function drawV2PlatesOnCanvas(blk, cs) {
-    if (!flagOn() || !blk) return;
+    if (!blk) return;
     if (typeof ctx === 'undefined' || typeof real2px !== 'function') return;
     const ppm_ = (typeof ppm === 'function') ? ppm() : 1;
     const cutLW = (typeof LW === 'object' && LW && typeof LW.CUT === 'number')
@@ -151,7 +148,6 @@
    * @param {THREE.Group} group  v1's v3dGroup
    */
   function buildV2PlatesInScene(group) {
-    if (!flagOn()) return;
     if (typeof THREE === 'undefined' || !group) return;
     const builder = v2.render && v2.render.threejs && v2.render.threejs.buildMeshPlate;
     if (typeof builder !== 'function') return;
@@ -189,10 +185,8 @@
     state.drawBlockOriginal = orig;
     function drawBlockContentWithV2(blk, cs) {
       const result = orig.call(this, blk, cs);
-      if (flagOn()) {
-        try { drawV2PlatesOnCanvas(blk, cs); }
-        catch (e) { if (window.console && console.error) console.error('[v2.ui.liveRender] drawV2Plates threw:', e); }
-      }
+      try { drawV2PlatesOnCanvas(blk, cs); }
+      catch (e) { if (window.console && console.error) console.error('[v2.ui.liveRender] drawV2Plates threw:', e); }
       return result;
     }
     drawBlockContentWithV2._v2LiveRenderWrapped = true;
@@ -209,7 +203,7 @@
     state.v3dRebuildOriginal = orig;
     function v3dRebuildSceneWithV2() {
       const result = orig.apply(this, arguments);
-      if (flagOn() && typeof v3dGroup !== 'undefined') {
+      if (typeof v3dGroup !== 'undefined') {
         try { buildV2PlatesInScene(v3dGroup); }
         catch (e) { if (window.console && console.error) console.error('[v2.ui.liveRender] buildV2Plates threw:', e); }
       }

@@ -819,23 +819,20 @@ function v25ApplySnap(blk, draggedEnts) {
   const arr = entities2D[blk.viewKey] || [];
   const draggedIds = new Set(draggedEnts.map(e => e && e.id).filter(id => id != null));
 
-  // Edge collection — polymorphic across mem2 + plate2 so plates body-drag-
-  // snap to member faces (and vice-versa, eventually) without per-type
-  // gating littering this function.
+  // Edge collection — only mem2 participates after Phase 2 retired the v1
+  // V25 plate path. v2 plates body-snap will land when Phase 3+ wires v2
+  // grip handles into v25ApplySnap (or its v2 successor).
   const edgesFor = (ent) => {
     if (!ent) return [];
     if (ent.type === 'mem2') return v25Mem2Edges(ent);
-    if (ent.type === 'plate2' && typeof v25Plate2EdgesForSnap === 'function') {
-      return v25Plate2EdgesForSnap(ent);
-    }
     return [];
   };
 
-  // Collect target edges from every other mem2 + plate2 in this view.
+  // Collect target edges from every other mem2 in this view.
   const targets = [];
   for (const e of arr) {
     if (!e) continue;
-    if (e.type !== 'mem2' && e.type !== 'plate2') continue;
+    if (e.type !== 'mem2') continue;
     if (draggedIds.has(e.id)) continue;
     for (const edge of edgesFor(e)) targets.push(edge);
   }
@@ -848,7 +845,7 @@ function v25ApplySnap(blk, draggedEnts) {
   let bestU = null, bestDistU = Infinity;
   let bestV = null, bestDistV = Infinity;
   for (const ent of draggedEnts) {
-    if (!ent || (ent.type !== 'mem2' && ent.type !== 'plate2')) continue;
+    if (!ent || ent.type !== 'mem2') continue;
     const myEdges = edgesFor(ent);
     for (const me of myEdges) {
       for (const te of targets) {
@@ -976,18 +973,14 @@ function computeV25WeldInterfaces(viewKey) {
   if (!viewKey) return out;
   const tol = 2;          // mm — face proximity (matches snap catch zone)
   const minOverlap = 1;   // mm — minimum contact length
-  // Collect every weld-relevant face in this view. The plate module
-  // (76-v25-plate.js) exposes v25CollectWeldFaces which unifies mem2 outer
-  // faces and plate2 outer edges (so plate↔mem2 / plate↔plate auto-welds
-  // appear via the same pair-scan as mem2↔mem2). Fall back to mem2-only
-  // collection if the plate module isn't loaded yet.
-  let allFaces;
-  if (typeof v25CollectWeldFaces === 'function') {
-    allFaces = v25CollectWeldFaces(viewKey);
-  } else {
+  // Collect every weld-relevant face in this view. Phase 2 retired the v1
+  // V25 plate path (and the v25CollectWeldFaces helper that lived in the
+  // deleted 76-v25-plate.js), so only mem2 outer faces participate now. v2
+  // plate auto-welds will land when Phase 7 unifies the joint pipeline.
+  const allFaces = [];
+  {
     const arr = entities2D[viewKey] || [];
     const mems = arr.filter(e => e && e.type === 'mem2' && e.aspect !== 'sec' && (e.length || 0) >= 1);
-    allFaces = [];
     for (const m of mems) for (const f of v25Mem2Faces(m)) { f._ent = m; allFaces.push(f); }
   }
   if (allFaces.length < 2) return out;
@@ -1022,10 +1015,10 @@ function computeV25WeldInterfaces(viewKey) {
         u2: fA.u1 + aUx * tMax, v2: fA.v1 + aUy * tMax,
         hatchSide: 1,
       };
-      // Thinner-part thickness for AS 4100 Cl. 9.7.3.10 weld sizing. Plate-
-      // aware: plate2 reports ent.thk, mem2 reports its web/wall thickness.
+      // Thinner-part thickness for AS 4100 Cl. 9.7.3.10 weld sizing. Phase 2
+      // retired v1 V25 plates from this pipeline; only mem2 web/wall
+      // thickness applies.
       const thinPart = (ent) => {
-        if (ent && ent.type === 'plate2') return ent.thk || 10;
         return (typeof v25Mem2Thickness === 'function') ? v25Mem2Thickness(ent) : 10;
       };
       const tThin = Math.min(thinPart(fA._ent), thinPart(fB._ent));
@@ -1033,13 +1026,8 @@ function computeV25WeldInterfaces(viewKey) {
       const override = weldOverrides[key] || {};
       // showWeldPopup() reads ifc.objA.type / .section to render the
       // "X ↔ Y" footer label. The 3D pipeline supplies real obj{type,section}
-      // pairs; we mirror that shape for mem2 with memberType + section, and
-      // for plate2 with 'plate' + a "PL X" pseudo-section so the popup label
-      // reads naturally for plate-vs-X welds without any popup changes.
+      // pairs; we mirror that shape for mem2 with memberType + section.
       const labelOf = (ent) => {
-        if (ent && ent.type === 'plate2') {
-          return { type: 'plate', section: 'PL ' + (ent.thk || 10) };
-        }
         return { type: ent.memberType || 'mem', section: ent.section };
       };
       const objA = labelOf(fA._ent);

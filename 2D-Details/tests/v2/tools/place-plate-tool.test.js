@@ -1,10 +1,11 @@
 /*
- * StructDraw v2 — Phase 1 pilot: PlacePlateTool full interaction test.
+ * StructDraw v2 — Phase 2: PlacePlateTool full interaction test
+ * (originally written for Phase 1; Phase 2 retired the useV2For.plates flag
+ *  so the flag-flip lines and the two flag-only tests were removed).
  *
  * Asserts the v2 tool contract end-to-end, in JSDOM, without touching a real
  * canvas:
  *   - The tool is registered against the engine on load.
- *   - The feature flag gates the tool's pointer handlers (flag off = pass-through).
  *   - A click + drag-release in RECT mode commits a placeElement transaction.
  *   - A 4-vertex click sequence in POLY mode commits via dblclick.
  *   - The committed element carries:
@@ -13,12 +14,12 @@
  *       materialId 'steel-s300', params.thickness 10, params.v2Source.
  *   - Undo + redo round-trip the model.
  *   - The v1-bridge's "v2 survivor graft" keeps the placed plate present after
- *     a v1 mutation triggers a fresh shadow sync.
+ *     a v1 mutation triggers a fresh shadow sync (unconditional after Phase 2).
  *
  * window.v2 is populated by tests/v2/setup.mjs; describe/it/expect are globals.
  */
 
-describe('Phase 1 — PlacePlateTool interaction + transaction + bridge survival', () => {
+describe('Phase 2 — PlacePlateTool interaction + transaction + bridge survival', () => {
   let v2, Tool;
 
   beforeEach(() => {
@@ -30,8 +31,6 @@ describe('Phase 1 — PlacePlateTool interaction + transaction + bridge survival
     if (v2.engine.undoStack && typeof v2.engine.undoStack.clear === 'function') {
       v2.engine.undoStack.clear();
     }
-    // Flag default is OFF; tests turn it on as needed.
-    v2.featureFlags.set('plates', false);
     v2.engine.setActiveTool(null);
   });
 
@@ -66,21 +65,7 @@ describe('Phase 1 — PlacePlateTool interaction + transaction + bridge survival
     expect(v2.engine.TOOLS.get('place-plate')).toBe(Tool);
   });
 
-  it('feature flag defaults OFF and the tool handlers short-circuit when off', () => {
-    expect(v2.featureFlags.get('plates')).toBe(false);
-    const ctx = makeCtx({
-      event: { clientX: 10, clientY: 10, button: 0 },
-      cursor: { u: 50, v: 50, blk: { viewKey: 'elevation' } },
-    });
-    // The handler should return false (did not claim the event) so v1 still runs.
-    const r = Tool.onPointerDown({ clientX: 10, clientY: 10, button: 0 }, ctx);
-    expect(r).toBe(false);
-    // No element should appear in the model.
-    expect(v2.appState.model.elements.size).toBe(0);
-  });
-
   it('rect-mode: first click sets anchor, drag-release commits a placeElement', () => {
-    v2.featureFlags.set('plates', true);
     v2.engine.setActiveTool('place-plate');
     const ctx = makeCtx({});
     expect(v2.appState.tools['place-plate'].anchor).toBeNull();
@@ -125,7 +110,6 @@ describe('Phase 1 — PlacePlateTool interaction + transaction + bridge survival
   });
 
   it('rect-mode: two-click commit (no drag) also produces a plate', () => {
-    v2.featureFlags.set('plates', true);
     v2.engine.setActiveTool('place-plate');
 
     // First click at (0, 0).
@@ -154,7 +138,6 @@ describe('Phase 1 — PlacePlateTool interaction + transaction + bridge survival
   });
 
   it('poly-mode: P key toggles, click sequence + dblclick commits the polygon', () => {
-    v2.featureFlags.set('plates', true);
     v2.engine.setActiveTool('place-plate');
 
     // P → polygon mode.
@@ -187,7 +170,6 @@ describe('Phase 1 — PlacePlateTool interaction + transaction + bridge survival
   });
 
   it('Escape clears the in-progress placement state', () => {
-    v2.featureFlags.set('plates', true);
     v2.engine.setActiveTool('place-plate');
 
     Tool.onPointerDown(
@@ -203,7 +185,6 @@ describe('Phase 1 — PlacePlateTool interaction + transaction + bridge survival
   });
 
   it('undo removes the placed plate; redo restores it (transactional)', () => {
-    v2.featureFlags.set('plates', true);
     v2.engine.setActiveTool('place-plate');
 
     Tool.onPointerDown(
@@ -235,7 +216,6 @@ describe('Phase 1 — PlacePlateTool interaction + transaction + bridge survival
   });
 
   it('v1-bridge re-sync preserves v2-authoritative plates (no clobber)', () => {
-    v2.featureFlags.set('plates', true);
     v2.engine.setActiveTool('place-plate');
     // Place a v2 plate.
     Tool.onPointerDown(
@@ -282,27 +262,8 @@ describe('Phase 1 — PlacePlateTool interaction + transaction + bridge survival
     delete globalThis.blocks;
   });
 
-  it('with the flag OFF, the bridge re-sync drops the v2 plate (no graft)', () => {
-    v2.featureFlags.set('plates', true);
-    v2.engine.setActiveTool('place-plate');
-    Tool.onPointerDown(
-      { clientX: 0, clientY: 0, button: 0 },
-      Object.assign(makeCtx({}), { cursor: { u: 0, v: 0, blk: { viewKey: 'elevation' } } })
-    );
-    Tool.onPointerUp(
-      { clientX: 200, clientY: 200, button: 0 },
-      Object.assign(makeCtx({}), { cursor: { u: 200, v: 200, blk: { viewKey: 'elevation' } } })
-    );
-    expect(v2.appState.model.elements.size).toBe(1);
-
-    // Flip the flag back off — the next sync will NOT graft.
-    v2.featureFlags.set('plates', false);
-    globalThis.objects3D = []; globalThis.entities2D = {}; globalThis.blocks = [];
-    const synced = v2.engine.v1Bridge.syncFromV1('flag-off-sync');
-    expect(synced.elements.size).toBe(0);
-
-    delete globalThis.objects3D;
-    delete globalThis.entities2D;
-    delete globalThis.blocks;
-  });
+  // The "flag-off drops the v2 plate" test that used to live here was retired
+  // alongside the useV2For.plates feature flag in architecture-v2 Phase 2.
+  // The graft is now unconditional — the v1-bridge re-sync preserve test
+  // above is the surviving exit-criterion check.
 });

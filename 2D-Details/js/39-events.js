@@ -982,19 +982,9 @@ function initEvents() {
       requestRender(); return;
     }
 
-    // V25 — when in plate tool and not yet committed a click, probe for a
-    // host edge under the cursor and surface the orange "endpoint" snap
-    // indicator. This is purely advisory — the actual snap happens in
-    // v25TryHandleClick on mousedown.
-    if (sheetMode === '2d' && tool === 'v25-plate' && activeBlock
-        && !v25State.plateDownPx && v25State.polyPts.length === 0
-        && typeof v25Plate2SnapHost === 'function') {
-      const real = px2real(activeBlock, px, py);
-      const snap = v25Plate2SnapHost(activeBlock, real.u, real.v);
-      const prevHad = !!v25SnapInfo;
-      v25SnapInfo = snap ? { type: 'endpoint', u: snap.u, v: snap.v } : null;
-      if (prevHad || snap) requestRender();
-    }
+    // v1 V25 plate hover snap probe retired by architecture-v2 Phase 2.
+    // v2 plate snap will land when the v2 selection/grip layer (Phase 10)
+    // brings host-edge soft-snap onto the v2 pointer pipeline.
 
     // V25 — when in select tool and 2D mode and NOT currently dragging,
     // run a hover-pick so the user gets cursor feedback + visible grip
@@ -1036,10 +1026,10 @@ function initEvents() {
         // line via the existing drawEdgeSnapLines() in the main render path.
         // Body-translation soft-snap. Only fires on whole-entity drag (not
         // end-handle / vertex / rotate handles, so per-handle edits stay
-        // precise). Mem2 and plate2 both participate — plates body-snap to
-        // nearby mem2 outer faces and to other plate edges.
+        // precise). Architecture-v2 Phase 2 retired the v1 V25 plate leg
+        // here; v2 plate body-snap arrives with Phase 10's grip migration.
         if (v25Drag.handle === 'body' && v25Drag.ent
-            && (v25Drag.ent.type === 'mem2' || v25Drag.ent.type === 'plate2')) {
+            && v25Drag.ent.type === 'mem2') {
           activeEdgeSnaps = v25ApplySnap(activeBlock, [v25Drag.ent]);
         }
         v25Drag.lastU = u; v25Drag.lastV = v;
@@ -1228,83 +1218,11 @@ function initEvents() {
       requestRender();
       return;
     }
-    // V25 — plate placement commit on mouseup. Same drag-vs-click pattern as
-    // hatch, but split by Aspect: section commits a cleat (thk × drag), elev
-    // commits a rect on drag / starts a polygon on click.
-    if (tool === 'v25-plate' && v25State.plateDownPx && v25State.plateDownWorld
-        && v25State.polyPts.length === 0 && activeBlock) {
-      const a = v25State.plateDownWorld;
-      const dx = e.clientX - v25State.plateDownPx.x;
-      const dy = e.clientY - v25State.plateDownPx.y;
-      const moved = Math.hypot(dx, dy);
-      const { px, py } = getPixelXY(e);
-      const upR = px2real(activeBlock, px, py);
-      const aspect = (typeof v25Last === 'object' && v25Last.plateAspect === 'sec') ? 'sec' : 'elev';
-      const thk = (typeof v25Last === 'object' && v25Last.plateThk)
-        ? v25Last.plateThk
-        : ((typeof V25_PLATE_DEFAULT_THK !== 'undefined') ? V25_PLATE_DEFAULT_THK : 10);
-      if (aspect === 'sec') {
-        // Cleat — drag distance is cleat projection length, oriented along
-        // the snapped host face outward normal (or raw drag direction if no
-        // host was snapped). Inward drags get flipped 180° so the cleat
-        // always projects AWAY from where the user pulled.
-        if (moved > 4) {
-          let length, rotDeg;
-          if (a.faceAngleRad != null) {
-            const cosA = Math.cos(a.faceAngleRad), sinA = Math.sin(a.faceAngleRad);
-            const drU = upR.u - a.u, drV = upR.v - a.v;
-            const projLen = drU * cosA + drV * sinA;
-            length = Math.abs(projLen);
-            rotDeg = (projLen >= 0 ? a.faceAngleRad : a.faceAngleRad + Math.PI) * 180 / Math.PI;
-          } else {
-            const drU = upR.u - a.u, drV = upR.v - a.v;
-            length = Math.hypot(drU, drV);
-            rotDeg = Math.atan2(drV, drU) * 180 / Math.PI;
-          }
-          if (length >= 5 && typeof v25Add === 'function') {
-            const ent = v25Add('plate2', {
-              aspect: 'sec', shape: 'rect',
-              u: a.u, v: a.v, length, thk,
-              rot: rotDeg,
-              hostId: a.hostId || undefined,
-            });
-            if (ent && typeof v25Selected !== 'undefined') {
-              v25Selected = [ent.id];
-              if (typeof v25UpdateInspector === 'function') v25UpdateInspector();
-            }
-          }
-        }
-      } else {
-        // Elevation — drag = rect; no drag = first polygon vertex.
-        if (moved > 4) {
-          const u = Math.min(a.u, upR.u), v = Math.min(a.v, upR.v);
-          const w = Math.abs(upR.u - a.u), h = Math.abs(upR.v - a.v);
-          if (w > 1 && h > 1 && typeof v25Add === 'function') {
-            const ent = v25Add('plate2', {
-              aspect: 'elev', shape: 'rect',
-              u, v, w, h, thk,
-            });
-            if (ent && typeof v25Selected !== 'undefined') {
-              v25Selected = [ent.id];
-              if (typeof v25UpdateInspector === 'function') v25UpdateInspector();
-            }
-          }
-        } else if (a.snapped) {
-          // No drag, but the down position locked onto a snapped host edge.
-          // Start a two-click rect flow: first edge is anchored at the
-          // snap point, next click commits the opposite corner.
-          v25State.plateRectAnchor = { u: a.u, v: a.v, blk: a.blk };
-        } else {
-          // No drag, no snap — push as first polygon vertex (free polygon).
-          v25State.polyPts.push({ u: a.u, v: a.v });
-        }
-      }
-      v25State.plateDownPx = null;
-      v25State.plateDownWorld = null;
-      v25SnapInfo = null;
-      requestRender();
-      return;
-    }
+    // v1 V25 plate placement commit branch retired by architecture-v2
+    // Phase 2 on 2026-05-22. v2 plates commit through
+    // js/v2/tools/place-plate-tool.js's onPointerUp ->
+    // placeElementTransaction -> v2.engine.undoStack.applyTransaction.
+
     // Release orbit drag (but stay in orbit mode until Enter)
     if (v3dOrbiting) {
       v3dHandleOrbitUp();
@@ -1449,23 +1367,8 @@ function initEvents() {
       requestRender();
       return;
     }
-    // V25 plate poly close on dblclick. Same pattern as v25-hatch: strip the
-    // trailing artefact from the dblclick mousedown, then commit if ≥3 pts.
-    if (tool === 'v25-plate') {
-      if (v25State.plateDownPx) {
-        v25State.plateDownPx = null;
-        v25State.plateDownWorld = null;
-      } else if (v25State.polyPts.length > 0) {
-        v25State.polyPts.pop();
-      }
-      if (v25State.polyPts.length >= 3 && typeof v25PlateCommitPoly === 'function') {
-        v25PlateCommitPoly();
-      } else {
-        v25State.polyPts = [];
-      }
-      requestRender();
-      return;
-    }
+    // v1 V25 plate poly close on dblclick retired by architecture-v2
+    // Phase 2. v2 plates close polygons via PlacePlateTool.onDblClick.
     if (tool === 'polyline' && polyPts.length >= 2) { finishPolyline(); return; }
     if (tool === 'draw-rev-cloud' && polyPts.length >= 3) {
       // Last point is from the dblclick mousedown — drop it before committing

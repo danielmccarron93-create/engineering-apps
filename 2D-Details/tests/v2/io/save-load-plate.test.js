@@ -1,5 +1,7 @@
 /*
- * StructDraw v2 — Phase 1 pilot: save-load round-trip for v2 plates.
+ * StructDraw v2 — Phase 2: save-load round-trip for v2 plates
+ * (originally written for Phase 1; Phase 2 retired the useV2For.plates flag
+ *  so the flag-flip in the beforeEach was removed).
  *
  * Asserts the contract:
  *   1. A model holding a v2-authoritative plate serialises to a v2 save
@@ -13,7 +15,7 @@
  * window.v2 is populated by tests/v2/setup.mjs; describe/it/expect are globals.
  */
 
-describe('Phase 1 — v2 plate save/load round-trip', () => {
+describe('Phase 2 — v2 plate save/load round-trip', () => {
   let v2, Tool;
 
   function placeOnePlate() {
@@ -64,7 +66,6 @@ describe('Phase 1 — v2 plate save/load round-trip', () => {
       v2.engine.undoStack.clear();
     }
     v2.appState.tools = {};
-    v2.featureFlags.set('plates', true);
     v2.engine.setActiveTool('place-plate');
   });
 
