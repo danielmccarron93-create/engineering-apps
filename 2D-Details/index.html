@@ -1336,6 +1336,7 @@
      See PlannedBuilds/architecture-v2/03-model-layer.md.
      ============================================================ -->
 <script src="js/v2/_namespace.js"></script>
+<script src="js/v2/feature-flags.js"></script>
 <script src="js/v2/model/id.js"></script>
 <script src="js/v2/model/geometry.js"></script>
 <script src="js/v2/model/element.js"></script>
@@ -1492,6 +1493,34 @@
 <script src="js/v2/render/threejs/build-mesh-beam-shs.js"></script>
 <script src="js/v2/render/threejs/build-mesh-plate.js"></script>
 <script src="js/v2/render/threejs/build-mesh-fastener-as1252-bolt.js"></script>
+
+<!-- ============================================================
+     ARCHITECTURE v2 — Phase 1 pilot: tools + UI + remaining engine
+     surface for the plate pilot. Loaded AFTER the v1-bridge + render
+     scaffolds so the install() calls in engine/init.js have every
+     dependency present. Order within this block:
+       1. engine extensions — active-tool, undo-stack, autosave, event-dispatch
+       2. tools — namespace, place-plate, registry
+       3. ui — namespace, size-picker, inspector-plate, palette wrap, live-render
+     Note: engine/init.js was loaded earlier (with the v1-bridge); it
+     listens for DOMContentLoaded which fires AFTER every <script> on
+     this page has evaluated, so the install() calls inside boot() see
+     the namespaces this block defines.
+     See PlannedBuilds/architecture-v2/08-pilot-feature.md and
+         PlannedBuilds/architecture-v2/09-build-plan.md "Phase 1".
+     ============================================================ -->
+<script src="js/v2/engine/active-tool.js"></script>
+<script src="js/v2/engine/undo-stack.js"></script>
+<script src="js/v2/engine/autosave.js"></script>
+<script src="js/v2/engine/event-dispatch.js"></script>
+<script src="js/v2/tools/_tools-namespace.js"></script>
+<script src="js/v2/tools/place-plate-tool.js"></script>
+<script src="js/v2/tools/tool-registry.js"></script>
+<script src="js/v2/ui/_ui-namespace.js"></script>
+<script src="js/v2/ui/size-picker.js"></script>
+<script src="js/v2/ui/inspector-plate.js"></script>
+<script src="js/v2/ui/palette-bb-rail.js"></script>
+<script src="js/v2/ui/live-render.js"></script>
 
 </body>
 </html>

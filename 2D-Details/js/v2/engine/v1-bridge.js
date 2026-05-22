@@ -80,7 +80,39 @@
   }
 
   /**
-   * Re-migrate the current v1 state into v2.appState.model and announce it.
+   * Capture every v2-authoritative element from the current shadow model so
+   * the next migrator pass can graft them back on. An element is
+   * "v2-authoritative" when (a) the feature flag for its family-area is on
+   * AND (b) its params.v2Source identifies a v2 tool that created it (rather
+   * than a v1 migration that produced it). Phase 1 covers plates only.
+   * Returns an array of Element objects in their existing form (sharing
+   * references with the prior model — the caller hands them to the new model
+   * unchanged, so undo replay still works on them).
+   * @returns {Element[]}
+   */
+  function captureV2Authoritative() {
+    const prior = v2.appState && v2.appState.model;
+    if (!prior || !(prior.elements instanceof Map)) return [];
+    const platesOn = v2.featureFlags && typeof v2.featureFlags.get === 'function'
+      ? v2.featureFlags.get('plates') : false;
+    if (!platesOn) return [];
+    const out = [];
+    prior.elements.forEach(function (el) {
+      if (!el) return;
+      const isV2Plate = el.category === 'plate' && el.params &&
+                        el.params.v2Source === 'place-plate-tool';
+      if (isV2Plate) out.push(el);
+    });
+    return out;
+  }
+
+  /**
+   * Re-migrate the current v1 state into v2.appState.model, then graft any
+   * v2-authoritative elements (captured before the re-migration) back on top
+   * so a v1 mutation never clobbers a v2-native element. Without this graft
+   * the Phase 1 pilot would silently lose every v2 plate the moment v1 added
+   * a single object3D or 2D entity.
+   *
    * Can throw if the migrator or appState is missing — callers that must not
    * disturb v1 (the wrappers, install) go through the try/catch in syncSafe().
    * @param {string} [trigger] the v1 mutator name that prompted the sync
@@ -93,13 +125,24 @@
     if (!v2.appState) {
       throw new Error('v1Bridge.syncFromV1: v2.appState is not loaded');
     }
+    // Capture v2-authoritative elements BEFORE re-migration overwrites them.
+    const v2Survivors = captureV2Authoritative();
     const model = v2.io.migrations.v1ToV2(readV1State());
+    // Graft the survivors back. They keep their original ids; if the migrator
+    // happened to produce an element with a colliding id, the v2-authoritative
+    // version wins (it carries the user's actual work).
+    for (let i = 0; i < v2Survivors.length; i++) {
+      const el = v2Survivors[i];
+      model.elements.set(el.id, el);
+    }
     v2.appState.model = model;
     bridge.syncCount += 1;
     bridge.lastTrigger = trigger || null;
+    bridge.lastV2Survivors = v2Survivors.length;
     if (v2.engine.dirtyBus && typeof v2.engine.dirtyBus.emit === 'function') {
       v2.engine.dirtyBus.emit('model-changed', {
         model: model, source: 'v1-bridge', trigger: trigger || null,
+        v2Survivors: v2Survivors.length,
       });
     }
     return model;
@@ -176,11 +219,13 @@
     installedNames: [],
     syncCount: 0,
     lastTrigger: null,
+    lastV2Survivors: 0,
     WRAPPED: WRAPPED.slice(),
     install: install,
     uninstall: uninstall,
     syncFromV1: syncFromV1,
     readV1State: readV1State,
+    captureV2Authoritative: captureV2Authoritative,
   };
 
   v2.engine.v1Bridge = bridge;

@@ -74,6 +74,7 @@ for (const [rel, names] of V1_DATA) {
 // index.html. The catalogues/ block is Phase 0c.
 const LOAD_ORDER = [
   '_namespace.js',
+  'feature-flags.js',
   'model/id.js',
   'model/geometry.js',
   'model/element.js',
@@ -202,6 +203,22 @@ const LOAD_ORDER = [
   'render/threejs/build-mesh-beam-shs.js',
   'render/threejs/build-mesh-plate.js',
   'render/threejs/build-mesh-fastener-as1252-bolt.js',
+  // --- Phase 1 — engine extensions, tools, UI (loaded AFTER v1-bridge + render).
+  //     Same dependency order as the index.html <script> tags: engine layers,
+  //     tools, then UI surfaces (the UI install()s reach into engine + tools,
+  //     so this order is required).
+  'engine/active-tool.js',
+  'engine/undo-stack.js',
+  'engine/autosave.js',
+  'engine/event-dispatch.js',
+  'tools/_tools-namespace.js',
+  'tools/place-plate-tool.js',
+  'tools/tool-registry.js',
+  'ui/_ui-namespace.js',
+  'ui/size-picker.js',
+  'ui/inspector-plate.js',
+  'ui/palette-bb-rail.js',
+  'ui/live-render.js',
 ];
 
 for (const rel of LOAD_ORDER) {

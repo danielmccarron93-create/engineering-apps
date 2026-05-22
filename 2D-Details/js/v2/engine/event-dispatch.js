@@ -1,0 +1,218 @@
+/**
+ * StructDraw v2 · Engine Layer · event dispatch
+ * LAYER: engine — the pointer / key router. The v2 cousin of v1's
+ *        `js/39-events.js` (1,601 lines). For Phase 1 it only intercepts
+ *        events when a v2 tool is active AND the relevant feature flag is on;
+ *        every other event is left for v1 to handle, exactly as today.
+ * READS:  window.v2.engine.{getActiveTool, activeTool}; window.v2.appState;
+ *           window.v2.featureFlags; v1 globals (canvas, activeBlock, px2real)
+ *           — guarded by `typeof` checks.
+ * WRITES: window.v2.engine.eventDispatch.{install, uninstall, buildCtx,
+ *           handlerNames, handlersFor}
+ *
+ * Classic <script>, no build step (CLAUDE.md rules 3 & 8). Loading this file
+ * only defines the namespace. install() is called by `js/v2/engine/init.js`
+ * on DOMContentLoaded, AFTER v1 has bound its own canvas listeners (so v2's
+ * capture-phase listeners run BEFORE v1's bubble-phase ones — and can
+ * `stopImmediatePropagation()` selectively when a v2 tool wants to claim
+ * the event).
+ *
+ * NON-INTERFERENCE GUARANTEE: when `v2.engine.activeTool() === null`, every
+ * listener here is a no-op and passes through to v1 — the flag-off browser
+ * behaviour is byte-identical to today.
+ * See PlannedBuilds/architecture-v2/06-tools-and-transactions.md §2.
+ */
+'use strict';
+(function () {
+  const v2 = (window.v2 = window.v2 || {});
+  v2.engine = v2.engine || {};
+
+  /** Which DOM event names route through this dispatcher. */
+  const POINTER_EVENTS = ['pointerdown', 'pointermove', 'pointerup'];
+  const KEY_EVENTS     = ['keydown'];
+
+  /** Bookkeeping for install/uninstall. */
+  const handle = {
+    installed: false,
+    canvas: null,
+    listeners: [],     // [{target, event, fn, opts}]
+  };
+
+  function num(n) { return typeof n === 'number' && isFinite(n) ? n : 0; }
+
+  /**
+   * Read a v1 global by bare name with a `typeof` guard. The bare reference
+   * is reached only when the guard has already proven the binding exists.
+   * Mirrors the same pattern used in v1-bridge.readV1State.
+   */
+  function readBare(name) {
+    switch (name) {
+      case 'activeBlock':  return (typeof activeBlock  !== 'undefined') ? activeBlock  : null;
+      case 'sheetMode':    return (typeof sheetMode    !== 'undefined') ? sheetMode    : null;
+      case 'canvas':       return (typeof canvas       !== 'undefined') ? canvas       : null;
+      case 'viewport':     return (typeof viewport     !== 'undefined') ? viewport     : null;
+      case 'drawingScale': return (typeof drawingScale !== 'undefined') ? drawingScale : 1;
+      default: return null;
+    }
+  }
+
+  /**
+   * Convert a pointer event's clientX/clientY to real-world (u, v) mm for the
+   * currently active v1 detail block. Mirrors v1's `px2real(blk, px, py)`
+   * pipeline but is `typeof`-guarded so JSDOM tests don't fault.
+   * @param {PointerEvent} event
+   * @returns {?{u:number, v:number, blk:object}}
+   */
+  function viewToModel(event) {
+    const blk = readBare('activeBlock');
+    if (!blk) return null;
+    if (typeof px2real !== 'function') return null;
+    const target = handle.canvas || event.target;
+    if (!target || typeof target.getBoundingClientRect !== 'function') return null;
+    const rect = target.getBoundingClientRect();
+    const px = num(event.clientX) - rect.left;
+    const py = num(event.clientY) - rect.top;
+    // px2real returns { u, v } already in real-world mm.
+    const uv = px2real(blk, px, py);
+    return { u: uv.u, v: uv.v, blk: blk };
+  }
+
+  /**
+   * Build the per-event tool context. The tool consults this for the model,
+   * the active view (v1 block), the cursor location in model coords, and the
+   * helpers it needs to apply transactions.
+   * @param {?Event} event
+   * @returns {object}
+   */
+  function buildCtx(event) {
+    const appState = v2.appState || {};
+    const toolId = v2.engine.activeTool() ? v2.engine.activeTool().id : null;
+    if (toolId && (!appState.tools || !appState.tools[toolId])) {
+      if (!appState.tools) appState.tools = {};
+      appState.tools[toolId] = {};
+    }
+    const ctx = {
+      event:    event || null,
+      model:    appState.model || null,
+      appState: appState,
+      blk:      readBare('activeBlock'),
+      sheetMode: readBare('sheetMode'),
+      activeFamily: (appState.ui && appState.ui.activeFamily) || null,
+      activeType:   (appState.ui && appState.ui.activeType)   || null,
+      cursor:   event ? viewToModel(event) : null,
+      toolState: toolId ? appState.tools[toolId] : {},
+      setToolState(updates) {
+        if (!toolId) return;
+        Object.assign(appState.tools[toolId], updates || {});
+      },
+      requestRender() {
+        if (typeof requestRender === 'function') requestRender();
+        if (typeof v3dMarkDirty === 'function') v3dMarkDirty();
+      },
+      applyTransaction(tx) {
+        if (!v2.engine.undoStack || typeof v2.engine.undoStack.applyTransaction !== 'function') {
+          throw new Error('buildCtx: v2.engine.undoStack is not loaded');
+        }
+        return v2.engine.undoStack.applyTransaction(tx);
+      },
+    };
+    return ctx;
+  }
+
+  /**
+   * Route one DOM event to the active tool's matching handler. Returns true
+   * when the tool consumed it (which means we should also stop v1's listeners
+   * via `stopImmediatePropagation` + `preventDefault`); false when no v2 tool
+   * is active or the tool didn't claim the event.
+   * @param {string} handlerName  e.g. 'onPointerDown'
+   * @param {Event}  event
+   * @returns {boolean}
+   */
+  function route(handlerName, event) {
+    const tool = v2.engine.activeTool();
+    if (!tool) return false;
+    const fn = tool[handlerName];
+    if (typeof fn !== 'function') return false;
+    const ctx = buildCtx(event);
+    let claimed = false;
+    try {
+      const r = fn(event, ctx);
+      // A tool can explicitly return `false` to pass through to v1; otherwise
+      // it claims the event. This matches the v2 contract: "tools that bind a
+      // handler at all do so to ACT on the event."
+      claimed = (r !== false);
+    } catch (e) {
+      if (window.console && console.error) {
+        console.error('[v2.engine.eventDispatch] tool "' + tool.id +
+          '" handler ' + handlerName + ' threw:', e);
+      }
+      // A throwing handler does NOT claim the event — let v1 still run.
+      claimed = false;
+    }
+    if (claimed && event) {
+      if (typeof event.stopImmediatePropagation === 'function') event.stopImmediatePropagation();
+      if (typeof event.preventDefault === 'function')           event.preventDefault();
+    }
+    return claimed;
+  }
+
+  function bindOne(target, eventName, fn, opts) {
+    if (!target || typeof target.addEventListener !== 'function') return;
+    target.addEventListener(eventName, fn, opts);
+    handle.listeners.push({ target: target, event: eventName, fn: fn, opts: opts });
+  }
+
+  /**
+   * Mount the v2 event dispatcher onto a canvas (and the document for key
+   * events). Idempotent — a second call while installed is a no-op.
+   * @param {?HTMLCanvasElement} canvas
+   * @param {object} [opts]
+   * @returns {object} the handle
+   */
+  function install(canvas, opts) {
+    if (handle.installed) return handle;
+    canvas = canvas || readBare('canvas');
+    if (!canvas) return handle;     // pre-DOM call (JSDOM tests): silent no-op
+    handle.canvas = canvas;
+    const cap = { capture: true, passive: false };
+    POINTER_EVENTS.forEach(function (ev) {
+      const handlerName = 'on' + ev.charAt(0).toUpperCase() + ev.slice(1).replace(/down|move|up/, function (m) {
+        return m.charAt(0).toUpperCase() + m.slice(1);
+      });
+      bindOne(canvas, ev, function (event) { route(handlerName, event); }, cap);
+    });
+    bindOne(canvas, 'dblclick', function (event) { route('onDblClick', event); }, cap);
+    bindOne(canvas, 'wheel',    function (event) { route('onWheel',    event); }, cap);
+    const doc = (opts && opts.documentRef) || (typeof document !== 'undefined' ? document : null);
+    if (doc) {
+      KEY_EVENTS.forEach(function (ev) {
+        bindOne(doc, ev, function (event) { route('onKey', event); }, cap);
+      });
+    }
+    handle.installed = true;
+    return handle;
+  }
+
+  /** Tear down every listener mounted by install(). Idempotent. */
+  function uninstall() {
+    if (!handle.installed) return;
+    for (let i = 0; i < handle.listeners.length; i++) {
+      const l = handle.listeners[i];
+      if (l.target && typeof l.target.removeEventListener === 'function') {
+        l.target.removeEventListener(l.event, l.fn, l.opts);
+      }
+    }
+    handle.listeners.length = 0;
+    handle.canvas = null;
+    handle.installed = false;
+  }
+
+  v2.engine.eventDispatch = {
+    install:   install,
+    uninstall: uninstall,
+    buildCtx:  buildCtx,
+    viewToModel: viewToModel,
+    route:     route,
+    handle:    handle,
+  };
+})();
