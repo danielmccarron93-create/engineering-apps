@@ -19,6 +19,83 @@ function v25BuildOptionsBar() {
 }
 function v25UpdateOptionsBar() {
   const bar = v25BuildOptionsBar();
+  // Fix G + H (2026-05-23): v2 PlacePlateTool — show Thickness + Orientation
+  // chips. Thickness is greyed when Orientation is Vertical (free-draw mode
+  // — the user defines the visible face dimensions, thickness is metadata).
+  // Mode (rect vs poly) is now auto-detected from drag-vs-click, so no chip.
+  const v2Tool = (window.v2 && v2.engine && typeof v2.engine.activeTool === 'function')
+    ? v2.engine.activeTool() : null;
+  if (sheetMode === '2d' && v2Tool && v2Tool.id === 'place-plate') {
+    bar.style.display = 'flex';
+    const ui = (v2.appState && v2.appState.ui) || {};
+    const orientation = (ui.activePlateOrientation === 'horizontal') ? 'horizontal' : 'vertical';
+    const activeType  = ui.activePlateType || 'PL12';
+    // Plate-flat type catalogue — single source of truth in
+    // `js/v2/catalogues/families/plate-flat.js`. Read it through the v2
+    // catalogue API so adding new thicknesses is a one-file change.
+    let plateTypes = [];
+    if (v2.catalogues && typeof v2.catalogues.lookupFamily === 'function') {
+      const fam = v2.catalogues.lookupFamily('plate-flat');
+      if (fam && Array.isArray(fam.types)) plateTypes = fam.types;
+    }
+    if (plateTypes.length === 0) {
+      // Fallback if the catalogue isn't loaded — keeps the chip functional.
+      plateTypes = [6, 8, 10, 12, 16, 20, 25, 32].map(function (t) {
+        return { id: 'PL' + t, thickness: t };
+      });
+    }
+    const thkDisabled = (orientation === 'vertical');
+    const thkOptions = plateTypes.map(function (t) {
+      return '<option value="' + t.id + '"' + (t.id === activeType ? ' selected' : '') +
+             '>' + t.thickness + ' mm</option>';
+    }).join('');
+    const help = (orientation === 'horizontal')
+      ? 'Click start · click / drag end · cursor side sets thickness direction · Esc cancels'
+      : 'Drag = rectangle · click (no drag) = polygon · Shift = free-angle in poly · Esc cancels';
+    bar.innerHTML =
+      '<strong>Plate (v2)</strong>' +
+      '<label style="display:flex;align-items:center;gap:4px"' +
+        (thkDisabled ? ' title="Thickness only applies to Horizontal cleats — Vertical plates are free-drawn"' : '') +
+        '>' +
+        '<span style="color:var(--text-mute);font-size:11px' + (thkDisabled ? ';opacity:0.5' : '') + '">Thickness</span>' +
+        '<select id="v2plate-thickness"' + (thkDisabled ? ' disabled style="opacity:0.5;cursor:not-allowed"' : '') + '>' +
+          thkOptions +
+        '</select>' +
+      '</label>' +
+      '<label style="display:flex;align-items:center;gap:4px">' +
+        '<span style="color:var(--text-mute);font-size:11px">Orientation</span>' +
+        '<select id="v2plate-orientation">' +
+          '<option value="vertical"' + (orientation === 'vertical' ? ' selected' : '') + '>Vertical</option>' +
+          '<option value="horizontal"' + (orientation === 'horizontal' ? ' selected' : '') + '>Horizontal</option>' +
+        '</select>' +
+      '</label>' +
+      '<span style="color:var(--text-mute);font-size:11px">' + help + '</span>';
+    const thkSel = bar.querySelector('#v2plate-thickness');
+    if (thkSel) thkSel.addEventListener('change', function (e) {
+      if (!v2.appState.ui) v2.appState.ui = {};
+      v2.appState.ui.activePlateType = e.target.value;
+      if (typeof requestRender === 'function') requestRender();
+    });
+    const orSel = bar.querySelector('#v2plate-orientation');
+    if (orSel) orSel.addEventListener('change', function (e) {
+      if (!v2.appState.ui) v2.appState.ui = {};
+      v2.appState.ui.activePlateOrientation = e.target.value;
+      // Reset the in-flight tool state (anchor / poly) so switching orientation
+      // mid-placement doesn't leave half-built geometry behind.
+      if (v2.appState.tools && v2.appState.tools['place-plate']) {
+        const slot = v2.appState.tools['place-plate'];
+        slot.mode = 'rect';
+        slot.anchor = null;
+        slot.anchorPx = null;
+        slot.poly = [];
+        slot.preview = null;
+      }
+      if (typeof requestRender === 'function') requestRender();
+      if (typeof v25UpdateOptionsBar === 'function') v25UpdateOptionsBar();
+      if (typeof updateStatus === 'function') updateStatus();
+    });
+    return;
+  }
   if (sheetMode !== '2d' || !tool || !tool.startsWith('v25-')) {
     bar.style.display = 'none'; return;
   }

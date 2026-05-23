@@ -962,6 +962,71 @@ function v25Mem2Thickness(ent) {
   return 10;
 }
 
+// Fix F (2026-05-23) — face extraction for v2 plate mirrors (and any other
+// 'plate2'-shaped entries that might exist). Restored from the deleted
+// `js/76-v25-plate.js` (Phase 2 dropped this when it retired the v1 plate
+// path); auto-weld needs it to see plate edges. The mirror seam in
+// `js/v2/engine/v1-bridge.js mirrorV2IntoV1` injects `plate2` mirrors for
+// every v2 plate so this function picks them up automatically.
+//
+// Returns face descriptors matching v25Mem2Faces shape: {u1,v1,u2,v2,nu,nv,
+// entId, side}. Auto-detects polygon winding so the outward normal points
+// AWAY from the plate body regardless of vertex order.
+function v25Plate2Faces(ent) {
+  if (!ent || ent.type !== 'plate2') return [];
+  const out = [];
+  // Elevation polygon — walk the literal pts[] edges.
+  if (ent.aspect === 'elev' && ent.shape === 'poly' && Array.isArray(ent.pts) && ent.pts.length >= 3) {
+    const pts = ent.pts;
+    let area = 0;
+    for (let i = 0; i < pts.length; i++) {
+      const p = pts[i], q = pts[(i + 1) % pts.length];
+      area += (p.u * q.v - q.u * p.v);
+    }
+    const ccw = area > 0;
+    for (let i = 0; i < pts.length; i++) {
+      const a = pts[i], b = pts[(i + 1) % pts.length];
+      const du = b.u - a.u, dv = b.v - a.v;
+      const len = Math.hypot(du, dv);
+      if (len < 0.5) continue;
+      const tu = du / len, tv = dv / len;
+      const nu = ccw ?  tv : -tv;
+      const nv = ccw ? -tu :  tu;
+      out.push({ u1: a.u, v1: a.v, u2: b.u, v2: b.v, nu: nu, nv: nv, entId: ent.id, side: 'edge' + i });
+    }
+    return out;
+  }
+  // Elevation rect OR Section cleat — same 4-edge rectangle math.
+  let w, h, originU, originV, rot;
+  if (ent.aspect === 'sec') {
+    w = ent.length || 0;
+    h = ent.thk || 10;
+    originU = ent.u; originV = ent.v;
+    rot = (ent.rot || 0) * Math.PI / 180;
+  } else {
+    w = ent.w || 0;
+    h = ent.h || 0;
+    originU = ent.u; originV = ent.v;
+    rot = (ent.rot || 0) * Math.PI / 180;
+  }
+  if (w < 1 || h < 1) return out;
+  const cosR = Math.cos(rot), sinR = Math.sin(rot);
+  const ly0 = (ent.aspect === 'sec') ? -h / 2 : 0;
+  const ly1 = (ent.aspect === 'sec') ?  h / 2 : h;
+  const project = (lx, ly) => ({
+    u: originU + lx * cosR - ly * sinR,
+    v: originV + lx * sinR + ly * cosR,
+  });
+  const bl = project(0, ly0), br = project(w, ly0), tr = project(w, ly1), tl = project(0, ly1);
+  const rotN = (lx, ly) => ({ nu: lx * cosR - ly * sinR, nv: lx * sinR + ly * cosR });
+  const nBot = rotN(0, -1), nRight = rotN(1, 0), nTop = rotN(0, 1), nLeft = rotN(-1, 0);
+  out.push({ u1: bl.u, v1: bl.v, u2: br.u, v2: br.v, nu: nBot.nu,   nv: nBot.nv,   entId: ent.id, side: 'bottom' });
+  out.push({ u1: br.u, v1: br.v, u2: tr.u, v2: tr.v, nu: nRight.nu, nv: nRight.nv, entId: ent.id, side: 'right'  });
+  out.push({ u1: tr.u, v1: tr.v, u2: tl.u, v2: tl.v, nu: nTop.nu,   nv: nTop.nv,   entId: ent.id, side: 'top'    });
+  out.push({ u1: tl.u, v1: tl.v, u2: bl.u, v2: bl.v, nu: nLeft.nu,  nv: nLeft.nv,  entId: ent.id, side: 'left'   });
+  return out;
+}
+
 // Pair-wise face scan: two faces form an interface when their normals are
 // (near) anti-parallel, their perpendicular distance is ≤ 2 mm, and their
 // projected overlap along the shared direction is ≥ 1 mm.
@@ -973,15 +1038,18 @@ function computeV25WeldInterfaces(viewKey) {
   if (!viewKey) return out;
   const tol = 2;          // mm — face proximity (matches snap catch zone)
   const minOverlap = 1;   // mm — minimum contact length
-  // Collect every weld-relevant face in this view. Phase 2 retired the v1
-  // V25 plate path (and the v25CollectWeldFaces helper that lived in the
-  // deleted 76-v25-plate.js), so only mem2 outer faces participate now. v2
-  // plate auto-welds will land when Phase 7 unifies the joint pipeline.
+  // Collect every weld-relevant face in this view. Fix F (2026-05-23)
+  // restores plate2 participation via the v2→v1 mirror seam — v2 plates are
+  // injected into entities2D as plate2-shaped mirrors by
+  // `js/v2/engine/v1-bridge.js mirrorV2IntoV1`, and we collect their faces
+  // alongside mem2's so plate-to-member contact generates auto-welds.
   const allFaces = [];
   {
     const arr = entities2D[viewKey] || [];
     const mems = arr.filter(e => e && e.type === 'mem2' && e.aspect !== 'sec' && (e.length || 0) >= 1);
     for (const m of mems) for (const f of v25Mem2Faces(m)) { f._ent = m; allFaces.push(f); }
+    const plates = arr.filter(e => e && e.type === 'plate2');
+    for (const p of plates) for (const f of v25Plate2Faces(p)) { f._ent = p; allFaces.push(f); }
   }
   if (allFaces.length < 2) return out;
   const bestPerKey = {};
@@ -1015,10 +1083,11 @@ function computeV25WeldInterfaces(viewKey) {
         u2: fA.u1 + aUx * tMax, v2: fA.v1 + aUy * tMax,
         hatchSide: 1,
       };
-      // Thinner-part thickness for AS 4100 Cl. 9.7.3.10 weld sizing. Phase 2
-      // retired v1 V25 plates from this pipeline; only mem2 web/wall
-      // thickness applies.
+      // Thinner-part thickness for AS 4100 Cl. 9.7.3.10 weld sizing. Fix F
+      // (2026-05-23) restores plate2 awareness so a plate-to-member weld
+      // sizes off the thinner of (plate thickness, member web/wall).
       const thinPart = (ent) => {
+        if (ent && ent.type === 'plate2') return ent.thk || 10;
         return (typeof v25Mem2Thickness === 'function') ? v25Mem2Thickness(ent) : 10;
       };
       const tThin = Math.min(thinPart(fA._ent), thinPart(fB._ent));

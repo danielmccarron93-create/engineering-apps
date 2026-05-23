@@ -51,6 +51,18 @@ function updateStatus() {
   if (tool === 'draw-weld') toolLabel = weldStep === 0 ? 'Weld: pick joint point' : 'Weld: pick direction';
   if (tool === 'draw-breakline') toolLabel = clickPts.length === 0 ? 'Break Line: pick start' : 'Break Line: pick end';
   if (tool === 'draw-centreline') toolLabel = clickPts.length === 0 ? 'Centreline: pick start' : 'Centreline: pick end';
+  // Fix D (2026-05-23): v2 active tool's statusText overrides v1's tool label.
+  // Lets PlacePlateTool surface "Rect — click first corner" etc. through v1's
+  // existing status bar without v2 needing its own status DOM.
+  const v2Tool = (window.v2 && v2.engine && typeof v2.engine.activeTool === 'function')
+    ? v2.engine.activeTool() : null;
+  if (v2Tool && typeof v2Tool.statusText === 'function') {
+    try {
+      const ts = (v2.appState && v2.appState.tools && v2.appState.tools[v2Tool.id]) || {};
+      const s = v2Tool.statusText({ toolState: ts });
+      if (typeof s === 'string' && s.length) toolLabel = s;
+    } catch (e) { /* fall through to v1 label */ }
+  }
   document.getElementById('statusTool').textContent = toolLabel;
 
   document.getElementById('prop3DCount').textContent = objects3D.length;

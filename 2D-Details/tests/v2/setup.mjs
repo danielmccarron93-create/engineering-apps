@@ -213,10 +213,14 @@ const LOAD_ORDER = [
   'engine/event-dispatch.js',
   'tools/_tools-namespace.js',
   'tools/place-plate-tool.js',
+  // --- Phase 3 — v2 bolt tool. Built alongside v1; useV2For.bolts default OFF.
+  'tools/place-bolt-tool.js',
   'tools/tool-registry.js',
   'ui/_ui-namespace.js',
   'ui/size-picker.js',
   'ui/inspector-plate.js',
+  // --- Phase 3 — v2 bolt inspector.
+  'ui/inspector-bolt.js',
   'ui/palette-bb-rail.js',
   'ui/live-render.js',
 ];

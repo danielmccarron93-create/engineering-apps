@@ -12,7 +12,13 @@ function snapUV(block, u, v) {
 
   // Per-axis edge/face snap (used during draw-plate and draw-member)
   // This lets clicks land exactly on member faces (SHS face, UB flange, etc.)
-  if (tool === 'draw-plate' || tool === 'draw-member') {
+  // Fix 2 (2026-05-23): v2's PlacePlateTool needs the same per-axis edge
+  // snap branch v1's draw-plate gets. v2 doesn't set v1's `tool` global, so
+  // we recognise it here. See PlannedBuilds/architecture-v2/12-plate-fix-plan.md.
+  const v2PlateActive = !!(window.v2 && v2.engine &&
+    typeof v2.engine.activeTool === 'function' &&
+    v2.engine.activeTool() && v2.engine.activeTool().id === 'place-plate');
+  if (tool === 'draw-plate' || tool === 'draw-member' || v2PlateActive) {
     let bestU = null, bestUDist = tol;
     let bestV = null, bestVDist = tol;
     for (const obj of objects3D) {
@@ -24,6 +30,28 @@ function snapUV(block, u, v) {
         } else {
           const d = Math.abs(v - e.value);
           if (d < bestVDist) { bestVDist = d; bestV = e.value; }
+        }
+      }
+    }
+    // Fix J (2026-05-23): in 2D mode, also scan v25 entities (mem2 members
+    // drawn in 2D mode, plus v2 plate mirrors injected by the v1-bridge) for
+    // axis-aligned snap edges. Without this, v2 plate placement couldn't
+    // snap to v25 SHS/UB faces — getSnapEdges only handled objects3D.
+    // See PlannedBuilds/architecture-v2/12-plate-fix-plan.md Fix J.
+    if (typeof sheetMode === 'string' && sheetMode === '2d' &&
+        typeof getV25EntSnapEdges === 'function' &&
+        typeof entities2D === 'object' && entities2D) {
+      const v25arr = entities2D[block.viewKey] || [];
+      for (const ent of v25arr) {
+        const edges = getV25EntSnapEdges(ent, block.viewKey);
+        for (const e of edges) {
+          if (e.axis === 'u') {
+            const d = Math.abs(u - e.value);
+            if (d < bestUDist) { bestUDist = d; bestU = e.value; }
+          } else {
+            const d = Math.abs(v - e.value);
+            if (d < bestVDist) { bestVDist = d; bestV = e.value; }
+          }
         }
       }
     }

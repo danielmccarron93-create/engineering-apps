@@ -121,11 +121,19 @@ function loadProject(file) {
           const v2Model = v2.io.modelFromJSON(parsed.v2);
           if (v2Model && v2Model.elements instanceof Map &&
               v2.appState.model && v2.appState.model.elements instanceof Map) {
+            // Phase 3: extend the load-side graft to also restore v2 bolts
+            // when the `useV2For.bolts` flag is on. Plates stay unconditional
+            // (Phase 2). Mirrors v1-bridge.js captureV2Authoritative — the
+            // same elements that survive a bridge re-sync also survive a
+            // file load.
+            const boltsAuth = !!(v2.featureFlags &&
+              typeof v2.featureFlags.get === 'function' && v2.featureFlags.get('bolts'));
             v2Model.elements.forEach(function (el) {
-              if (!el) return;
-              const isV2Plate = el.category === 'plate' && el.params &&
-                                el.params.v2Source === 'place-plate-tool';
-              if (isV2Plate) {
+              if (!el || !el.params) return;
+              const src = el.params.v2Source;
+              const isV2Plate = el.category === 'plate'    && src === 'place-plate-tool';
+              const isV2Bolt  = el.category === 'fastener' && src === 'place-bolt-tool' && boltsAuth;
+              if (isV2Plate || isV2Bolt) {
                 v2.appState.model.elements.set(el.id, el);
               }
             });

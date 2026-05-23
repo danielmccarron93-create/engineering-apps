@@ -14,22 +14,29 @@
  * Phase 2 retired `useV2For.plates` — plates are now unconditionally v2-
  * authoritative (the v1 plate path `js/76-v25-plate.js` is deleted), so no
  * flag is needed to guard the bridge graft or the tool's pointer handlers.
- * The registry stays in place for Phase 3+ feature flags (bolts, members…).
+ * Phase 3 introduces `useV2For.bolts` — v2 bolt support is BUILT alongside the
+ * v1 3D-bolt and the still-planning v25-2d-bolts entity; the flag defaults OFF
+ * so the running app is byte-identical to today until Dan flips it for daily-
+ * use soak. The Phase 3 retirement chat (analogous to Phase 2) deletes the v1
+ * bolt path and removes this flag.
  *
  * The setter emits `feature-flags-changed` on the dirty bus (when present) so
  * future live integration hooks can re-render the relevant UI surfaces.
- * See PlannedBuilds/architecture-v2/09-build-plan.md "Phase 2".
+ * See PlannedBuilds/architecture-v2/09-build-plan.md "Phase 3".
  */
 'use strict';
 (function () {
   const v2 = (window.v2 = window.v2 || {});
 
   /** The complete set of recognised family flags. Keys here ARE the API.
-   *  Empty until Phase 3 adds 'bolts'; the API still rejects unknown keys. */
-  const FLAG_KEYS = [];
+   *  Phase 3 adds 'bolts'; later phases add 'members', 'timber-members', etc.
+   *  Unknown keys are rejected by `set` so a typo is loud, not silent. */
+  const FLAG_KEYS = ['bolts'];
 
-  /** The mutable per-family authority map. Keys are family-area names. */
-  const useV2For = {};
+  /** The mutable per-family authority map. Keys are family-area names.
+   *  All flags default OFF — the running app keeps v1 behaviour until Dan
+   *  explicitly flips a flag for soak. */
+  const useV2For = { bolts: false };
 
   function isKnownKey(key) { return FLAG_KEYS.indexOf(key) !== -1; }
 

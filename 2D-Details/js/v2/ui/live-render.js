@@ -1,12 +1,14 @@
 /**
- * StructDraw v2 · UI · live render shim (Phase 1)
- * LAYER: ui — the Phase 1 bridge that paints v2-authoritative plates onto the
+ * StructDraw v2 · UI · live render shim (Phase 1 + Phase 3 extensions)
+ * LAYER: ui — the bridge that paints v2-authoritative elements onto the
  *        user-facing v1 canvas AND inserts THREE.Mesh objects into v1's iso
  *        scene. The full v2 renderer (a viewport-aware View + Canvas2DBackend
- *        bound to v1's canvas) lands in Phase 2+ — this file is the smallest
- *        shim that makes the pilot observable to the user.
- * READS:  v2.appState.model; v2.render.threejs.buildMeshPlate; v1 globals
- *           (ctx, LW, real2px, ppm, colorAlpha, v3dGroup, v3dMatPlate,
+ *        bound to v1's canvas) lands in Phase 5+ — this file is the smallest
+ *        shim that makes the pilot + each family migration observable.
+ * READS:  v2.appState.model; v2.featureFlags.get('bolts');
+ *           v2.render.threejs.{buildMeshPlate,buildMeshBoltAS1252};
+ *           v1 globals (ctx, LW, DASH, BOLT_DB, real2px, ppm, colorAlpha,
+ *           viewport.zoom, drawingScale, v3dGroup, v3dMatPlate, v3dMatBolt,
  *           sheetMode) — `typeof`-guarded.
  * WRITES: v2.ui.liveRender (install, uninstall, draw…, build…)
  *
@@ -18,25 +20,26 @@
  * --- WRAP STRATEGY --------------------------------------------------------
  * - `requestRender` / `render` are NOT wrapped. Instead, we add a hook
  *   inside the per-block draw path by wrapping `drawBlockContent`: after the
- *   v1 implementation runs we paint v2 plates on top using direct ctx calls
- *   in v1-coordinate space (real2px). This mirrors v1's `drawPlate2D`
- *   visually so the v2 plate is indistinguishable from a v1 plate2 at
- *   pixel-similarity-test resolution.
+ *   v1 implementation runs we paint v2 elements on top using direct ctx calls
+ *   in v1-coordinate space (real2px). This mirrors v1's `drawPlate2D` /
+ *   `drawBolt` visually so the v2 element is indistinguishable from its v1
+ *   analogue at pixel-similarity-test resolution.
  * - `v3dRebuildScene` is wrapped: after v1 walks objects3D, we add a Mesh
- *   per v2 plate via `v2.render.threejs.buildMeshPlate`. That uses the v1
- *   plate material (`v3dMatPlate`) so the iso block looks visually consistent
- *   with v1's plate rendering.
+ *   per v2 element via `v2.render.threejs.buildMesh*`. That uses the v1
+ *   material (`v3dMatPlate` / `v3dMatBolt`) so the iso block looks visually
+ *   consistent with v1's rendering.
  *
- * Both wraps run unconditionally — Phase 2 retired the `useV2For.plates`
- * feature flag, so the shim runs every render frame. When no v2 plates exist,
- * `eachV2Plate` short-circuits naturally (the model carries zero matching
- * elements) and the wrapper completes in microseconds.
+ * Plates: Phase 2 retired the feature flag — the plate wraps run every render
+ * frame. Bolts: Phase 3 builds alongside v1 — the bolt wraps are GATED on the
+ * `useV2For.bolts` feature flag so the running app is byte-identical to today
+ * until Dan flips the flag for the one-week soak. When no v2 bolts exist
+ * (flag off OR none placed), `eachV2Bolt` short-circuits naturally.
  *
  * NOTE — this file is the only module that depends on v1's drawing conventions
- * (real2px, LW, ppm). Promoting plates to the proper Canvas2DRenderer +
- * viewport-aware View is Phase 3+ work.
+ * (real2px, LW, ppm). Promoting plates/bolts to the proper Canvas2DRenderer +
+ * viewport-aware View is Phase 5+ work.
  * See PlannedBuilds/architecture-v2/08-pilot-feature.md §4.3 + §4.7 and
- *     PlannedBuilds/architecture-v2/09-build-plan.md "Phase 2".
+ *     PlannedBuilds/architecture-v2/09-build-plan.md "Phase 2" + "Phase 3".
  */
 'use strict';
 (function () {
@@ -61,6 +64,37 @@
         fn(el);
       }
     });
+  }
+
+  /** Phase 3 — feature-flag gate for v2 bolts. */
+  function boltsAuthoritative() {
+    return !!(v2.featureFlags && typeof v2.featureFlags.get === 'function' &&
+              v2.featureFlags.get('bolts'));
+  }
+
+  function eachV2Bolt(fn) {
+    if (!boltsAuthoritative()) return;
+    const model = v2.appState && v2.appState.model;
+    if (!model || !(model.elements instanceof Map)) return;
+    model.elements.forEach(function (el) {
+      if (el && el.category === 'fastener' &&
+          el.params && el.params.v2Source === 'place-bolt-tool') {
+        fn(el);
+      }
+    });
+  }
+
+  /** A v2 bolt's (u, v) anchor in real-world mm — derived from its location. */
+  function boltUV(el) {
+    const g = el && el.geometry;
+    if (!g || g.kind !== 'point' || !g.location) return null;
+    return { u: num(g.location.x), v: num(g.location.y) };
+  }
+
+  /** The viewKey a v2 bolt "belongs" to — params.v2View from the place tool. */
+  function boltViewKey(el) {
+    return (el && el.params && typeof el.params.v2View === 'string')
+      ? el.params.v2View : null;
   }
 
   /** A v2 plate's polygon in (u, v) real-world mm — works for region or polyline. */
@@ -114,28 +148,262 @@
         else         ctx.lineTo(sp.x, sp.y);
       }
       ctx.closePath();
-      // Faint fill so v2 plates read as "filled outline" the way v1 plate2 does
-      // when fillColour is set — but keep the AS 1100 default of outline-only
-      // visual weight by using a very light alpha.
-      if (typeof colorAlpha === 'function') {
-        ctx.fillStyle = colorAlpha(col, 0.06);
+      // Fix B + C (2026-05-23): outline only — no grey fill, no centroid
+      // label. AS 1100 default for a plate is outline-only at the right
+      // lineweight. Labels are user-added annotations (a separate phase).
+      ctx.stroke();
+      ctx.restore();
+    });
+  }
+
+  /**
+   * Fix E (2026-05-23): draw the active v2 tool's in-progress preview onto
+   * the user-facing canvas — the ghost shape the user sees BEFORE committing.
+   * Covers the plate tool's two modes:
+   *   - rect: anchor → cursor rectangle (after first click; closes the loop)
+   *   - poly: committed vertices + cursor as last vertex (open polyline)
+   * Renders as a dashed outline only, no fill, no label. Each block only
+   * draws the preview when its viewKey matches the cursor's block.
+   * @param {object} blk      v1 active block
+   * @param {CSSStyleDeclaration} cs   getComputedStyle(document.body)
+   */
+  function drawV2ActiveToolPreview(blk, cs) {
+    if (!blk) return;
+    if (typeof ctx === 'undefined' || typeof real2px !== 'function') return;
+    if (!window.v2 || !v2.engine || typeof v2.engine.activeTool !== 'function') return;
+    const tool = v2.engine.activeTool();
+    if (!tool || tool.id !== 'place-plate') return;
+    const ts = (v2.appState && v2.appState.tools && v2.appState.tools['place-plate']) || null;
+    if (!ts) return;
+    // Only paint into the block the cursor is currently hovering — avoids
+    // ghosting across every detail block on the sheet.
+    const cursorBlk = ts.cursor && ts.cursor.blk;
+    if (cursorBlk && cursorBlk.viewKey && cursorBlk.viewKey !== blk.viewKey) return;
+    const preview = ts.preview;
+    const polyMode = ts.mode === 'poly';
+    const hasPreview = Array.isArray(preview) && preview.length >= 2;
+    const hasPolyDots = polyMode && Array.isArray(ts.poly) && ts.poly.length > 0;
+    if (!hasPreview && !hasPolyDots) return;
+    const col = cs.getPropertyValue('--entity-color').trim() || '#000000';
+    const previewCol = (typeof colorAlpha === 'function') ? colorAlpha(col, 0.6) : col;
+    ctx.save();
+    if (hasPreview) {
+      ctx.strokeStyle = previewCol;
+      ctx.lineWidth = 0.5;
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath();
+      for (let i = 0; i < preview.length; i++) {
+        const p = preview[i];
+        const u = (typeof p.x === 'number') ? p.x : p.u;
+        const v = (typeof p.y === 'number') ? p.y : p.v;
+        const sp = real2px(blk, u, v);
+        if (i === 0) ctx.moveTo(sp.x, sp.y);
+        else         ctx.lineTo(sp.x, sp.y);
+      }
+      if (ts.mode === 'rect') ctx.closePath();
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    if (hasPolyDots) {
+      // Small dots at each committed polygon vertex so the user sees what's
+      // already locked in.
+      ctx.fillStyle = col;
+      for (let i = 0; i < ts.poly.length; i++) {
+        const p = ts.poly[i];
+        const u = (typeof p.x === 'number') ? p.x : p.u;
+        const v = (typeof p.y === 'number') ? p.y : p.v;
+        const sp = real2px(blk, u, v);
+        ctx.beginPath();
+        ctx.arc(sp.x, sp.y, 2.5, 0, Math.PI * 2);
         ctx.fill();
       }
-      ctx.stroke();
-      // "PL X THK" label at the centroid, matching v1's section-cleat label
-      // pattern — uses the plate's `params.thickness` from the place-tool.
-      const thk = num(el.params && el.params.thickness, 10);
-      let cx = 0, cy = 0;
-      for (let j = 0; j < pts.length; j++) { cx += pts[j].u; cy += pts[j].v; }
-      cx /= pts.length; cy /= pts.length;
-      const cp = real2px(blk, cx, cy);
-      ctx.fillStyle = col;
-      ctx.font = (Math.max(8, 3 * ppm_)).toFixed(0) + 'px system-ui';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText('PL ' + thk + ' THK', cp.x, cp.y);
-      ctx.textAlign = 'start';
-      ctx.textBaseline = 'alphabetic';
+    }
+    // Fix I (2026-05-23): subtle live dimension text below the preview so the
+    // engineer keeps track of size while drawing. Rect mode → "W × H mm".
+    // Poly mode → length of the current segment (cursor to previous vertex).
+    if (hasPreview) {
+      let dimText = null;
+      if (ts.mode === 'poly' && preview.length >= 2) {
+        const last = preview[preview.length - 1];
+        const prev = preview[preview.length - 2];
+        const lu = (typeof last.x === 'number') ? last.x : last.u;
+        const lv = (typeof last.y === 'number') ? last.y : last.v;
+        const pu = (typeof prev.x === 'number') ? prev.x : prev.u;
+        const pv = (typeof prev.y === 'number') ? prev.y : prev.v;
+        const dist = Math.round(Math.hypot(lu - pu, lv - pv));
+        dimText = dist + ' mm';
+      } else if (preview.length >= 3) {
+        // Rect (any closed polygon): width × height of the bounding box.
+        let uMin = Infinity, uMax = -Infinity, vMin = Infinity, vMax = -Infinity;
+        for (let i = 0; i < preview.length; i++) {
+          const p = preview[i];
+          const u = (typeof p.x === 'number') ? p.x : p.u;
+          const v = (typeof p.y === 'number') ? p.y : p.v;
+          if (u < uMin) uMin = u; if (u > uMax) uMax = u;
+          if (v < vMin) vMin = v; if (v > vMax) vMax = v;
+        }
+        const w = Math.round(uMax - uMin);
+        const h = Math.round(vMax - vMin);
+        if (w >= 1 && h >= 1) dimText = w + ' × ' + h + ' mm';
+      }
+      if (dimText) {
+        // Position: just below the centre-bottom of the preview, in SCREEN
+        // pixels so the offset is stable across zoom + drawing scale.
+        let pxMinX = Infinity, pxMaxX = -Infinity, pxMaxY = -Infinity;
+        for (let i = 0; i < preview.length; i++) {
+          const p = preview[i];
+          const u = (typeof p.x === 'number') ? p.x : p.u;
+          const v = (typeof p.y === 'number') ? p.y : p.v;
+          const sp = real2px(blk, u, v);
+          if (sp.x < pxMinX) pxMinX = sp.x;
+          if (sp.x > pxMaxX) pxMaxX = sp.x;
+          if (sp.y > pxMaxY) pxMaxY = sp.y;
+        }
+        const cx = (pxMinX + pxMaxX) / 2;
+        const cy = pxMaxY + 14;
+        ctx.fillStyle = (typeof colorAlpha === 'function') ? colorAlpha(col, 0.75) : col;
+        ctx.font = '11px system-ui';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'top';
+        ctx.fillText(dimText, cx, cy);
+        ctx.textAlign = 'start';
+        ctx.textBaseline = 'alphabetic';
+      }
+    }
+    ctx.restore();
+  }
+
+  /**
+   * Draw every v2 bolt that belongs to `blk` onto the v1 canvas. Mirrors v1's
+   * `drawBolt` end-on path for the `'elev'` aspect (washer ring + hole +
+   * crosshair) and a simplified side-profile rect for the `'sec'` aspect
+   * (head + washers + shank + nut at rot, with a centreline). The full AS 1101
+   * chamfered-hex side profile lands when the proper Canvas2DRenderer +
+   * viewport-aware View is wired in (Phase 5+).
+   * @param {object} blk      v1 active block
+   * @param {CSSStyleDeclaration} cs   getComputedStyle(document.body)
+   */
+  function drawV2BoltsOnCanvas(blk, cs) {
+    if (!blk) return;
+    if (typeof ctx === 'undefined' || typeof real2px !== 'function') return;
+    if (typeof BOLT_DB === 'undefined') return;
+    const ppm_ = (typeof ppm === 'function') ? ppm() : 1;
+    const zoom = (typeof viewport !== 'undefined' && viewport && typeof viewport.zoom === 'number')
+      ? viewport.zoom : 1;
+    const dscale = (typeof drawingScale === 'number' && drawingScale) ? drawingScale : 10;
+    const col = cs.getPropertyValue('--entity-color').trim() || '#000000';
+    const clCol = cs.getPropertyValue('--cl-color').trim() || col;
+    const visLW = (typeof LW === 'object' && LW && typeof LW.VIS === 'number')
+      ? Math.max(0.5, LW.VIS * ppm_) : 0.5;
+    const hidLW = (typeof LW === 'object' && LW && typeof LW.HID === 'number')
+      ? Math.max(0.3, LW.HID * ppm_) : 0.3;
+    const alpha = (typeof colorAlpha === 'function') ? colorAlpha : null;
+
+    eachV2Bolt(function (el) {
+      if (boltViewKey(el) !== blk.viewKey) return;
+      const uv = boltUV(el);
+      if (!uv) return;
+      const b = BOLT_DB[el.type] || BOLT_DB.M20;
+      if (!b) return;
+      const aspect = (el.params && el.params.aspect === 'elev') ? 'elev' : 'sec';
+
+      ctx.save();
+      ctx.setLineDash([]);
+
+      if (aspect === 'elev') {
+        // Head-on view: washer outline + bolt hole + head crosshair.
+        const p = real2px(blk, uv.u, uv.v);
+        const r  = (b.d      / 2) * zoom / dscale;
+        const wr = (b.washOD / 2) * zoom / dscale;
+        const hr = (b.headAF / 2) * zoom / dscale;
+        // Washer (dashed lighter)
+        ctx.strokeStyle = alpha ? alpha(col, 0.4) : col;
+        ctx.lineWidth = hidLW;
+        ctx.beginPath(); ctx.arc(p.x, p.y, wr, 0, Math.PI * 2); ctx.stroke();
+        // Bolt hole
+        ctx.strokeStyle = col; ctx.lineWidth = visLW;
+        ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.stroke();
+        if (alpha) { ctx.fillStyle = alpha(col, 0.20); ctx.fill(); }
+        // Head crosshair
+        ctx.beginPath();
+        ctx.moveTo(p.x - hr, p.y); ctx.lineTo(p.x + hr, p.y);
+        ctx.moveTo(p.x, p.y - hr); ctx.lineTo(p.x, p.y + hr);
+        ctx.stroke();
+      } else {
+        // Side profile: head + washer + shank + washer + nut, rotated by rot.
+        // Drawn in screen space after projecting the centre with real2px and
+        // applying a screen-space rotation about that centre — keeps lineweight
+        // canvas-pixel-stable independent of viewport zoom.
+        const params = el.params || {};
+        const rotDeg = num(params.rot, 0);
+        const rotRad = rotDeg * Math.PI / 180;
+        const grip = num(params.gripOverride, num(params.grip, 12));
+        const p = real2px(blk, uv.u, uv.v);
+        const s = zoom / dscale;       // mm → canvas px scale
+        const shaftLen = grip * s;
+        const halfShank = shaftLen / 2;
+        const shaftR = (b.d / 2) * s;
+        const headR = (b.headAF / 2) * s;
+        const nutR  = (b.nutAF  / 2) * s;
+        const washR = (b.washOD / 2) * s;
+        const headH = b.headH * s;
+        const nutH  = b.nutH  * s;
+        const washT = b.washT * s;
+        // Coordinates along the bolt axis from the centre.
+        const zShankL = -halfShank;
+        const zShankR =  halfShank;
+        const zWashH  = zShankL - washT;
+        const zHead   = zWashH  - headH;
+        const zWashN  = zShankR;
+        const zNut    = zWashN  + washT;
+        const zEnd    = zNut    + nutH;
+        const threadProt = 2 * b.pitch * s;
+
+        ctx.translate(p.x, p.y);
+        ctx.rotate(rotRad);
+
+        // Shank
+        ctx.strokeStyle = col; ctx.lineWidth = visLW;
+        ctx.beginPath();
+        ctx.rect(zShankL, -shaftR, shaftLen, shaftR * 2);
+        ctx.stroke();
+        if (alpha) {
+          ctx.fillStyle = alpha(col, 0.10);
+          ctx.fillRect(zShankL, -shaftR, shaftLen, shaftR * 2);
+        }
+        // Head + head-side washer
+        ctx.beginPath();
+        ctx.rect(zHead, -headR, headH, headR * 2);
+        ctx.rect(zWashH, -washR, washT, washR * 2);
+        ctx.stroke();
+        if (alpha) {
+          ctx.fillStyle = alpha(col, 0.25);
+          ctx.fillRect(zHead,  -headR, headH, headR * 2);
+          ctx.fillRect(zWashH, -washR, washT, washR * 2);
+        }
+        // Nut-side washer + nut + thread protrusion
+        ctx.beginPath();
+        ctx.rect(zWashN, -washR, washT, washR * 2);
+        ctx.rect(zNut,   -nutR,  nutH, nutR  * 2);
+        ctx.rect(zEnd,   -shaftR, threadProt, shaftR * 2);
+        ctx.stroke();
+        if (alpha) {
+          ctx.fillStyle = alpha(col, 0.25);
+          ctx.fillRect(zWashN, -washR, washT, washR * 2);
+          ctx.fillRect(zNut,   -nutR,  nutH, nutR  * 2);
+        }
+        // Centreline along the bolt axis (in local rotated frame)
+        ctx.strokeStyle = clCol; ctx.lineWidth = 0.5;
+        const DASH_CL = (typeof DASH === 'object' && DASH && Array.isArray(DASH.CL_BOLT))
+          ? DASH.CL_BOLT : [6, 2, 1, 2];
+        ctx.setLineDash(DASH_CL);
+        ctx.beginPath();
+        ctx.moveTo(zHead - 4, 0);
+        ctx.lineTo(zEnd + threadProt + 4, 0);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+
       ctx.restore();
     });
   }
@@ -177,7 +445,55 @@
     });
   }
 
-  /** Wrap v1's drawBlockContent so v2 plates layer on top of v1 entities. */
+  /**
+   * Build a THREE.Group for every v2 bolt and add it to `group`. Re-uses the
+   * v2 mesh builder (`v2.render.threejs.buildMeshBoltAS1252`) — the same
+   * scaffold the JSDOM Phase 0g test exercises. Passes the v1 bolt material
+   * (`v3dMatBolt`) so the iso visual matches v1's bolt rendering.
+   * @param {THREE.Group} group  v1's v3dGroup
+   */
+  function buildV2BoltsInScene(group) {
+    if (typeof THREE === 'undefined' || !group) return;
+    const builder = v2.render && v2.render.threejs && v2.render.threejs.buildMeshBoltAS1252;
+    if (typeof builder !== 'function') return;
+    const v1Bolt = (typeof v3dMatBolt !== 'undefined') ? v3dMatBolt : null;
+    const materialsShim = { get: function () { return v1Bolt; } };
+    eachV2Bolt(function (el) {
+      const ctxShim = {
+        view: null, rendererName: 'threejs', backend: null,
+        threeMaterials: materialsShim,
+        material: el.materialId || null,
+        // The mesh builder reads ctx.type for shank dimensions — resolve from
+        // the v2 catalogue if available, else fall through to BOLT_DB-style
+        // fields the builder's `dimsFor` understands.
+        type: (function () {
+          if (v2.catalogues && typeof v2.catalogues.lookupType === 'function') {
+            const t = v2.catalogues.lookupType(el.family || 'as1252-bolt', el.type || 'M20');
+            if (t) return t;
+          }
+          if (typeof BOLT_DB !== 'undefined') {
+            return BOLT_DB[el.type] || BOLT_DB.M20 || null;
+          }
+          return null;
+        })(),
+      };
+      let mesh = null;
+      try { mesh = builder(el, ctxShim); } catch (e) {
+        if (window.console && console.error) {
+          console.error('[v2.ui.liveRender] buildMeshBoltAS1252 threw for ' + el.id + ':', e);
+        }
+        return;
+      }
+      if (mesh) {
+        mesh.userData = mesh.userData || {};
+        mesh.userData.v2ElementId = el.id;
+        mesh.userData.v2Source = 'live-render';
+        group.add(mesh);
+      }
+    });
+  }
+
+  /** Wrap v1's drawBlockContent so v2 plates + bolts layer on top of v1. */
   function wrapDrawBlockContent() {
     if (typeof window === 'undefined') return false;
     const orig = window.drawBlockContent;
@@ -187,6 +503,13 @@
       const result = orig.call(this, blk, cs);
       try { drawV2PlatesOnCanvas(blk, cs); }
       catch (e) { if (window.console && console.error) console.error('[v2.ui.liveRender] drawV2Plates threw:', e); }
+      try { drawV2BoltsOnCanvas(blk, cs); }
+      catch (e) { if (window.console && console.error) console.error('[v2.ui.liveRender] drawV2Bolts threw:', e); }
+      // Fix E (2026-05-23): in-progress preview for the active v2 tool
+      // (currently the plate tool's rect / poly ghost). Drawn last so the
+      // preview is always on top of committed entities.
+      try { drawV2ActiveToolPreview(blk, cs); }
+      catch (e) { if (window.console && console.error) console.error('[v2.ui.liveRender] drawV2ActiveToolPreview threw:', e); }
       return result;
     }
     drawBlockContentWithV2._v2LiveRenderWrapped = true;
@@ -195,7 +518,7 @@
     return true;
   }
 
-  /** Wrap v1's v3dRebuildScene so v2 plates appear in the iso block. */
+  /** Wrap v1's v3dRebuildScene so v2 plates + bolts appear in the iso block. */
   function wrapV3dRebuild() {
     if (typeof window === 'undefined') return false;
     const orig = window.v3dRebuildScene;
@@ -206,6 +529,8 @@
       if (typeof v3dGroup !== 'undefined') {
         try { buildV2PlatesInScene(v3dGroup); }
         catch (e) { if (window.console && console.error) console.error('[v2.ui.liveRender] buildV2Plates threw:', e); }
+        try { buildV2BoltsInScene(v3dGroup); }
+        catch (e) { if (window.console && console.error) console.error('[v2.ui.liveRender] buildV2Bolts threw:', e); }
       }
       return result;
     }
@@ -264,9 +589,16 @@
     uninstall: uninstall,
     drawV2PlatesOnCanvas: drawV2PlatesOnCanvas,
     buildV2PlatesInScene: buildV2PlatesInScene,
+    drawV2BoltsOnCanvas:  drawV2BoltsOnCanvas,
+    buildV2BoltsInScene:  buildV2BoltsInScene,
+    drawV2ActiveToolPreview: drawV2ActiveToolPreview,   // Fix E (2026-05-23)
     eachV2Plate: eachV2Plate,
+    eachV2Bolt:  eachV2Bolt,
     plateUV: plateUV,
     plateViewKey: plateViewKey,
+    boltUV:  boltUV,
+    boltViewKey:  boltViewKey,
+    boltsAuthoritative: boltsAuthoritative,
     state: state,
   };
 })();

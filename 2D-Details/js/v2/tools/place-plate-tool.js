@@ -40,8 +40,63 @@
   const DRAG_THRESHOLD_PX = 4;
 
   /** Default family + type when the UI hasn't picked one yet. */
-  const DEFAULT_FAMILY = 'plate-flat';
-  const DEFAULT_TYPE   = 'PL10';
+  const DEFAULT_FAMILY      = 'plate-flat';
+  const DEFAULT_TYPE        = 'PL12';      // Fix G (2026-05-23): 12 mm by default
+  const DEFAULT_ORIENTATION = 'vertical';  // Fix H (2026-05-23)
+
+  /** Resolve the current placement orientation from appState.ui.
+   *  - 'vertical' (default): free-form rectangle or polygon — the user draws
+   *    the visible face of the cleat at any size; thickness is "into the page".
+   *  - 'horizontal': a flat cleat seen in elevation as a thin strip; the user
+   *    defines the LENGTH by clicking start + end, and the thickness from
+   *    the size picker fixes the perpendicular extent.
+   *  See Fix H in PlannedBuilds/architecture-v2/12-plate-fix-plan.md (round 3). */
+  function activeOrientation(ctx) {
+    const ui = (ctx && ctx.appState && ctx.appState.ui) || {};
+    return (ui.activePlateOrientation === 'horizontal') ? 'horizontal' : 'vertical';
+  }
+
+  /** Build a horizontal cleat polygon — the v=anchor.v line is the cleat's
+   *  TOP (if user dragged downward) or BOTTOM (if upward) edge; the cleat
+   *  extends `thk` perpendicular in the direction of cursor.v. */
+  function horizontalCleatPolygon(anchor, cursor, thk) {
+    const dir = (cursor.v >= anchor.v) ? 1 : -1;
+    const u0 = Math.min(anchor.u, cursor.u);
+    const u1 = Math.max(anchor.u, cursor.u);
+    const v0 = anchor.v;
+    const v1 = anchor.v + dir * thk;
+    return [
+      { x: u0, y: Math.min(v0, v1) },
+      { x: u1, y: Math.min(v0, v1) },
+      { x: u1, y: Math.max(v0, v1) },
+      { x: u0, y: Math.max(v0, v1) },
+    ];
+  }
+
+  /** Constrain `cursor` to be ortho (horizontal or vertical) from `origin`.
+   *  Used in poly mode (Vertical orientation) unless Shift is held — mirrors
+   *  v1 v25 tool default behaviour. */
+  function applyOrtho(cursor, origin) {
+    if (!origin || !cursor) return cursor;
+    const du = cursor.u - origin.u;
+    const dv = cursor.v - origin.v;
+    if (Math.abs(du) >= Math.abs(dv)) return { u: cursor.u, v: origin.v };
+    return { u: origin.u, v: cursor.v };
+  }
+
+  /** Read Shift state — prefer v1's global if present, fall back to event. */
+  function shiftIsHeld(event) {
+    if (typeof window !== 'undefined' && typeof window.shiftHeld === 'boolean' && window.shiftHeld) return true;
+    if (event && event.shiftKey) return true;
+    return false;
+  }
+
+  /** Pull the last vertex of the poly stack as a {u,v} pair. */
+  function lastPolyVertex(poly) {
+    if (!Array.isArray(poly) || poly.length === 0) return null;
+    const p = poly[poly.length - 1];
+    return { u: (typeof p.x === 'number') ? p.x : p.u, v: (typeof p.y === 'number') ? p.y : p.v };
+  }
 
   function num(n, dflt) { return (typeof n === 'number' && isFinite(n)) ? n : (dflt === undefined ? 0 : dflt); }
 
@@ -166,14 +221,25 @@
       const cursor = ctx.cursor;
       if (!cursor) return false;
       const s = ctx.toolState;
+      const orient = activeOrientation(ctx);
       let preview = null;
-      if (s.mode === 'rect' && s.anchor) {
-        preview = rectPolygon(s.anchor, cursor);
-      } else if (s.mode === 'poly' && s.poly.length) {
-        // Rubber-band: committed polygon + current cursor as the last vertex.
-        preview = s.poly.concat([{ x: cursor.u, y: cursor.v }]).map(function (p) {
-          return (typeof p.x === 'number') ? p : { x: p.u, y: p.v };
-        });
+      if (orient === 'horizontal') {
+        if (s.anchor) {
+          const sel = activeSelection(ctx);
+          const thk = thicknessFor(sel.family, sel.type);
+          preview = horizontalCleatPolygon(s.anchor, cursor, thk);
+        }
+      } else {
+        // Vertical orientation: rect drag preview OR poly rubber-band.
+        if (s.mode === 'poly' && s.poly.length) {
+          const last = lastPolyVertex(s.poly);
+          const useCursor = shiftIsHeld(event) ? cursor : applyOrtho(cursor, last);
+          preview = s.poly.concat([{ x: useCursor.u, y: useCursor.v }]).map(function (p) {
+            return (typeof p.x === 'number') ? p : { x: p.u, y: p.v };
+          });
+        } else if (s.anchor) {
+          preview = rectPolygon(s.anchor, cursor);
+        }
       }
       ctx.setToolState({ cursor: cursor, preview: preview });
       ctx.requestRender();
@@ -185,48 +251,91 @@
       const cursor = ctx.cursor;
       if (!cursor) return false;
       const s = ctx.toolState;
-      if (s.mode === 'rect') {
+      const orient = activeOrientation(ctx);
+
+      if (orient === 'horizontal') {
+        // Horizontal cleat: two-click line OR drag-release. First click sets
+        // anchor; second click commits.
         if (!s.anchor) {
-          // First click — record anchor and remember the pixel for drag detection.
           ctx.setToolState({
-            anchor: { u: cursor.u, v: cursor.v },
+            anchor:   { u: cursor.u, v: cursor.v },
             anchorPx: { x: event.clientX, y: event.clientY },
           });
           ctx.requestRender();
           return true;
         }
-        // Second click — commit a rect from anchor to cursor.
-        commitRect(ctx, s.anchor, cursor);
+        commitHorizontalCleat(ctx, s.anchor, cursor);
         return true;
       }
-      // Polygon mode — append a vertex (or close near the first vertex).
-      const first = s.poly[0];
-      if (first && s.poly.length >= 3) {
-        const dx = cursor.u - first.x, dy = cursor.v - first.y;
-        if (Math.hypot(dx, dy) < 14) {       // ~14 mm close-tolerance
-          commitPoly(ctx, s.poly);
-          return true;
+
+      // Vertical orientation
+      if (s.mode === 'poly') {
+        // Append a vertex (with ortho snap unless Shift held), or close near
+        // the first vertex.
+        const first = s.poly[0];
+        const last  = lastPolyVertex(s.poly);
+        let newPt = { u: cursor.u, v: cursor.v };
+        if (last && !shiftIsHeld(event)) newPt = applyOrtho(cursor, last);
+        if (first && s.poly.length >= 3) {
+          const fx = (typeof first.x === 'number') ? first.x : first.u;
+          const fy = (typeof first.y === 'number') ? first.y : first.v;
+          if (Math.hypot(newPt.u - fx, newPt.v - fy) < 14) {
+            commitPoly(ctx, s.poly);
+            return true;
+          }
         }
+        const next = s.poly.concat([{ x: newPt.u, y: newPt.v }]);
+        ctx.setToolState({ poly: next });
+        ctx.requestRender();
+        return true;
       }
-      const next = s.poly.concat([{ x: cursor.u, y: cursor.v }]);
-      ctx.setToolState({ poly: next });
+
+      // Rect mode (or unset) — record anchor; pointerUp decides drag-vs-click.
+      ctx.setToolState({
+        mode:     'rect',
+        anchor:   { u: cursor.u, v: cursor.v },
+        anchorPx: { x: event.clientX, y: event.clientY },
+      });
       ctx.requestRender();
       return true;
     },
 
     onPointerUp(event, ctx) {
       const s = ctx.toolState;
-      if (s.mode !== 'rect' || !s.anchor || !s.anchorPx || !event) return false;
-      // Detect drag vs click: a meaningful pixel-distance move means commit on release.
+      if (!s.anchor || !s.anchorPx || !event) return false;
+      const orient = activeOrientation(ctx);
       const dx = num(event.clientX) - num(s.anchorPx.x);
       const dy = num(event.clientY) - num(s.anchorPx.y);
-      if (Math.hypot(dx, dy) < DRAG_THRESHOLD_PX) {
-        // Treat as a click — leave the anchor in place so the next click commits.
+      const dragged = Math.hypot(dx, dy) >= DRAG_THRESHOLD_PX;
+
+      if (orient === 'horizontal') {
+        if (dragged) {
+          const cursor = ctx.cursor;
+          if (!cursor) return false;
+          commitHorizontalCleat(ctx, s.anchor, cursor);
+        }
+        // else: leave anchor in place for the second click to commit.
         return true;
       }
-      const cursor = ctx.cursor;
-      if (!cursor) return false;
-      commitRect(ctx, s.anchor, cursor);
+
+      // Vertical orientation
+      if (dragged) {
+        const cursor = ctx.cursor;
+        if (!cursor) return false;
+        commitRect(ctx, s.anchor, cursor);
+        return true;
+      }
+      // Fix H (2026-05-23): click without drag → enter polygon mode with
+      // the anchor as the first vertex. Drag-vs-click is the SOLE mode
+      // selector now — the chip-mode toggle was retired.
+      ctx.setToolState({
+        mode:     'poly',
+        poly:     [{ x: s.anchor.u, y: s.anchor.v }],
+        anchor:   null,
+        anchorPx: null,
+        preview:  null,
+      });
+      ctx.requestRender();
       return true;
     },
 
@@ -245,6 +354,12 @@
       if (key === 'Escape') {
         ctx.setToolState({ anchor: null, anchorPx: null, poly: [], preview: null });
         ctx.requestRender();
+        // Fix 1 (2026-05-23): Esc must also release the tool, otherwise the
+        // user is stuck in plate mode and every canvas click keeps trying to
+        // place a plate. See PlannedBuilds/architecture-v2/12-plate-fix-plan.md.
+        if (v2.engine && typeof v2.engine.setActiveTool === 'function') {
+          v2.engine.setActiveTool(null);
+        }
         return true;
       }
       if (key === 'p' || key === 'P') {
@@ -268,14 +383,20 @@
 
     statusText(ctx) {
       const s = ctx.toolState;
+      const orient = activeOrientation(ctx);
+      if (orient === 'horizontal') {
+        return s && s.anchor
+          ? 'Plate (horizontal cleat) — click / drag end · cursor side sets thickness direction'
+          : 'Plate (horizontal cleat) — click start point';
+      }
       if (s && s.mode === 'poly') {
         return s.poly.length === 0
-          ? 'Plate (poly) — click to add vertices, double-click / Enter to close'
-          : ('Plate (poly) — ' + s.poly.length + ' vertices · close near first to commit');
+          ? 'Plate (poly) — click vertices · dbl-click / Enter to close · Shift = free angle'
+          : ('Plate (poly) — ' + s.poly.length + ' vertices · close near first · Shift = free angle');
       }
       return s && s.anchor
-        ? 'Plate (rect) — click opposite corner (or drag-release)'
-        : 'Plate (rect) — click first corner';
+        ? 'Plate — drag to size a rectangle, or release without dragging to start a polygon'
+        : 'Plate — drag = rectangle · click = polygon · Esc to cancel';
     },
 
     cursorStyle(ctx) {
@@ -311,7 +432,31 @@
     const tx = buildPlateTx(polygon, ctx);
     if (!tx) return null;
     ctx.applyTransaction(tx);
-    ctx.setToolState({ poly: [], preview: null });
+    // Fix H (2026-05-23) — return to rect mode after a polygon commit so the
+    // next placement starts from the default drag-vs-click flow.
+    ctx.setToolState({ mode: 'rect', poly: [], preview: null });
+    ctx.requestRender();
+    return tx;
+  }
+
+  /** Fix H (2026-05-23) — commit a horizontal cleat plate from two clicks
+   *  (or drag-release). The polygon is a thin rectangle along the click line
+   *  with `thickness` perpendicular. Degenerate (length < 1 mm) drops the
+   *  anchor without committing — same UX as commitRect's degeneracy guard. */
+  function commitHorizontalCleat(ctx, a, b) {
+    const len = Math.abs(b.u - a.u);
+    if (len < 1) {
+      ctx.setToolState({ anchor: null, anchorPx: null, preview: null });
+      ctx.requestRender();
+      return null;
+    }
+    const sel = activeSelection(ctx);
+    const thk = thicknessFor(sel.family, sel.type);
+    const polygon = horizontalCleatPolygon(a, b, thk);
+    const tx = buildPlateTx(polygon, ctx);
+    if (!tx) return null;
+    ctx.applyTransaction(tx);
+    ctx.setToolState({ anchor: null, anchorPx: null, preview: null });
     ctx.requestRender();
     return tx;
   }

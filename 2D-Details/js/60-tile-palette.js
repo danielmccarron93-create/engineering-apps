@@ -375,6 +375,13 @@ function highlightActiveTile() {
     const v25Id = v25ActiveTileId();
     if (v25Id) id = v25Id;
   }
+  // Fix L (2026-05-23) — v2 active tool override. v1's `tool` global doesn't
+  // change when a v2 tool is active, so the Plate tile stays un-highlighted
+  // unless we explicitly recognise v2's place-plate here.
+  if (window.v2 && v2.engine && typeof v2.engine.activeTool === 'function') {
+    const v2Tool = v2.engine.activeTool();
+    if (v2Tool && v2Tool.id === 'place-plate') id = 'plate';
+  }
   if (id) {
     hosts.forEach(h => {
       const el = h.querySelector(`.tile[data-tile-id="${id}"]`);

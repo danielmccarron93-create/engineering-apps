@@ -74,7 +74,38 @@
     const py = num(event.clientY) - rect.top;
     // px2real returns { u, v } already in real-world mm.
     const uv = px2real(blk, px, py);
-    return { u: uv.u, v: uv.v, blk: blk };
+    let u = uv.u, v = uv.v;
+    // Fix A (2026-05-23): v25 endpoint snap FIRST — catches vertex points
+    // precisely with smaller tolerance + visual marker priority. Mirrors v1
+    // getCursor()'s pipeline so v2 tools feel identical to v1 v25 tools.
+    if (typeof v25TrySnap === 'function') {
+      try {
+        const v25Snap = v25TrySnap(blk, u, v, null, null);
+        if (v25Snap && typeof v25Snap.u === 'number' && typeof v25Snap.v === 'number') {
+          return { u: v25Snap.u, v: v25Snap.v, blk: blk };
+        }
+      } catch (e) {
+        if (window.console && console.error) {
+          console.error('[v2.engine.eventDispatch] v25TrySnap threw:', e);
+        }
+      }
+    }
+    // Fix 2 (2026-05-23): snapUV pass — grid + edge-snap + entity-snap.
+    // The snapUV edge-snap gate recognises v2's place-plate (see js/09-snap.js).
+    if (typeof snapUV === 'function') {
+      try {
+        const snapped = snapUV(blk, u, v);
+        if (Array.isArray(snapped) && snapped.length >= 2 &&
+            typeof snapped[0] === 'number' && typeof snapped[1] === 'number') {
+          u = snapped[0]; v = snapped[1];
+        }
+      } catch (e) {
+        if (window.console && console.error) {
+          console.error('[v2.engine.eventDispatch] snapUV threw (using raw coords):', e);
+        }
+      }
+    }
+    return { u: u, v: v, blk: blk };
   }
 
   /**

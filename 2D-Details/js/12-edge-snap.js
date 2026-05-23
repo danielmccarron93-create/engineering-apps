@@ -253,3 +253,46 @@ function drawEdgeSnapLines(cs) {
 }
 
 // ============================================================
+
+// Fix J (2026-05-23) — v25 entity edge-snap helper.
+//
+// Converts v25Mem2Faces / v25Plate2Faces output (which gives line segments
+// with normals) into axis-aligned snap edges with the same {axis, value,
+// label} shape getSnapEdges returns. Only emits when the face normal is
+// orthogonal to a view axis (|nu|>0.9 or |nv|>0.9) — matches the convention
+// getSnapEdges uses for rotated 3D members. Non-ortho rotations get no snap
+// from this path (same as v1's getSnapEdges).
+//
+// Used by snapUV's edge-snap branch when the user is placing a v25 member
+// OR a v2 plate. Lets the cursor catch on v25 mem2 faces (SHS/UB flange
+// edges drawn in 2D mode) and on v2 plate edges (mirrored into entities2D
+// as plate2 by js/v2/engine/v1-bridge.js mirrorV2IntoV1).
+function getV25EntSnapEdges(ent, viewKey) {
+  if (!ent) return [];
+  let faces = [];
+  if (ent.type === 'mem2' && ent.aspect !== 'sec' && typeof v25Mem2Faces === 'function') {
+    faces = v25Mem2Faces(ent);
+  } else if (ent.type === 'plate2' && typeof v25Plate2Faces === 'function') {
+    faces = v25Plate2Faces(ent);
+  } else {
+    return [];
+  }
+  const edges = [];
+  const typeLabel = ent.memberType
+    ? ent.memberType.toUpperCase()
+    : (ent.type === 'plate2' ? 'PLATE' : 'MEM');
+  for (const f of faces) {
+    if (Math.abs(f.nu) > 0.9) {
+      // u-aligned face (normal points along view-u axis) — snap to its u value.
+      edges.push({ axis: 'u', value: f.u1, label: typeLabel + ' ' + f.side });
+    } else if (Math.abs(f.nv) > 0.9) {
+      // v-aligned face — snap to its v value.
+      edges.push({ axis: 'v', value: f.v1, label: typeLabel + ' ' + f.side });
+    }
+    // Non-ortho faces (skewed members) are skipped — the axis-aligned snap
+    // model doesn't apply. Same scope as v1's getSnapEdges.
+  }
+  return edges;
+}
+
+// ============================================================

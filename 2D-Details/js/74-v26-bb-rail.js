@@ -223,7 +223,26 @@
           picker: { kind: 'wb' } },
         { id: 'd-bolt', kind: 'tool', label: 'Bolts',
           sub: 'BOLT', icon: 'icon-bolt',
-          onClick: () => selectMemberByBolt(lastUsedSection.bolt || 'M20') },
+          onClick: () => {
+            // 2D mode + useV2For.bolts flag ON → v2 PlaceBoltTool via the
+            // v2 BB-rail activator. See js/v2/ui/palette-bb-rail.js.
+            //   Architecture-v2 Phase 3 (2026-05-23): v2 bolt support is
+            //   built alongside v1; the flag defaults OFF so the running app
+            //   is byte-identical to today until Dan flips it.
+            // Any other mode (3D OR flag-off) → legacy selectMemberByBolt.
+            if (sheetMode === '2d' && window.v2 && v2.featureFlags
+                && typeof v2.featureFlags.get === 'function'
+                && v2.featureFlags.get('bolts')
+                && v2.ui && v2.ui.paletteBBRail
+                && typeof v2.ui.paletteBBRail.activateBolt === 'function') {
+              v2.ui.paletteBBRail.activateBolt({
+                size:  lastUsedSection.bolt || 'M20',
+                grade: '8.8',
+              });
+            } else {
+              selectMemberByBolt(lastUsedSection.bolt || 'M20');
+            }
+          } },
         { id: 'd-bolt-group', kind: 'tool', label: 'Bolt grp',
           sub: 'BOLT GRP', icon: 'icon-bolt-group', onClick: openBoltDialog },
         { id: 'plate', kind: 'tool', label: 'Plate',

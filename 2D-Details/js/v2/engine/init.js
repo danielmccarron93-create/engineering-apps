@@ -95,7 +95,7 @@
 
   function stampBuild() {
     if (!v2.BUILD) return;
-    v2.BUILD.phase = '2';
+    v2.BUILD.phase = '3';
     const layers = v2.BUILD.layers;
     if (Array.isArray(layers)) {
       if (layers.indexOf('io') === -1)            layers.push('io');
@@ -105,11 +105,13 @@
       if (layers.indexOf('feature-flags') === -1) layers.push('feature-flags');
     }
     v2.BUILD.note =
-      'Phase 2 retired the v1 plate path — plates are now unconditionally v2-' +
-      'authoritative. js/76-v25-plate.js deleted; plate2 branches stripped from ' +
-      '68/69/71/72/39/42; 74-v26-bb-rail tile calls v2.ui.paletteBBRail.activatePlate ' +
-      'directly. useV2For.plates flag retired. .sd2.json save extended to embed ' +
-      'the v2 slice via v2.io.save.previewSavePayload so plates round-trip.';
+      'Phase 3 introduces v2 bolt support alongside v1. useV2For.bolts feature ' +
+      'flag added (default OFF); js/v2/tools/place-bolt-tool.js + ' +
+      'js/v2/ui/inspector-bolt.js are new; v1-bridge graft captures v2 bolts ' +
+      'when the flag is on; live-render shim paints v2 bolts on the canvas + ' +
+      'iso block; v26 BB-rail Bolt tile routes to v2.ui.paletteBBRail.activateBolt ' +
+      'when the flag is on, falls through to v1 selectMemberByBolt when off. ' +
+      'Phase 2 plate retirement carries forward unchanged.';
   }
 
   v2.engine.boot = boot;
