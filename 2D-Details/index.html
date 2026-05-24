@@ -1521,6 +1521,10 @@
      → v1's selectMemberByBolt). See PlannedBuilds/architecture-v2/09-build-plan.md
      "Phase 3". -->
 <script src="js/v2/tools/place-bolt-tool.js"></script>
+<!-- Fix M (2026-05-23) — click-to-edit v2 plate vertices/edges. Loads AFTER
+     place-plate-tool so the editPlate handlers are available before
+     event-dispatch's first fallback dispatch. -->
+<script src="js/v2/tools/edit-plate.js"></script>
 <script src="js/v2/tools/tool-registry.js"></script>
 <script src="js/v2/ui/_ui-namespace.js"></script>
 <script src="js/v2/ui/size-picker.js"></script>

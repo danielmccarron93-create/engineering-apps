@@ -133,10 +133,43 @@
       ? LW.CUT * ppm_
       : Math.max(0.7, ppm_);
     const col = cs.getPropertyValue('--entity-color').trim() || '#000000';
+    // Fix M / N / O (2026-05-23) — if any drag is in progress on this plate,
+    // paint the preview polygon instead of the committed one. No transactions
+    // fire during drag; this is purely the visual preview.
+    const ep = v2.tools && v2.tools.editPlate && v2.tools.editPlate.state ? v2.tools.editPlate : null;
+    const drag       = ep ? ep.state.dragging   : null;
+    const bodyDrag   = ep ? ep.state.bodyDrag   : null;
+    const rotateDrag = ep ? ep.state.rotateDrag : null;
     eachV2Plate(function (el) {
       if (plateViewKey(el) !== blk.viewKey) return;
-      const pts = plateUV(el);
+      let pts = plateUV(el);
       if (!pts || pts.length < 2) return;
+      // Vertex drag preview (single vertex moved).
+      if (drag && drag.elementId === el.id && typeof drag.vertexIndex === 'number' &&
+          drag.currentVertex && drag.vertexIndex >= 0 && drag.vertexIndex < pts.length) {
+        pts = pts.slice();
+        pts[drag.vertexIndex] = { u: num(drag.currentVertex.x), v: num(drag.currentVertex.y) };
+      }
+      // Fix O — body drag (translation) preview.
+      if (bodyDrag && bodyDrag.elementId === el.id && bodyDrag.currentDelta) {
+        const du = num(bodyDrag.currentDelta.u);
+        const dv = num(bodyDrag.currentDelta.v);
+        pts = pts.map(function (p) { return { u: p.u + du, v: p.v + dv }; });
+      }
+      // Fix O — rotation preview (rotate origPolygon around centroid by delta).
+      if (rotateDrag && rotateDrag.elementId === el.id) {
+        const r = rotateDrag;
+        const dRad = r.currentAngle - r.anchorAngle;
+        const cos = Math.cos(dRad), sin = Math.sin(dRad);
+        pts = r.origPolygon.map(function (p) {
+          const dx = num(p.x) - r.centroid.x;
+          const dy = num(p.y) - r.centroid.y;
+          return {
+            u: r.centroid.x + dx * cos - dy * sin,
+            v: r.centroid.y + dx * sin + dy * cos,
+          };
+        });
+      }
       ctx.save();
       ctx.strokeStyle = col;
       ctx.lineWidth = Math.max(1, cutLW);
@@ -154,6 +187,181 @@
       ctx.stroke();
       ctx.restore();
     });
+  }
+
+  /**
+   * Fix M (2026-05-23): draw small dots at every v2 plate vertex so the user
+   * can see where to click for vertex-drag / Shift+click-to-delete. The dot
+   * for a currently-dragging vertex paints at the drag cursor position (so
+   * the user can see the live ghost) and uses a slightly bolder fill.
+   * Edge dots are deliberately NOT drawn — Shift+click on an empty edge
+   * inserts a vertex; over-decorating edges would clutter the drawing.
+   * @param {object} blk      v1 active block
+   * @param {CSSStyleDeclaration} cs   getComputedStyle(document.body)
+   */
+  function drawV2PlateVertexDots(blk, cs) {
+    if (!blk) return;
+    if (typeof ctx === 'undefined' || typeof real2px !== 'function') return;
+    const ep = (v2.tools && v2.tools.editPlate && v2.tools.editPlate.state)
+      ? v2.tools.editPlate : null;
+    if (!ep) return;
+    const drag       = ep.state.dragging;
+    const bodyDrag   = ep.state.bodyDrag;
+    const rotateDrag = ep.state.rotateDrag;
+    const selectedId = ep.state.selectedId;
+    // Fix N / O (2026-05-23) — paint vertex dots when EITHER (a) a drag is
+    // in progress on this plate (so the user sees what they're grabbing),
+    // OR (b) the plate is selected (so the user can grab a vertex to edit).
+    // Idle non-selected plates render outline-only.
+    if (!drag && !bodyDrag && !rotateDrag && !selectedId) return;
+    const col = cs.getPropertyValue('--entity-color').trim() || '#000000';
+    const selCol = cs.getPropertyValue('--selected-color').trim() || col;
+    const dotFill = (typeof colorAlpha === 'function') ? colorAlpha(col, 0.55) : col;
+    const dragFill = col;
+    ctx.save();
+    eachV2Plate(function (el) {
+      if (plateViewKey(el) !== blk.viewKey) return;
+      const isSelected = (selectedId === el.id);
+      const isDragging = (drag && drag.elementId === el.id);
+      const isBodyDrag = (bodyDrag && bodyDrag.elementId === el.id);
+      const isRotDrag  = (rotateDrag && rotateDrag.elementId === el.id);
+      if (!isSelected && !isDragging && !isBodyDrag && !isRotDrag) return;
+      let pts = plateUV(el);
+      if (!pts || pts.length === 0) return;
+      // Vertex drag preview
+      if (isDragging && typeof drag.vertexIndex === 'number' && drag.currentVertex &&
+          drag.vertexIndex >= 0 && drag.vertexIndex < pts.length) {
+        pts = pts.slice();
+        pts[drag.vertexIndex] = { u: num(drag.currentVertex.x), v: num(drag.currentVertex.y) };
+      }
+      // Body drag translation preview
+      if (isBodyDrag && bodyDrag.currentDelta) {
+        const du = num(bodyDrag.currentDelta.u);
+        const dv = num(bodyDrag.currentDelta.v);
+        pts = pts.map(function (p) { return { u: p.u + du, v: p.v + dv }; });
+      }
+      // Rotation preview
+      if (isRotDrag) {
+        const r = rotateDrag;
+        const dRad = r.currentAngle - r.anchorAngle;
+        const cos = Math.cos(dRad), sin = Math.sin(dRad);
+        pts = r.origPolygon.map(function (p) {
+          const dx = num(p.x) - r.centroid.x;
+          const dy = num(p.y) - r.centroid.y;
+          return {
+            u: r.centroid.x + dx * cos - dy * sin,
+            v: r.centroid.y + dx * sin + dy * cos,
+          };
+        });
+      }
+      for (let i = 0; i < pts.length; i++) {
+        const sp = real2px(blk, pts[i].u, pts[i].v);
+        const isDraggedVertex = (isDragging && drag.vertexIndex === i);
+        ctx.fillStyle = isDraggedVertex ? dragFill : (isSelected ? selCol : dotFill);
+        ctx.beginPath();
+        ctx.arc(sp.x, sp.y, isDraggedVertex ? 3.5 : 2.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    });
+    ctx.restore();
+  }
+
+  /**
+   * Fix O (2026-05-23) — draw the selection outline (dashed) and rotation
+   * handle (circle above the plate) for the currently-selected v2 plate in
+   * this block. Mirrors the same drag-preview transforms as the main
+   * plate-outline pass so the selection markings track moves and rotations.
+   * @param {object} blk      v1 active block
+   * @param {CSSStyleDeclaration} cs   getComputedStyle(document.body)
+   */
+  function drawV2PlateSelection(blk, cs) {
+    if (!blk) return;
+    if (typeof ctx === 'undefined' || typeof real2px !== 'function') return;
+    const ep = v2.tools && v2.tools.editPlate;
+    if (!ep || !ep.state.selectedId) return;
+    const el = v2.appState && v2.appState.model && v2.appState.model.elements.get(ep.state.selectedId);
+    if (!el || el.category !== 'plate') return;
+    if (plateViewKey(el) !== blk.viewKey) return;
+    let pts = plateUV(el);
+    if (!pts || pts.length === 0) return;
+    // Apply the same drag-preview transforms drawV2PlatesOnCanvas uses so
+    // the selection outline tracks the live move / rotation preview.
+    const drag       = ep.state.dragging;
+    const bodyDrag   = ep.state.bodyDrag;
+    const rotateDrag = ep.state.rotateDrag;
+    if (drag && drag.elementId === el.id && typeof drag.vertexIndex === 'number' &&
+        drag.currentVertex && drag.vertexIndex >= 0 && drag.vertexIndex < pts.length) {
+      pts = pts.slice();
+      pts[drag.vertexIndex] = { u: num(drag.currentVertex.x), v: num(drag.currentVertex.y) };
+    }
+    if (bodyDrag && bodyDrag.elementId === el.id && bodyDrag.currentDelta) {
+      const du = num(bodyDrag.currentDelta.u);
+      const dv = num(bodyDrag.currentDelta.v);
+      pts = pts.map(function (p) { return { u: p.u + du, v: p.v + dv }; });
+    }
+    if (rotateDrag && rotateDrag.elementId === el.id) {
+      const r = rotateDrag;
+      const dRad = r.currentAngle - r.anchorAngle;
+      const cos = Math.cos(dRad), sin = Math.sin(dRad);
+      pts = r.origPolygon.map(function (p) {
+        const dx = num(p.x) - r.centroid.x;
+        const dy = num(p.y) - r.centroid.y;
+        return {
+          u: r.centroid.x + dx * cos - dy * sin,
+          v: r.centroid.y + dx * sin + dy * cos,
+        };
+      });
+    }
+    const selCol = cs.getPropertyValue('--selected-color').trim() || '#3b82f6';
+    ctx.save();
+    // Dashed selection outline (overlaid on top of the solid plate outline).
+    ctx.strokeStyle = selCol;
+    ctx.lineWidth = 1.25;
+    ctx.setLineDash([4, 3]);
+    ctx.beginPath();
+    for (let i = 0; i < pts.length; i++) {
+      const sp = real2px(blk, pts[i].u, pts[i].v);
+      if (i === 0) ctx.moveTo(sp.x, sp.y);
+      else         ctx.lineTo(sp.x, sp.y);
+    }
+    ctx.closePath();
+    ctx.stroke();
+    ctx.setLineDash([]);
+    // Rotation handle — small circle floated above the top of the bounding
+    // box, connected by a thin line. Position in the SAME polygon-space as
+    // `pts` so it tracks the preview during body / rotation drag.
+    const polyAsXY = pts.map(function (p) { return { x: p.u, y: p.v }; });
+    const handlePos = ep.rotationHandlePos(polyAsXY);
+    if (handlePos) {
+      let maxV = -Infinity, cx = 0;
+      for (const p of polyAsXY) { if (p.y > maxV) maxV = p.y; cx += p.x; }
+      cx /= polyAsXY.length;
+      const topPx = real2px(blk, cx, maxV);
+      const hPx   = real2px(blk, handlePos.u, handlePos.v);
+      // Stem from plate top to handle.
+      ctx.strokeStyle = selCol;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(topPx.x, topPx.y);
+      ctx.lineTo(hPx.x, hPx.y);
+      ctx.stroke();
+      // Handle: filled white circle with a coloured ring (so it's visible on any background).
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.arc(hPx.x, hPx.y, 6, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = selCol;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(hPx.x, hPx.y, 6, 0, Math.PI * 2);
+      ctx.stroke();
+      // Tiny arc inside the handle to hint at "rotate" semantics.
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(hPx.x, hPx.y, 3, -Math.PI * 0.75, Math.PI * 0.25);
+      ctx.stroke();
+    }
+    ctx.restore();
   }
 
   /**
@@ -505,6 +713,15 @@
       catch (e) { if (window.console && console.error) console.error('[v2.ui.liveRender] drawV2Plates threw:', e); }
       try { drawV2BoltsOnCanvas(blk, cs); }
       catch (e) { if (window.console && console.error) console.error('[v2.ui.liveRender] drawV2Bolts threw:', e); }
+      // Fix M (2026-05-23): vertex dots on every v2 plate (so users see
+      // where to click for vertex-drag / Shift+click-delete). Painted AFTER
+      // the plate outline so the dots sit on top.
+      try { drawV2PlateVertexDots(blk, cs); }
+      catch (e) { if (window.console && console.error) console.error('[v2.ui.liveRender] drawV2PlateVertexDots threw:', e); }
+      // Fix O (2026-05-23): selection outline + rotation handle for the
+      // selected plate. Painted after the dots so the handle sits on top.
+      try { drawV2PlateSelection(blk, cs); }
+      catch (e) { if (window.console && console.error) console.error('[v2.ui.liveRender] drawV2PlateSelection threw:', e); }
       // Fix E (2026-05-23): in-progress preview for the active v2 tool
       // (currently the plate tool's rect / poly ghost). Drawn last so the
       // preview is always on top of committed entities.
@@ -592,6 +809,8 @@
     drawV2BoltsOnCanvas:  drawV2BoltsOnCanvas,
     buildV2BoltsInScene:  buildV2BoltsInScene,
     drawV2ActiveToolPreview: drawV2ActiveToolPreview,   // Fix E (2026-05-23)
+    drawV2PlateVertexDots:   drawV2PlateVertexDots,     // Fix M (2026-05-23)
+    drawV2PlateSelection:    drawV2PlateSelection,      // Fix O (2026-05-23)
     eachV2Plate: eachV2Plate,
     eachV2Bolt:  eachV2Bolt,
     plateUV: plateUV,

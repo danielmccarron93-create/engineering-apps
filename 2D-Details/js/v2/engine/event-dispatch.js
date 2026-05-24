@@ -161,7 +161,29 @@
    */
   function route(handlerName, event) {
     const tool = v2.engine.activeTool();
-    if (!tool) return false;
+    if (!tool) {
+      // Fix M (2026-05-23) — no active v2 tool, but the edit-plate fallback
+      // wants first dibs on vertex / edge clicks (and pointermove / up during
+      // a drag it started). Dispatch to editPlate; if it doesn't claim, fall
+      // through to v1 as before.
+      const editPlate = v2.tools && v2.tools.editPlate;
+      if (editPlate && typeof editPlate[handlerName] === 'function') {
+        const ctx = buildCtx(event);
+        try {
+          const r = editPlate[handlerName](event, ctx);
+          if (r) {
+            if (event && typeof event.stopImmediatePropagation === 'function') event.stopImmediatePropagation();
+            if (event && typeof event.preventDefault === 'function') event.preventDefault();
+            return true;
+          }
+        } catch (e) {
+          if (window.console && console.error) {
+            console.error('[v2.engine.eventDispatch] editPlate ' + handlerName + ' threw:', e);
+          }
+        }
+      }
+      return false;
+    }
     const fn = tool[handlerName];
     if (typeof fn !== 'function') return false;
     const ctx = buildCtx(event);
