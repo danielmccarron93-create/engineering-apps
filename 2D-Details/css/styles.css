@@ -664,6 +664,27 @@
     }
     .icon-btn .icon { width: 16px; height: 16px; }
 
+    /* ---- V25 orientation row ----
+       Icon buttons in the 2D-mode quick-options bar, one per standard
+       orientation of the active member type. Replaces the Aspect + PFC
+       Open-face dropdowns. Resting state sits flat on the bar (--surface-2);
+       active reuses the accent treatment shared by .icon-btn / .tile. The
+       glyph tints via currentColor (.icon stroke). */
+    .v25-orient-btn {
+      display: inline-grid; place-items: center;
+      width: 30px; height: 26px;
+      background: transparent; border: 1px solid var(--border);
+      border-radius: var(--r-1); color: var(--text-mute);
+      cursor: pointer; padding: 0;
+      transition: background var(--t-fast), color var(--t-fast), border-color var(--t-fast);
+    }
+    .v25-orient-btn:hover { background: var(--surface-3); color: var(--text); }
+    .v25-orient-btn.active {
+      background: var(--accent-bg); color: var(--accent-press, var(--accent));
+      border-color: var(--accent-brd);
+    }
+    .v25-orient-btn .icon { width: 18px; height: 18px; }
+
     /* ---- V25 horizontal menu strip ----
        File / Edit / Draw / Modify / Annotate / View / Output buttons
        inline in the top bar. Each opens a .menu dropdown anchored below.

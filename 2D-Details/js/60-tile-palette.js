@@ -23,6 +23,10 @@
 
 // Runtime state — last-used size per section tile (e.g. 'ub' → '360UB 50.7').
 let lastUsedSection = {};
+// Runtime state — last-used orientation preset id per member type (e.g.
+// 'pfc' → 'sec-down'). Sibling of lastUsedSection; consumed by the V25
+// orientation row in 72b-orientation-presets.js.
+let lastUsedOrientation = {};
 
 // Palette definitions (static — rendered per mode).
 function getPaletteDef() {

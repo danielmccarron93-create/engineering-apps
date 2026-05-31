@@ -113,9 +113,25 @@ function v25UpdateOptionsBar() {
   } else if (tool === 'v25-mat') {
     html += `<strong>Material</strong>`;
     html += fld('Type', `<select id="v25o-mat">${Object.keys(V25_MATERIALS).map(k => `<option value="${k}" ${k === v25Last.material ? 'selected' : ''}>${V25_MATERIALS[k].label}</option>`).join('')}</select>`);
-  } else if (tool === 'v25-wall') {
+  } else if (tool === 'v25-wall' || tool === 'v25-wall-sec') {
+    const secMode = (tool === 'v25-wall-sec');
     html += `<strong>Blockwork wall</strong>`;
+    // View row (Section vs Elevation) is a live DOM icon row — emit a
+    // placeholder and swap it in after innerHTML, like the member Orientation.
+    html += fld('View', `<span id="v25WallModeSlot"></span>`);
     html += fld('Block', `<select id="v25o-block">${Object.keys(V25_BLOCK_DB).map(k => `<option ${k === v25Last.blockThk ? 'selected' : ''}>${k}</option>`).join('')}</select>`);
+    if (secMode) {
+      const we = v25Last.wallEnd || 'start';
+      html += fld('End break', `<select id="v25o-wallend">` +
+        `<option value="start"${we==='start'?' selected':''}>start</option>` +
+        `<option value="end"${we==='end'?' selected':''}>finish</option>` +
+        `<option value="both"${we==='both'?' selected':''}>both</option>` +
+        `<option value="none"${we==='none'?' selected':''}>none</option></select>`);
+      html += fld('Grout', `<input id="v25o-wallgrout" type="checkbox"${v25Last.wallGrouted?' checked':''}/>`);
+      html += `<span style="color:var(--text-mute);font-size:11px">Click start · click end · Shift = free angle</span>`;
+    } else {
+      html += `<span style="color:var(--text-mute);font-size:11px">Drag two corners · edges hard (double-click an edge to break it after placing)</span>`;
+    }
   } else if (tool === 'v25-bar' || tool === 'v25-bar-dot') {
     html += `<strong>Reinforcement</strong>`;
     html += fld('Bar', `<select id="v25o-bar">${Object.keys(V25_REO_DB.bars).map(k => `<option ${k === v25Last.reoBar ? 'selected' : ''}>${k}</option>`).join('')}</select>`);
@@ -138,7 +154,6 @@ function v25UpdateOptionsBar() {
     if (mt === 'uc') sectionNames = (typeof UC_DB === 'object') ? Object.keys(UC_DB) : sectionNames.filter(n => n.includes('UC'));
     if (mt === 'wb') sectionNames = (typeof WB_DB === 'object') ? Object.keys(WB_DB) : sectionNames.filter(n => n.includes('WB'));
     const curSec = v25State.section || '';
-    const curAsp = v25State.aspect || 'elev';
     html += `<strong>${memberLabel}</strong>`;
     html += fld('Section',
       `<select id="v25o-sect" style="width:160px">` +
@@ -147,25 +162,11 @@ function v25UpdateOptionsBar() {
       `</select>` +
       ` <button id="v25o-sect-pick" type="button" style="padding:2px 8px;font-size:11px;border:1px solid var(--border);background:var(--surface-3);color:var(--text);border-radius:4px;cursor:pointer">Pick…</button>`
     );
-    html += fld('Aspect',
-      `<select id="v25o-aspect">` +
-      `<option value="elev"${curAsp === 'elev' ? ' selected' : ''}>Elevation</option>` +
-      `<option value="sec"${curAsp === 'sec' ? ' selected' : ''}>Cross-section</option>` +
-      `</select>`
-    );
-    // PFC-specific: open-face side. Only shown in cross-section aspect; in
-    // elevation the C-shape collapses to the same outline as a UB so the
-    // control would have no visible effect. Default '-v' matches AS 1100
-    // §3.12 (open face away from column).
-    if (mt === 'pfc' && curAsp === 'sec') {
-      const openSide = v25State.openSide || '-v';
-      html += fld('Open face',
-        `<select id="v25o-openside">` +
-        `<option value="-v"${openSide === '-v' ? ' selected' : ''}>−v (toward bottom)</option>` +
-        `<option value="+v"${openSide === '+v' ? ' selected' : ''}>+v (toward top)</option>` +
-        `</select>`
-      );
-    }
+    // Orientation row replaces the old Aspect + PFC Open-face dropdowns. It is
+    // built as a live DOM element (its buttons carry click handlers) so it
+    // can't be serialised into this innerHTML string — emit a placeholder span
+    // here and swap in the real row after bar.innerHTML is set (see below).
+    html += fld('Orientation', `<span id="v25OrientSlot"></span>`);
   // v1 V25 plate options (Aspect / Thk) retired by architecture-v2 Phase 2.
   // v2 plate placement options will land on the v2 inspector + size picker
   // when Phase 11+ stands up the standalone v2 BB-rail.
@@ -183,8 +184,29 @@ function v25UpdateOptionsBar() {
     html += `<strong>Text</strong>`;
     html += fld('Default text', `<input id="v25o-textdef" value="${(v25Last.textDefault || 'TEXT').replace(/"/g, '&quot;')}" style="width:200px"/>`);
     html += fld('Size (mm)', `<input id="v25o-textsz" type="number" step="0.5" value="${v25Last.textSize || 3}" style="width:60px"/>`);
+  } else if (tool === 'v25-notebox') {
+    html += (typeof nbOptionsBarHTML === 'function') ? nbOptionsBarHTML() : '<strong>Note</strong>';
   }
   bar.innerHTML = html + ` <span style="color:var(--text-mute);margin-left:8px;font-size:11px">Esc to cancel</span>`;
+
+  if (tool === 'v25-notebox' && typeof nbBindOptionsBar === 'function') nbBindOptionsBar(bar);
+
+  // Swap the orientation-row placeholder for the live element (built with click
+  // handlers, so it can't live inside the innerHTML string). mt is out of scope
+  // here, so re-read the active member type from v25State.
+  if (tool === 'v25-mem') {
+    const slot = bar.querySelector('#v25OrientSlot');
+    if (slot && typeof v25BuildOrientationRow === 'function') {
+      slot.replaceWith(v25BuildOrientationRow(v25State.memberType || 'ub'));
+    }
+  }
+  // Swap the blockwork View placeholder for the live Section/Elevation row.
+  if (tool === 'v25-wall' || tool === 'v25-wall-sec') {
+    const slot = bar.querySelector('#v25WallModeSlot');
+    if (slot && typeof v25BuildWallModeRow === 'function') {
+      slot.replaceWith(v25BuildWallModeRow());
+    }
+  }
 
   // Wire change events
   const wire = (id, fn) => { const el = bar.querySelector('#' + id); if (el) el.addEventListener('change', fn); };
@@ -195,6 +217,8 @@ function v25UpdateOptionsBar() {
   wire('v25o-embed', e => { v25Last.anchorEmbed = parseInt(e.target.value) || 100; });
   wire('v25o-mat', e => { v25Last.material = e.target.value; });
   wire('v25o-block', e => { v25Last.blockThk = e.target.value; });
+  wire('v25o-wallend', e => { v25Last.wallEnd = e.target.value; });
+  wire('v25o-wallgrout', e => { v25Last.wallGrouted = e.target.checked; });
   wire('v25o-bar', e => { v25Last.reoBar = e.target.value; });
   wire('v25o-mesh', e => { v25Last.mesh = e.target.value; });
   wire('v25o-sect', e => {
@@ -203,14 +227,9 @@ function v25UpdateOptionsBar() {
     if (typeof populateTilePalette === 'function') populateTilePalette();
     if (typeof highlightActiveTile === 'function') highlightActiveTile();
   });
-  wire('v25o-aspect', e => {
-    v25State.aspect = e.target.value;
-    v25UpdateOptionsBar();
-    // Cross-section preview in v25DrawPreview is keyed off v25State.aspect, so
-    // a render kick makes the ghost section appear / disappear immediately.
-    if (typeof requestRender === 'function') requestRender();
-  });
-  wire('v25o-openside', e => { v25State.openSide = e.target.value; });
+  // v25o-aspect / v25o-openside wires retired — orientation is now set through
+  // the orientation row (v25BuildOrientationRow → v25SetOrientation), which
+  // writes v25State.aspect / rot / openSide and refreshes the bar itself.
   // v25o-plate-aspect / v25o-plate-thk wires retired with the v1 plate options
   // branch above (architecture-v2 Phase 2).
   const pickBtn = bar.querySelector('#v25o-sect-pick');

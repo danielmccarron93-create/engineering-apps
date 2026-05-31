@@ -122,6 +122,105 @@
                Q6 14 6.7 14 L17.5 14 L17.5 16.5 L4 16.5 Z"/>
     </symbol>
 
+    <!-- ===== Orientation presets (single-stroke; inherit .icon stroke) =====
+         One symbol per V25_ORIENT entry. Elevation icons show the member run
+         horizontally; section icons show the end-on profile. Hidden lines
+         (web behind a flange, PFC open face toward viewer, tube bores) are
+         dashed per AS 1100. Referenced from 72b-orientation-presets.js. -->
+    <!-- I-section (UB / UC / WB) -->
+    <symbol id="icon-orient-i-elev-web" viewBox="0 0 20 20">
+      <!-- web-face: deep rectangle + solid flange-root lines -->
+      <path d="M3 4 H17 V16 H3 Z"/>
+      <path d="M3 6 H17 M3 14 H17"/>
+    </symbol>
+    <symbol id="icon-orient-i-elev-flange" viewBox="0 0 20 20">
+      <!-- flange-face: shallow rectangle + dashed hidden web -->
+      <path d="M3 7 H17 V13 H3 Z"/>
+      <path d="M3 10 H17" stroke-dasharray="2 1.3"/>
+    </symbol>
+    <symbol id="icon-orient-i-sec-v" viewBox="0 0 20 20">
+      <!-- web vertical = "I" -->
+      <path d="M5 3.8 H15 M5 16.2 H15 M10 3.8 V16.2"/>
+    </symbol>
+    <symbol id="icon-orient-i-sec-h" viewBox="0 0 20 20">
+      <!-- web horizontal = "H" -->
+      <path d="M3.8 5 V15 M16.2 5 V15 M3.8 10 H16.2"/>
+    </symbol>
+    <!-- PFC channel -->
+    <symbol id="icon-orient-pfc-elev-away" viewBox="0 0 20 20">
+      <!-- toes away: solid flange roots -->
+      <path d="M3 4 H17 V16 H3 Z"/>
+      <path d="M3 6 H17 M3 14 H17"/>
+    </symbol>
+    <symbol id="icon-orient-pfc-elev-toward" viewBox="0 0 20 20">
+      <!-- toes toward: flange roots hidden (dashed) -->
+      <path d="M3 4 H17 V16 H3 Z"/>
+      <path d="M3 6 H17 M3 14 H17" stroke-dasharray="2 1.3"/>
+    </symbol>
+    <symbol id="icon-orient-pfc-sec-right" viewBox="0 0 20 20">
+      <path d="M15 4 H5 V16 H15"/>
+    </symbol>
+    <symbol id="icon-orient-pfc-sec-up" viewBox="0 0 20 20">
+      <path d="M4 4 V16 H16 V4"/>
+    </symbol>
+    <symbol id="icon-orient-pfc-sec-left" viewBox="0 0 20 20">
+      <path d="M5 4 H15 V16 H5"/>
+    </symbol>
+    <symbol id="icon-orient-pfc-sec-down" viewBox="0 0 20 20">
+      <path d="M4 16 V4 H16 V16"/>
+    </symbol>
+    <!-- SHS -->
+    <symbol id="icon-orient-shs-elev" viewBox="0 0 20 20">
+      <path d="M3 5 H17 V15 H3 Z"/>
+      <path d="M3 7.5 H17 M3 12.5 H17" stroke-dasharray="2 1.3"/>
+    </symbol>
+    <symbol id="icon-orient-shs-sec" viewBox="0 0 20 20">
+      <path d="M4 4 H16 V16 H4 Z"/>
+      <path d="M6.5 6.5 H13.5 V13.5 H6.5 Z"/>
+    </symbol>
+    <!-- Blockwork wall — section strip (thin vertical, course lines across) -->
+    <symbol id="icon-block-sec" viewBox="0 0 20 20">
+      <path d="M7 3 H13 V17 H7 Z"/>
+      <path d="M8.6 3 V17 M11.4 3 V17"/>
+      <path d="M7 7 H13 M7 11 H13 M7 15 H13"/>
+    </symbol>
+    <!-- Blockwork wall — elevation (running-bond block face) -->
+    <symbol id="icon-block-elev" viewBox="0 0 20 20">
+      <path d="M3 4 H17 V16 H3 Z"/>
+      <path d="M3 8 H17 M3 12 H17"/>
+      <path d="M8 4 V8 M13 4 V8"/>
+      <path d="M5.5 8 V12 M10.5 8 V12 M15.5 8 V12"/>
+      <path d="M8 12 V16 M13 12 V16"/>
+    </symbol>
+    <!-- RHS -->
+    <symbol id="icon-orient-rhs-elev-deep" viewBox="0 0 20 20">
+      <path d="M3 3.5 H17 V16.5 H3 Z"/>
+      <path d="M3 6 H17 M3 14 H17" stroke-dasharray="2 1.3"/>
+    </symbol>
+    <symbol id="icon-orient-rhs-elev-flat" viewBox="0 0 20 20">
+      <path d="M3 7 H17 V13 H3 Z"/>
+      <path d="M3 9 H17 M3 11 H17" stroke-dasharray="2 1.3"/>
+    </symbol>
+    <symbol id="icon-orient-rhs-edge" viewBox="0 0 20 20">
+      <!-- on-edge: tall section -->
+      <path d="M6 3 H14 V17 H6 Z"/>
+      <path d="M8 5 H12 V15 H8 Z"/>
+    </symbol>
+    <symbol id="icon-orient-rhs-flat" viewBox="0 0 20 20">
+      <!-- lay-flat: wide section -->
+      <path d="M3 6 H17 V14 H3 Z"/>
+      <path d="M5 8 H15 V12 H5 Z"/>
+    </symbol>
+    <!-- CHS -->
+    <symbol id="icon-orient-chs-elev" viewBox="0 0 20 20">
+      <path d="M3 6 H17 V14 H3 Z"/>
+      <path d="M3 10 H17" stroke-dasharray="2 1.3"/>
+    </symbol>
+    <symbol id="icon-orient-chs-sec" viewBox="0 0 20 20">
+      <circle cx="10" cy="10" r="7"/>
+      <circle cx="10" cy="10" r="4.5"/>
+    </symbol>
+
     <!-- ===== Fasteners ===== -->
     <!-- Bolt — side view per AS 1252. Hex head on the left with chamfer
          arcs, cylindrical shank with thread pitch hash on the right.
@@ -1307,8 +1406,12 @@
 <script src="js/70-v25-render.js"></script>
 <script src="js/71-v25-selection.js"></script>
 <script src="js/72-v25-options-bar.js"></script>
+<script src="js/72b-orientation-presets.js"></script>
 <script src="js/73-init.js"></script>
 <script src="js/74-v26-bb-rail.js"></script>
+<script src="js/96-stroke-font.js"></script>
+<script src="js/97-v25-notebox.js"></script>
+<script src="js/98-v25-notebox-ui.js"></script>
 <!-- Timber-screw connection feature — Phase 2 entity types (added 2026-05-18).
      Note: number 76 was originally js/76-v25-plate.js (the v1 V25 plate path),
      deleted by architecture-v2 Phase 2 on 2026-05-22 once plates became

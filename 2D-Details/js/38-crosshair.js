@@ -344,6 +344,10 @@ function drawClickPreview(blk, cs) {
     ctx.fillText(label, p.x + 16, p.y - 9);
     ctx.textAlign = 'start'; ctx.textBaseline = 'alphabetic';
   }
+  // Premium note / text-box placement preview (v25 'noteBox' entity — see js/96–98)
+  else if (tool === 'v25-notebox' && typeof nbToolPreview === 'function') {
+    nbToolPreview(blk, cs);
+  }
   ctx.setLineDash([]);
 }
 

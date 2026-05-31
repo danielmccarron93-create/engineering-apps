@@ -16,6 +16,7 @@ function v25DrawEnt(blk, ent, cs) {
   if (ent.type === 'mem2') { drawMem2D(blk, ent, cs); return true; }
   if (ent.type === 'lineSet' && typeof drawLineSet2D === 'function') { drawLineSet2D(blk, ent, cs); return true; }
   if (ent.type === 'txtBox' && typeof drawTxtBox2D === 'function') { drawTxtBox2D(blk, ent, cs); return true; }
+  if (ent.type === 'noteBox' && typeof drawNoteBox2D === 'function') { drawNoteBox2D(blk, ent, cs); return true; }
   return false;
 }
 
@@ -158,6 +159,14 @@ function v25SetMember(type, section, aspect) {
   v25State.section = section;
   v25State.aspect = aspect || v25State.aspect || 'elev';
   lastUsedSection[type] = section;
+  // Restore the orientation this member type was last placed at (web-horiz,
+  // toes-up, …) so re-picking the tile reopens where the user left off. Pure
+  // mutator — no bar rebuild / render here; the v25UpdateOptionsBar below does
+  // the refresh. Runs after aspect is set so a remembered preset takes priority.
+  if (typeof lastUsedOrientation !== 'undefined' && lastUsedOrientation[type] &&
+      typeof v25ApplyOrientation === 'function') {
+    v25ApplyOrientation(type, lastUsedOrientation[type]);
+  }
   // Refresh the options bar now that state is fully populated (v25SetTool
   // resets v25State first, so the bar would otherwise show empty fields).
   if (typeof v25UpdateOptionsBar === 'function') v25UpdateOptionsBar();
@@ -208,8 +217,18 @@ function v25SetHatch(material) {
   v25State.hatchDownWorld = null;
 }
 function v25SetWallBlock(blockKey) {
+  // Legacy "Walls (W-)" palette tiles → elevation extent.
   v25Last.blockThk = blockKey;
+  v25Last.wallMode = 'elev';
   v25SetTool('v25-wall');
+}
+// Blockwork wall — arm by draw mode. 'sec' = thin vertical section strip
+// (tool v25-wall-sec, two-click directional), 'elev' = elevation extent
+// (tool v25-wall, two-click bbox). Keeps the chosen block thickness. Used by
+// the V26 BB-rail blockwork tile and the options-bar Section/Elevation row.
+function v25ArmWall(mode) {
+  v25Last.wallMode = (mode === 'elev') ? 'elev' : 'sec';
+  v25SetTool(v25Last.wallMode === 'elev' ? 'v25-wall' : 'v25-wall-sec');
 }
 function v25SetAnchor(kind) {
   v25Last.anchor = kind;
@@ -239,6 +258,8 @@ function v25SetLine(lw, ls) {
 // Returns true if the click was handled.
 function v25TryHandleClick(blk, cu, cv, e) {
   if (!tool || !tool.startsWith('v25-')) return false;
+
+  if (tool === 'v25-notebox') return (typeof nbToolClick === 'function') ? nbToolClick(blk, cu, cv, e) : false;
 
   if (tool === 'v25-frame') {
     // Two-click rectangle frame. Place with placeholder title/ref and let the
@@ -323,7 +344,9 @@ function v25TryHandleClick(blk, cu, cv, e) {
   }
 
   if (tool === 'v25-wall') {
-    // Two-click wall: lengthMM × heightMM
+    // Two-click ELEVATION extent: lengthMM × heightMM, running-bond coursing.
+    // All four edges start hard; clicking an edge later converts it to a
+    // section break-line (see v25-selection edge-toggle).
     if (!v25State.dragStart) {
       v25State.dragStart = { u: cu, v: cv, blk };
     } else {
@@ -332,9 +355,47 @@ function v25TryHandleClick(blk, cu, cv, e) {
       const lengthMM = Math.abs(cu - a.u), heightMM = Math.abs(cv - a.v);
       if (lengthMM > 5 && heightMM > 5) {
         v25Add('blockWall', {
-          blockKey: v25Last.blockThk, u, v, lengthMM, heightMM,
-          aspect: 'elev', showJoints: true, showTag: true,
+          blockKey: v25Last.blockThk, wallMode: 'elev',
+          u, v, lengthMM, heightMM,
+          aspect: 'elev', showJoints: true,
+          // Default: top + left are wall edges (the coursing datums — full
+          // blocks start from them); bottom + right are break-lines where the
+          // wall continues past the detail. Double-click an edge to swap.
+          breakEdges: { top: false, bottom: true, left: false, right: true },
         });
+      }
+      v25State.dragStart = null;
+    }
+    return true;
+  }
+
+  if (tool === 'v25-wall-sec') {
+    // Two-click SECTION strip. First click = wall centreline start, second =
+    // far end. Width = block thickness (V25_BLOCK_DB[blockKey].thk), centred on
+    // the drawn line. Strict H/V ortho by default; hold Shift for a free angle.
+    // The start end gets a section break-line by default (cut continues into
+    // the structure below); the finish end is a clean edge (e.g. top of wall).
+    if (!v25State.dragStart) {
+      v25State.dragStart = { u: cu, v: cv, blk };
+    } else {
+      const a = v25State.dragStart;
+      let eu = cu, ev = cv;
+      if (!(typeof shiftHeld !== 'undefined' && shiftHeld)) {
+        const o = v25OrthoSnap(a.u, a.v, cu, cv); eu = o.u; ev = o.v;
+      }
+      const dx = eu - a.u, dy = ev - a.v;
+      const length = Math.hypot(dx, dy);
+      const rot = Math.atan2(dy, dx) * 180 / Math.PI;
+      if (length > 5) {
+        const ent = v25Add('blockWall', {
+          blockKey: v25Last.blockThk, wallMode: 'sec',
+          u: a.u, v: a.v, lengthMM: length, rot,
+          endBreak: v25Last.wallEnd || 'start', grouted: !!v25Last.wallGrouted,
+        });
+        if (ent) {
+          v25Selected = [ent.id];
+          if (typeof v25UpdateInspector === 'function') v25UpdateInspector();
+        }
       }
       v25State.dragStart = null;
     }
@@ -343,11 +404,12 @@ function v25TryHandleClick(blk, cu, cv, e) {
 
   if (tool === 'v25-mem') {
     // Cross-section placement: single-click drops the section at the cursor
-    // with length:0, rot:0 (= web vertical for a UB, the natural drafting
-    // orientation). Bypasses the two-click drag flow so the user doesn't
-    // get a meaningless rot=atan2(dy,dx) stamped from the drag direction,
-    // and doesn't need to drag at all. No host probe — cross-sections
-    // don't mitre / weld-join the way elevation members do.
+    // with length:0 and the orientation preset's roll (v25State.roll — 0 = web
+    // vertical for a UB, 90 = web horizontal; PFC toes down/left/up/right).
+    // rot stays 0 — sections aren't paper-spun; the glyph orientation is roll.
+    // Bypasses the two-click drag flow so the user doesn't get a meaningless
+    // rot=atan2(dy,dx) and doesn't need to drag at all. No host probe —
+    // cross-sections don't mitre / weld-join the way elevation members do.
     if ((v25State.aspect || 'elev') === 'sec') {
       if (!v25State.memberType || !v25State.section) return true;
       const props = {
@@ -356,11 +418,9 @@ function v25TryHandleClick(blk, cu, cv, e) {
         u: cu, v: cv,
         length: 0,
         rot: 0,
+        roll: v25State.roll || 0,
         aspect: 'sec',
       };
-      if (v25State.memberType === 'pfc') {
-        props.openSide = v25State.openSide || '-v';
-      }
       const ent = v25Add('mem2', props);
       if (ent) {
         v25Selected = [ent.id];
@@ -388,6 +448,7 @@ function v25TryHandleClick(blk, cu, cv, e) {
         const props = {
           memberType: v25State.memberType, section: v25State.section,
           u: a.u, v: a.v, length, rot,
+          roll: v25State.roll || 0,
           aspect: v25State.aspect || 'elev',
           // Sensible default for elevation views: start end is solid (member
           // is shown anchored), far end is a breakline (continues beyond the
@@ -395,11 +456,6 @@ function v25TryHandleClick(blk, cu, cv, e) {
           endA: 'normal',
           endB: 'breakline',
         };
-        // PFC carries an open-face flag; default mirrors AS 1100 §3.12 (open
-        // face away from column / support).
-        if (v25State.memberType === 'pfc') {
-          props.openSide = v25State.openSide || '-v';
-        }
         if ((props.aspect === 'elev') && a.joinHostA) {
           props.endAJoin = { hostId: a.joinHostA };
           props.endA = 'mitre';
@@ -616,6 +672,30 @@ function v25DrawPreview(blk, cs) {
     const a = v25State.dragStart;
     rLine(blk, a.u, a.v, cu, cv);
   }
+  // Blockwork SECTION-strip ghost — reuse the real drawer so the preview is
+  // pixel-identical to the placed strip. Mirrors the same H/V-ortho-unless-Shift
+  // the commit path applies, so the ghost tracks where the strip will land.
+  if (tool === 'v25-wall-sec' && v25State.dragStart && typeof drawBlockWall2D === 'function') {
+    const a = v25State.dragStart;
+    let eu = cu, ev = cv;
+    if (!(typeof shiftHeld !== 'undefined' && shiftHeld)) {
+      const o = v25OrthoSnap(a.u, a.v, cu, cv); eu = o.u; ev = o.v;
+    }
+    const dx = eu - a.u, dy = ev - a.v;
+    const length = Math.hypot(dx, dy);
+    if (length > 1) {
+      const previewEnt = {
+        type: 'blockWall', wallMode: 'sec', blockKey: v25Last.blockThk,
+        u: a.u, v: a.v, lengthMM: length, rot: Math.atan2(dy, dx) * 180 / Math.PI,
+        endBreak: v25Last.wallEnd || 'start', grouted: !!v25Last.wallGrouted,
+        showTag: false, opacity: 0.5, id: -1, _v25: true, _preview: true,
+      };
+      ctx.save();
+      ctx.setLineDash([]);
+      drawBlockWall2D(blk, previewEnt, cs);
+      ctx.restore();
+    }
+  }
   // v1 V25 plate placement preview retired by architecture-v2 Phase 2. The
   // v2 PlacePlateTool owns ghost-preview rendering; until the Phase 3+
   // Canvas2DRenderer wire-up, the v2 live-render shim (js/v2/ui/live-render.js)
@@ -637,6 +717,7 @@ function v25DrawPreview(blk, cs) {
       u: cu, v: cv,
       length: 0,
       rot: 0,
+      roll: v25State.roll || 0,
       aspect: 'sec',
       // v25EntOpacity reads ent.opacity — 0.45 gives a clear ghost without
       // disappearing on light backgrounds.
@@ -647,9 +728,6 @@ function v25DrawPreview(blk, cs) {
       _v25: true,
       _preview: true,
     };
-    if (v25State.memberType === 'pfc') {
-      previewEnt.openSide = v25State.openSide || '-v';
-    }
     ctx.save();
     ctx.setLineDash([]);
     drawMem2D(blk, previewEnt, cs);
@@ -723,7 +801,10 @@ function v25ActiveTileId() {
     v25Last.material === 'insulation' ? 'ins' :
     v25Last.material === 'water' ? 'wat' :
     v25Last.material === 'tanking' ? 'tank' : 'conc');
-  if (tool === 'v25-wall') return 'v25-wall-' + v25Last.blockThk;
+  // Both blockwork draw tools light the canonical V26 BB-rail blockwork tile.
+  // (The legacy per-thickness "Walls (W-)" tiles stay clickable but are the
+  // secondary surface, so they don't carry the active ring.)
+  if (tool === 'v25-wall' || tool === 'v25-wall-sec') return 'd-blk-wall';
   if (tool === 'v25-mem' && v25State && v25State.memberType) return 'v25-' + v25State.memberType + '-2d';
   if (tool === 'v25-anchor') return 'v25-anc-' + (v25Last.anchor === 'selftap' ? 'tek' : (v25Last.anchor === 'through' ? 'thru' : v25Last.anchor));
   if (tool === 'v25-bar') return 'v25-bar-' + v25Last.reoBar;
@@ -731,6 +812,7 @@ function v25ActiveTileId() {
   if (tool === 'v25-mesh') return 'v25-mesh-' + (v25Last.mesh.replace('SL', '').replace('RL', ''));
   if (tool === 'v25-leader') return 'v25-leader';
   if (tool === 'v25-text') return 'v25-text';
+  if (tool === 'v25-notebox') return 'v25-notebox';
   if (tool === 'v25-line') {
     const lw = v25Last.lineLw, ls = v25Last.lineLs;
     if (ls === 'centre') return 'v25-line-cl';

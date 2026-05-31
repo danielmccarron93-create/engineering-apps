@@ -118,6 +118,11 @@ function initEvents() {
     if (window._v25_dbg) console.log('[v25-dbg] reached v25 select branch. mode=' + sheetMode + ' tool=' + tool + ' cu=' + cu + ' cv=' + cv);
     // V25 — Select / drag v25 entities when in select tool & 2D mode.
     if (sheetMode === '2d' && tool === 'select' && typeof v25HitTest === 'function') {
+      // Premium note (noteBox): Shift+click while a note is selected adds or
+      // removes a leader arrow on it. Consumes the click only when a noteBox is
+      // selected (returns false otherwise), before any selection mutation.
+      if (e.shiftKey && typeof nbSelectShiftClick === 'function'
+          && nbSelectShiftClick(activeBlock, cu, cv)) return;
       // Shift + click on a SELECTED poly-mat: delete a node (if cursor lands on
       // one) or insert a node mid-edge (if cursor lands on a segment). Only
       // fires when at least one selected entity is a poly mat — additive-select
@@ -1128,6 +1133,12 @@ function initEvents() {
       const { px, py } = getPixelXY(e);
       const real = px2real(activeBlock, px, py);
       const hit = (typeof v25HitTest === 'function') ? v25HitTest(activeBlock, real.u, real.v) : null;
+      // Premium note (noteBox): double-click opens the inline text editor. Uses
+      // the same block-local coords as the other 2D click paths (real.u/real.v).
+      if (typeof nbOpenEditorAt === 'function' && nbOpenEditorAt(activeBlock, real.u, real.v)) {
+        e.preventDefault();
+        return;
+      }
       if (hit && hit.type === 'lineSet' && hit.closed) {
         if (typeof v25OpenFillPicker === 'function') v25OpenFillPicker(hit, e.clientX, e.clientY);
         e.preventDefault();
@@ -1406,6 +1417,25 @@ function initEvents() {
     // Double-click on weld interface: show properties popup
     const { px, py } = getPixelXY(e);
     if (tool === 'select' && activeBlock) {
+      // Blockwork — double-click an edge (elevation) or an end (section) to
+      // open the Edge-of-wall / Break-line picker for that side; the coursing
+      // re-anchors to whichever edges are walls. Checked first so it wins over
+      // the weld/joint popups when the cursor is on a wall.
+      if (sheetMode === '2d' && typeof v25HitTest === 'function'
+          && typeof v25NearestWallEdge === 'function' && typeof v25ShowWallEdgeMenu === 'function') {
+        const [cu, cv] = getCursor(activeBlock);
+        const wallHit = v25HitTest(activeBlock, cu, cv);
+        if (wallHit && wallHit.type === 'blockWall') {
+          const target = v25NearestWallEdge(activeBlock, wallHit, cu, cv);
+          if (target) {
+            v25Selected = [wallHit.id];
+            if (typeof v25UpdateInspector === 'function') v25UpdateInspector();
+            requestRender();
+            v25ShowWallEdgeMenu(wallHit, target, e.clientX, e.clientY);
+            return;
+          }
+        }
+      }
       // V25-layout-overhaul Phase 6.5 — prefer the 2D weld pipeline when in
       // 2D mode so dblclicks on the AS 1101.3 hatch open the same popup
       // (type / size / enabled). 3D pipeline is checked next as a fallback.

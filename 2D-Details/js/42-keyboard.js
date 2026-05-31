@@ -97,6 +97,7 @@ function initKeyboard() {
     if (e.key === 'p' || e.key === 'P') setTool('polyline');
     if (e.key === 'd' || e.key === 'D') setTool('dimension');
     if (e.key === 't' || e.key === 'T') setTool('text');
+    if ((e.key === 'q' || e.key === 'Q') && sheetMode === '2d' && typeof v25SetTool === 'function') v25SetTool('v25-notebox');
 
     // R key: rotate selected object(s), or Rect tool if nothing selected.
     // V24.A3: beam-like members cycle roll (R +90°, Shift+R -90°), Alt+R

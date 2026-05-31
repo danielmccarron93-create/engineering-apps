@@ -434,6 +434,76 @@ function _dxfEmit2DEntity(b, blk, ent) {
     const p1 = _dxfBlockPlace(blk, ent.u1, ent.v1);
     const p2 = _dxfBlockPlace(blk, ent.u2, ent.v2);
     _dxfLine(b, '0', p1.x, p1.y, p2.x, p2.y);
+  } else if (ent.type === 'blockWall') {
+    // Blockwork wall — outline + coursing, mirroring drawBlockWall2D so the
+    // DXF coursing matches the canvas. Section strip emits a rotated strip;
+    // elevation emits the running-bond rectangle. Break edges/ends → zigzag.
+    const cat = (typeof V25_BLOCK_DB !== 'undefined' && V25_BLOCK_DB[ent.blockKey])
+              || { thk: 190, h: 190, l: 390, perp: 10, bed: 10 };
+    const LAY = 'S-MASONRY';
+    const place = (u, v) => { const p = _dxfBlockPlace(blk, u, v); return [p.x, p.y]; };
+    const courseH = (cat.h || 190) + (cat.bed || 10);
+    const blockL = (cat.l || 390) + (cat.perp || 10);
+    const lineDxf = (p1, p2) => _dxfLine(b, LAY, p1[0], p1[1], p2[0], p2[1]);
+    const zigDxf = (p1, p2) => {
+      const dx = p2[0] - p1[0], dy = p2[1] - p1[1], len = Math.hypot(dx, dy);
+      if (len < 1) { lineDxf(p1, p2); return; }
+      const nx = -dy / len, ny = dx / len, amp = len * 0.08, s1 = 0.35, s2 = 0.65, n = 3;
+      const pts = [[p1[0], p1[1]], [p1[0] + dx * s1, p1[1] + dy * s1]];
+      for (let i = 0; i < n; i++) {
+        const t = s1 + (s2 - s1) * (i + 0.5) / n, sg = (i % 2 === 0) ? 1 : -1;
+        pts.push([p1[0] + dx * t + nx * amp * sg, p1[1] + dy * t + ny * amp * sg]);
+      }
+      pts.push([p1[0] + dx * s2, p1[1] + dy * s2], [p2[0], p2[1]]);
+      _dxfPolyline(b, LAY, pts, false);
+    };
+    if (ent.wallMode === 'sec') {
+      const L = ent.lengthMM || 0, thk = cat.thk || 190, half = thk / 2;
+      const shellT = Math.min(35, Math.max(25, thk * 0.18));
+      const rot = (ent.rot || 0) * Math.PI / 180, cosR = Math.cos(rot), sinR = Math.sin(rot);
+      const W = (lu, lv) => place(ent.u + lu * cosR - lv * sinR, ent.v + lu * sinR + lv * cosR);
+      lineDxf(W(0, -half), W(L, -half));
+      lineDxf(W(0, half), W(L, half));
+      lineDxf(W(0, -half + shellT), W(L, -half + shellT));
+      lineDxf(W(0, half - shellT), W(L, half - shellT));
+      for (let lu = courseH; lu < L - 0.5; lu += courseH) lineDxf(W(lu, -half), W(lu, half));
+      const eb = ent.endBreak || 'start';
+      const capAt = (lu, brk) => { if (brk) zigDxf(W(lu, -half), W(lu, half)); else lineDxf(W(lu, -half), W(lu, half)); };
+      capAt(0, eb === 'start' || eb === 'both');
+      capAt(L, eb === 'end' || eb === 'both');
+    } else {
+      const w = ent.lengthMM || 0, h = ent.heightMM || 0;
+      const be = ent.breakEdges || {};
+      const edge = (brk, ua, va, ub, vb) => { const p = place(ua, va), q = place(ub, vb); if (brk) zigDxf(p, q); else lineDxf(p, q); };
+      edge(be.bottom, ent.u, ent.v, ent.u + w, ent.v);
+      edge(be.top, ent.u, ent.v + h, ent.u + w, ent.v + h);
+      edge(be.left, ent.u, ent.v, ent.u, ent.v + h);
+      edge(be.right, ent.u + w, ent.v, ent.u + w, ent.v + h);
+      const fromTop = (!be.top) || be.bottom;     // datum prefers top, else bottom
+      const fromLeft = (!be.left) || be.right;    // datum prefers left, else right
+      if (fromTop) {
+        for (let y = ent.v + h - courseH; y > ent.v + 0.5; y -= courseH) lineDxf(place(ent.u, y), place(ent.u + w, y));
+      } else {
+        for (let y = ent.v + courseH; y < ent.v + h - 0.5; y += courseH) lineDxf(place(ent.u, y), place(ent.u + w, y));
+      }
+      const perpsForBand = (yLo, yHi, ci) => {
+        const half = (ci % 2 === 0) ? 0 : blockL / 2;
+        if (fromLeft) {
+          for (let x = ent.u + (half > 0 ? half : blockL); x < ent.u + w - 0.5; x += blockL) lineDxf(place(x, yLo), place(x, yHi));
+        } else {
+          for (let x = ent.u + w - (half > 0 ? half : blockL); x > ent.u + 0.5; x -= blockL) lineDxf(place(x, yLo), place(x, yHi));
+        }
+      };
+      if (fromTop) {
+        let ci = 0;
+        for (let yHi = ent.v + h; yHi > ent.v + 0.5; yHi -= courseH) { perpsForBand(Math.max(yHi - courseH, ent.v), yHi, ci); ci++; }
+      } else {
+        let ci = 0;
+        for (let yLo = ent.v; yLo < ent.v + h - 0.5; yLo += courseH) { perpsForBand(yLo, Math.min(yLo + courseH, ent.v + h), ci); ci++; }
+      }
+    }
+  } else if (ent.type === 'noteBox') {
+    if (typeof nbDxfEmit === 'function') nbDxfEmit(b, blk, ent);
   }
 }
 

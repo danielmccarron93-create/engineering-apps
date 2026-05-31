@@ -54,6 +54,11 @@ let plateBlock = null;       // which DetailBlock the plate is being drawn in
 let plateDimInput = '';      // typed dimension string during edge drawing
 let plateDimActive = false;  // true when user is typing a dimension mid-edge
 
+// ---- PREMIUM NOTE / TEXT-BOX TOOL STATE ----
+// Premium note / text-box tool (v25 'noteBox' entity — see js/96–98).
+let nbPlace = null;   // {blk,u,v} first click (box top-left) during two-click placement
+let nbEditor = null;  // inline text-editor overlay state {ent, el, blk}
+
 let spaceHeld = false, shiftHeld = false, altHeld = false;
 let snapOn = true, orthoOn = false, gridOn = false;
 let gridSize = 10;

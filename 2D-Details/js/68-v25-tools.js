@@ -10,36 +10,77 @@
 //     aspect ('elev'|'plan'|'sec'), showJoints, bondOffset, lintelTop }
 // (`view` would collide with the per-pane view-key on the entity record.)
 function drawBlockWall2D(blk, ent, cs) {
+  // Section strip (thin vertical view, width = block thickness) is a separate,
+  // rotatable renderer; the rest of this function is the elevation extent.
+  if (ent.wallMode === 'sec') { drawBlockWallSec2D(blk, ent, cs); return; }
+
   const cat = V25_BLOCK_DB[ent.blockKey || '190'] || V25_BLOCK_DB['190'];
   const col = cs.getPropertyValue('--entity-color').trim();
   const pm = ppm();
   const w = ent.lengthMM, h = ent.heightMM;
   const aspect = ent.aspect || ent.view || 'elev'; // back-compat with old field
 
-  // Outline
+  // Outline — each of the four edges is either a hard straight line (a true
+  // wall/block edge the coursing is drawn from) or an AS 1100 section
+  // break-line (per ent.breakEdges; absent/false = hard). Coursing below is
+  // anchored to the hard bottom/left edges so anchors read true against it.
   ctx.strokeStyle = col;
-  ctx.lineWidth = Math.max(0.5, LW.VIS * pm);
+  ctx.lineWidth = Math.max(0.5, LW.VIS_HEAVY * pm);
   ctx.setLineDash([]);
-  rRect(blk, ent.u, ent.v, w, h);
+  const be = ent.breakEdges || {};
+  const ux0 = ent.u, ux1 = ent.u + w, vy0 = ent.v, vy1 = ent.v + h;
+  const brkAmp = Math.min(w, h) * 0.06;
+  const edge = (brk, ua, va, ub, vb) => {
+    if (brk && typeof rZigzag === 'function') rZigzag(blk, ua, va, ub, vb, brkAmp);
+    else rLine(blk, ua, va, ub, vb);
+  };
+  edge(be.bottom, ux0, vy0, ux1, vy0);
+  edge(be.top,    ux0, vy1, ux1, vy1);
+  edge(be.left,   ux0, vy0, ux0, vy1);
+  edge(be.right,  ux1, vy0, ux1, vy1);
 
   if (aspect === 'elev') {
-    // Bed joints — horizontal lines every (block.h + bed)
-    const courseH = cat.h + cat.bed;
+    const courseH = cat.h + cat.bed;   // 200 for std AU block
+    const blockL = cat.l + cat.perp;   // 400 bond module
+    // Coursing anchors to the wall's solid ("edge of wall") sides so full
+    // blocks start from them; the partial block falls against the break-line
+    // sides. breakEdges[side] === true ⇒ that side is a break-line, NOT a
+    // coursing datum. Datum prefers top/left, falling back to bottom/right.
+    const be = ent.breakEdges || {};
+    const topSolid = !be.top, bottomSolid = !be.bottom;
+    const leftSolid = !be.left, rightSolid = !be.right;
+    const fromTop = topSolid || !bottomSolid;
+    const fromLeft = leftSolid || !rightSolid;
+
     ctx.lineWidth = Math.max(0.2, LW.HATCH * pm);
     ctx.strokeStyle = colorAlpha(col, 0.85);
-    for (let y = ent.v + courseH; y < ent.v + h - 0.5; y += courseH) {
-      rLine(blk, ent.u, y, ent.u + w, y);
+
+    // Bed joints — interior course lines stepped from the horizontal datum edge.
+    if (fromTop) {
+      for (let y = ent.v + h - courseH; y > ent.v + 0.5; y -= courseH) rLine(blk, ent.u, y, ent.u + w, y);
+    } else {
+      for (let y = ent.v + courseH; y < ent.v + h - 0.5; y += courseH) rLine(blk, ent.u, y, ent.u + w, y);
     }
-    // Perp joints — staggered between courses
-    const blockL = cat.l + cat.perp;
-    let course = 0;
-    for (let y = ent.v + h; y > ent.v + 0.5; y -= courseH) {
-      const offset = (course % 2 === 0) ? 0 : blockL / 2;
-      for (let x = ent.u + offset + blockL; x < ent.u + w - 0.5; x += blockL) {
-        rLine(blk, x, y, x, y - courseH);
+
+    // Perp (head) joints — half-block staggered each course, anchored to the
+    // vertical datum edge so the leading block of every course is full. Each
+    // segment is clipped to its course band so nothing overshoots an edge.
+    const perpsForBand = (yLo, yHi, courseIdx) => {
+      const half = (courseIdx % 2 === 0) ? 0 : blockL / 2;
+      if (fromLeft) {
+        for (let x = ent.u + (half > 0 ? half : blockL); x < ent.u + w - 0.5; x += blockL) rLine(blk, x, yLo, x, yHi);
+      } else {
+        for (let x = ent.u + w - (half > 0 ? half : blockL); x > ent.u + 0.5; x -= blockL) rLine(blk, x, yLo, x, yHi);
       }
-      course++;
+    };
+    if (fromTop) {
+      let ci = 0;
+      for (let yHi = ent.v + h; yHi > ent.v + 0.5; yHi -= courseH) { perpsForBand(Math.max(yHi - courseH, ent.v), yHi, ci); ci++; }
+    } else {
+      let ci = 0;
+      for (let yLo = ent.v; yLo < ent.v + h - 0.5; yLo += courseH) { perpsForBand(yLo, Math.min(yLo + courseH, ent.v + h), ci); ci++; }
     }
+
     // Optional lintel band at the top
     if (ent.lintelTop) {
       const lh = (typeof ent.lintelTop === 'number') ? ent.lintelTop : 290;
@@ -61,15 +102,100 @@ function drawBlockWall2D(blk, ent, cs) {
       rLine(blk, x, ent.v, x, ent.v + h);
     }
   }
+  // No auto label — the engineer adds a leader note where wanted.
+}
 
-  // Tag
-  if (ent.showTag !== false) {
-    const tagP = real2px(blk, ent.u + w / 2, ent.v + h + 5);
-    ctx.fillStyle = col; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
-    ctx.font = `${Math.max(8, 2.5 * pm)}px system-ui`;
-    ctx.fillText(`${cat.thk} BLOCK`, tagP.x, tagP.y);
-    ctx.textAlign = 'start';
+// ---- BLOCKWORK WALL — SECTION STRIP ----
+// Thin vertical view of a wall (you see its thickness). Two-click directional:
+// (u,v) = centreline start, runs at `rot` for `lengthMM`; width = block
+// thickness centred on the line. Drawn in a local frame (lu along the strip,
+// lv across the thickness ±half) so the coursing tilts with an angled strip.
+//   { type:'blockWall', wallMode:'sec', u, v, rot, lengthMM, blockKey,
+//     endBreak:'start'|'end'|'none'|'both', grouted:bool }
+function drawBlockWallSec2D(blk, ent, cs) {
+  const cat = V25_BLOCK_DB[ent.blockKey || '190'] || V25_BLOCK_DB['190'];
+  const col = cs.getPropertyValue('--entity-color').trim();
+  const pm = ppm();
+  const L = ent.lengthMM || 0;
+  const thk = cat.thk;
+  const half = thk / 2;
+  if (L < 1) return;
+  const rot = (ent.rot || 0) * Math.PI / 180;
+  const cosR = Math.cos(rot), sinR = Math.sin(rot);
+  // Local (lu along strip 0..L, lv across thickness -half..+half) → screen px.
+  const project = (lu, lv) => real2px(blk, ent.u + lu * cosR - lv * sinR, ent.v + lu * sinR + lv * cosR);
+  const strokeLocal = (x1, y1, x2, y2) => {
+    const a = project(x1, y1), b = project(x2, y2);
+    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+  };
+
+  ctx.save();
+  if (ent.opacity != null) ctx.globalAlpha = ent.opacity;
+  ctx.setLineDash([]);
+
+  const courseH = cat.h + cat.bed;                          // 200 for std AU block
+  const shellT = Math.min(35, Math.max(25, thk * 0.18));    // face-shell thickness
+  const coreW = thk - 2 * shellT;
+
+  // Grouted cores — light 45° hatch of the central band between the face shells.
+  if (ent.grouted && coreW > 4) {
+    ctx.save();
+    ctx.beginPath();
+    [[0, -half + shellT], [L, -half + shellT], [L, half - shellT], [0, half - shellT]].forEach((p, i) => {
+      const sp = project(p[0], p[1]); if (i === 0) ctx.moveTo(sp.x, sp.y); else ctx.lineTo(sp.x, sp.y);
+    });
+    ctx.closePath(); ctx.clip();
+    ctx.strokeStyle = colorAlpha(col, 0.5);
+    ctx.lineWidth = Math.max(0.3, LW.HATCH * pm);
+    const step = 12;
+    for (let s = -coreW; s < L + coreW; s += step) {
+      strokeLocal(s, -half + shellT, s + coreW, half - shellT);
+    }
+    ctx.restore();
   }
+
+  // Face-shell inner lines (so it reads as a hollow block, not solid) — medium.
+  ctx.strokeStyle = colorAlpha(col, 0.9);
+  ctx.lineWidth = Math.max(0.3, LW.VIS * pm);
+  strokeLocal(0, -half + shellT, L, -half + shellT);
+  strokeLocal(0,  half - shellT, L,  half - shellT);
+
+  // Bed joints — across the full width every course (the cut mortar joints).
+  ctx.lineWidth = Math.max(0.3, LW.VIS * pm);
+  for (let lu = courseH; lu < L - 0.5; lu += courseH) {
+    strokeLocal(lu, -half, lu, half);
+  }
+
+  // Wall faces — the two long cut edges, heavy.
+  ctx.strokeStyle = col;
+  ctx.lineWidth = Math.max(0.6, LW.VIS_HEAVY * pm);
+  strokeLocal(0, -half, L, -half);
+  strokeLocal(0,  half, L,  half);
+
+  // End caps — clean line (true edge, e.g. top of wall) or zigzag section
+  // break (the cut continues into the structure beyond the detail).
+  const eb = ent.endBreak || 'start';
+  const breakStart = (eb === 'start' || eb === 'both');
+  const breakEnd   = (eb === 'end'   || eb === 'both');
+  const drawEnd = (lu, isBreak) => {
+    if (!isBreak) { strokeLocal(lu, -half, lu, half); return; }
+    const amp = thk * 0.16, n = 3;
+    const pts = [[lu, -half]];
+    for (let i = 0; i < n; i++) {
+      const t = (i + 0.5) / n;
+      const sign = (i % 2 === 0) ? 1 : -1;
+      pts.push([lu + amp * sign, -half + thk * t]);
+    }
+    pts.push([lu, half]);
+    ctx.beginPath();
+    pts.forEach((p, i) => { const sp = project(p[0], p[1]); if (i === 0) ctx.moveTo(sp.x, sp.y); else ctx.lineTo(sp.x, sp.y); });
+    ctx.stroke();
+  };
+  drawEnd(0, breakStart);
+  drawEnd(L, breakEnd);
+
+  // No auto label — the engineer adds a leader note where wanted.
+  ctx.restore();
 }
 
 // ---- SMART ANCHOR (Trubolt / Chemset / Coach / Self-tap / Through) ----
@@ -347,6 +473,21 @@ function drawLeader2D(blk, ent, cs) {
 // elevation and cross-section views via an `aspect` flag (named to avoid
 // colliding with the entity's per-pane `view` key).
 //   { type:'mem2', memberType:'ub'|'shs'|..., section, u,v, length, rot, aspect:'elev'|'sec' }
+// Effective axial roll for a mem2 — the single "which face / how spun" DOF.
+// New entities carry ent.roll (0/90/180/270). Older saved entities are mapped
+// on read: legacy cross-sections stored the glyph spin in ent.rot (web-horiz
+// = 90); legacy elevations and legacy PFC sections (openSide was a visual
+// no-op in the old renderer) map to roll 0. Lets the renderer rely on roll
+// without a destructive load-time migration.
+function v25Mem2EffRoll(ent) {
+  if (!ent) return 0;
+  // Number() so a roll edited via the inspector <select> (stored as a string)
+  // still compares equal to the numeric 90/180/270 the renderer branches on.
+  if (ent.roll != null) return Number(ent.roll) || 0;
+  if ((ent.aspect || 'elev') === 'sec') return ent.rot || 0;
+  return 0;
+}
+
 function drawMem2D(blk, ent, cs) {
   const col = v25EntColour(ent, cs);
   const clCol = cs.getPropertyValue('--cl-color').trim() || col;
@@ -363,9 +504,14 @@ function drawMem2D(blk, ent, cs) {
   const clLW = Math.max(0.25, LW.CL * pm);
   ctx.strokeStyle = col; ctx.fillStyle = col;
   ctx.setLineDash([]);
-  const rot = (ent.rot || 0) * Math.PI / 180;
-  const cosR = Math.cos(rot), sinR = Math.sin(rot);
   const aspect = ent.aspect || 'elev';
+  // Axial roll picks the section glyph spin AND the elevation face. In SECTION
+  // the glyph is rotated by roll; in ELEVATION the member runs along the paper
+  // drag angle (ent.rot) and roll instead selects which face is drawn.
+  const effRoll = v25Mem2EffRoll(ent);
+  const rotDeg = (aspect === 'sec') ? effRoll : (ent.rot || 0);
+  const rot = rotDeg * Math.PI / 180;
+  const cosR = Math.cos(rot), sinR = Math.sin(rot);
   // Local-frame point → screen pixel.
   const project = (lu, lv) => {
     const wu = ent.u + lu * cosR - lv * sinR;
@@ -445,6 +591,50 @@ function drawMem2D(blk, ent, cs) {
       strokeLine(-hbf - 8, 0, hbf + 8, 0);
       strokeLine(0, -hd - 8, 0, hd + 8);
       ctx.setLineDash([]); ctx.strokeStyle = col;
+    } else if (effRoll === 90 || effRoll === 270) {
+      // Flange-face elevation — looking at the beam on its flange. The outline
+      // is the flange WIDTH (bf) tall; the web hides behind the flange and is
+      // shown as two AS 1100 hidden lines at ±tw/2. Honours the same auto-mitre
+      // / welded-cap pipeline as the web-face view.
+      const len = ent.length || 600;
+      const T = hbf, B = -hbf;
+      const trims = (typeof jointTrimsForMem2 === 'function')
+        ? jointTrimsForMem2(ent, blk.viewKey) : null;
+      const capA = trims && trims.a ? null
+        : ((typeof v25Mem2ResolveCap === 'function') ? v25Mem2ResolveCap(ent, 'A') : null);
+      const capB = trims && trims.b ? null
+        : ((typeof v25Mem2ResolveCap === 'function') ? v25Mem2ResolveCap(ent, 'B') : null);
+      const capX = (y, def, cap) => {
+        if (!cap) return def;
+        return cap.topLocalX + (T - y) / (2 * T) * (cap.botLocalX - cap.topLocalX);
+      };
+      const xA = (y) => trims && trims.a ? trims.a.uAtV(y) : capX(y, 0, capA);
+      const xB = (y) => trims && trims.b ? trims.b.uAtV(y) : capX(y, len, capB);
+      fillPoly([[xA(T), T], [xB(T), T], [xB(B), B], [xA(B), B]]);
+      ctx.lineWidth = cutLW;
+      strokeLine(xA(T), T, xB(T), T);   // flange tip (top edge)
+      strokeLine(xA(B), B, xB(B), B);   // flange tip (bottom edge)
+      if (capA) strokeLine(capA.topLocalX, T, capA.botLocalX, B);
+      else if (trims && trims.a) strokeLine(xA(T), T, xA(B), B);
+      else drawEndCap(0, T, B, ent.endA || 'normal', -1);
+      if (capB) strokeLine(capB.topLocalX, T, capB.botLocalX, B);
+      else if (trims && trims.b) strokeLine(xB(T), T, xB(B), B);
+      else drawEndCap(len, T, B, ent.endB || 'normal', +1);
+      // Hidden web — two dashed lines at ±tw/2 sitting behind the flange.
+      ctx.strokeStyle = hidCol; ctx.lineWidth = hidLW; ctx.setLineDash(DASH.HIDDEN);
+      strokeLine(xA(htw), htw, xB(htw), htw);
+      strokeLine(xA(-htw), -htw, xB(-htw), -htw);
+      ctx.setLineDash([]); ctx.strokeStyle = col;
+      const clMinF = Math.min(0, xA(0)) - 10, clMaxF = Math.max(len, xB(0)) + 10;
+      ctx.strokeStyle = clCol; ctx.lineWidth = clLW; ctx.setLineDash(DASH.CL);
+      strokeLine(clMinF, 0, clMaxF, 0);
+      ctx.setLineDash([]); ctx.strokeStyle = col;
+      const weldAf = capA || (trims && trims.a
+        ? { topLocalX: xA(T), botLocalX: xA(B), weldSize: trims.a.weldSize || 6 } : null);
+      const weldBf = capB || (trims && trims.b
+        ? { topLocalX: xB(T), botLocalX: xB(B), weldSize: trims.b.weldSize || 6 } : null);
+      _drawCapWeld(weldAf, T, project);
+      _drawCapWeld(weldBf, T, project);
     } else {
       // Elevation — six horizontal lines (top + flange-bottom + flange-top
       // + bottom + 2 ends) + chain-dot centreline. Mirrors 3D drawUB().
@@ -571,13 +761,14 @@ function drawMem2D(blk, ent, cs) {
       strokeLine(0, -hd - 8, 0, hd + 8);
       ctx.setLineDash([]); ctx.strokeStyle = col;
     } else {
-      // Elevation — outer rectangle + flange-tip inner lines + centreline.
-      // Mirrors the UB branch above; PFC in side-view is indistinguishable
-      // from a UB except for the absence of a visible web edge. We also honour
-      // auto-mitre joints + welded caps so PFCs participate in the same
-      // brace-meets-host pipeline as UB/SHS members.
+      // Elevation — outer flange-tip rectangle + flange-root inner lines +
+      // centreline. roll 0 = toes away (flange roots solid); roll 180 = toes
+      // toward (open face faces the viewer → flange-root lines drawn AS 1100
+      // hidden/dashed). Honours auto-mitre joints + welded caps so PFCs
+      // participate in the same brace-meets-host pipeline as UB/SHS members.
       const len = ent.length || 600;
       const T = hd, B = -hd, ftBot = T - tf, fbTop = B + tf;
+      const toesToward = (effRoll === 180);
       const trims = (typeof jointTrimsForMem2 === 'function')
         ? jointTrimsForMem2(ent, blk.viewKey) : null;
       const capA = trims && trims.a ? null
@@ -592,10 +783,14 @@ function drawMem2D(blk, ent, cs) {
       const xB = (y) => trims && trims.b ? trims.b.uAtV(y) : capX(y, len, capB);
       fillPoly([[xA(T), T], [xB(T), T], [xB(B), B], [xA(B), B]]);
       ctx.lineWidth = cutLW;
-      strokeLine(xA(T),     T,     xB(T),     T);      // top flange (top edge)
-      strokeLine(xA(ftBot), ftBot, xB(ftBot), ftBot);  // top flange (under-edge)
-      strokeLine(xA(B),     B,     xB(B),     B);      // bottom flange (bottom edge)
-      strokeLine(xA(fbTop), fbTop, xB(fbTop), fbTop);  // bottom flange (top-edge)
+      strokeLine(xA(T), T, xB(T), T);   // top flange tip (outer — always solid)
+      strokeLine(xA(B), B, xB(B), B);   // bottom flange tip (outer — always solid)
+      // Flange-root lines: solid when the open face points away; AS 1100 hidden
+      // (dashed) when the open face points toward the viewer (toes-toward).
+      if (toesToward) { ctx.strokeStyle = hidCol; ctx.lineWidth = hidLW; ctx.setLineDash(DASH.HIDDEN); }
+      strokeLine(xA(ftBot), ftBot, xB(ftBot), ftBot);  // top flange root
+      strokeLine(xA(fbTop), fbTop, xB(fbTop), fbTop);  // bottom flange root
+      if (toesToward) { ctx.setLineDash([]); ctx.lineWidth = cutLW; ctx.strokeStyle = col; }
       if (capA) {
         strokeLine(capA.topLocalX, T, capA.botLocalX, B);
       } else if (trims && trims.a) {
@@ -629,29 +824,39 @@ function drawMem2D(blk, ent, cs) {
               : ent.memberType === 'rhs' ? (typeof RHS_DB === 'object' ? RHS_DB[ent.section] : null)
               : (typeof CHS_DB === 'object' ? CHS_DB[ent.section] : null));
     if (!dbS) return;
-    const B = dbS.B || dbS.D || dbS.d || 100, t = dbS.t || 6;
-    const hB = B / 2, hI = hB - t;
+    const t = dbS.t || 6;
+    // RHS carries distinct depth (d) and width (bf); SHS/CHS are single-dim
+    // (square / round). The old code read only one field → drew every box as a
+    // d×d square, ignoring RHS bf. dep = depth (long face), wid = width.
+    const dep = (ent.memberType === 'rhs') ? (dbS.d || dbS.D || dbS.B || 100)
+              : (dbS.B || dbS.d || dbS.D || 100);
+    const wid = (ent.memberType === 'rhs') ? (dbS.bf || dbS.B || dep) : dep;
     if (aspect === 'sec') {
-      fillPoly([[-hB, hB], [hB, hB], [hB, -hB], [-hB, -hB]]);
+      // Canonical depth(v) × width(u) box; project() spins it by roll, so
+      // on-edge (roll 0) and lay-flat (roll 90) fall out of the same polygon.
+      const hW = wid / 2, hH = dep / 2, hWi = hW - t, hHi = hH - t;
+      fillPoly([[-hW, hH], [hW, hH], [hW, -hH], [-hW, -hH]]);
       ctx.lineWidth = cutLW;
       // Outer
-      const o = [[-hB, hB], [hB, hB], [hB, -hB], [-hB, -hB]];
+      const o = [[-hW, hH], [hW, hH], [hW, -hH], [-hW, -hH]];
       ctx.beginPath();
       o.forEach((p, i) => { const sp = project(p[0], p[1]); if (i === 0) ctx.moveTo(sp.x, sp.y); else ctx.lineTo(sp.x, sp.y); });
       ctx.closePath(); ctx.stroke();
-      // Inner (also solid in cross-section)
-      const inn = [[-hI, hI], [hI, hI], [hI, -hI], [-hI, -hI]];
+      // Inner wall (also solid in cross-section)
+      const inn = [[-hWi, hHi], [hWi, hHi], [hWi, -hHi], [-hWi, -hHi]];
       ctx.beginPath();
       inn.forEach((p, i) => { const sp = project(p[0], p[1]); if (i === 0) ctx.moveTo(sp.x, sp.y); else ctx.lineTo(sp.x, sp.y); });
       ctx.closePath(); ctx.stroke();
       // Centrelines
       ctx.strokeStyle = clCol; ctx.lineWidth = clLW; ctx.setLineDash(DASH.CL);
-      strokeLine(-hB - 8, 0, hB + 8, 0);
-      strokeLine(0, -hB - 8, 0, hB + 8);
+      strokeLine(-hW - 8, 0, hW + 8, 0);
+      strokeLine(0, -hH - 8, 0, hH + 8);
       ctx.setLineDash([]); ctx.strokeStyle = col;
     } else {
       // Elevation — outer rectangle (solid) + two dashed inner walls + centreline.
+      // roll selects the visible face: deep (height = dep) vs flat (height = wid).
       const len = ent.length || 500;
+      const hB = ((effRoll === 90 || effRoll === 270) ? wid : dep) / 2, hI = hB - t;
       // V14-J — joint trim (priority + mitre overrides) takes precedence over
       // the legacy single-host cap when both apply. Falls back to the legacy
       // cap system when no joint is detected (e.g. brace explicitly joined to
@@ -1154,19 +1359,28 @@ function v25HitTestWeld(blk, px, py) {
 
 // Half-depth helper used by hit-test/bounds and end-handle math.
 function v25Mem2HalfDepth(ent) {
+  // The transverse half-height as drawn: depth/2 for the primary face (roll 0),
+  // width/2 for the flange / lay-flat face (roll 90/270). Used by snap edges,
+  // bounds, and mitre clipping, so it must follow the same roll the renderer
+  // honours.
+  const r = v25Mem2EffRoll(ent);
+  const flat = (r === 90 || r === 270);
   if (ent.memberType === 'ub' || ent.memberType === 'uc' || ent.memberType === 'wb') {
     const db = ent.memberType === 'ub' ? UB_DB[ent.section]
              : ent.memberType === 'wb' ? (typeof WB_DB === 'object' ? WB_DB[ent.section] : UB_DB[ent.section])
              : UC_DB[ent.section];
-    return db ? db.d / 2 : 50;
+    if (!db) return 50;
+    return (flat ? (db.bf || db.d) : db.d) / 2;
   }
   if (ent.memberType === 'shs') {
     const db = SHS_DB[ent.section];
-    return db ? (db.B || 100) / 2 : 50;
+    return db ? (db.B || db.d || 100) / 2 : 50;
   }
   if (ent.memberType === 'rhs' && typeof RHS_DB === 'object') {
     const db = RHS_DB[ent.section];
-    return db ? (db.B || db.D || 100) / 2 : 50;
+    if (!db) return 50;
+    const dep = db.d || db.D || db.B || 100, wid = db.bf || db.B || dep;
+    return (flat ? wid : dep) / 2;
   }
   if (ent.memberType === 'chs' && typeof CHS_DB === 'object') {
     const db = CHS_DB[ent.section];
@@ -1174,7 +1388,8 @@ function v25Mem2HalfDepth(ent) {
   }
   if (ent.memberType === 'pfc' && typeof PFC_DB === 'object') {
     const db = PFC_DB[ent.section];
-    return db ? db.d / 2 : 50;
+    if (!db) return 50;
+    return (flat ? (db.bf || db.d) : db.d) / 2;
   }
   return 50;
 }

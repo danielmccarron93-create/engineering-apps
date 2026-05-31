@@ -35,7 +35,26 @@ function v25EntBounds(ent) {
     });
     return { L, R, B, T };
   }
-  if (ent.type === 'frame' || ent.type === 'blockWall' || ent.type === 'mesh') {
+  if (ent.type === 'blockWall') {
+    // Section strip — enclose the rotated thin strip (width = block thickness).
+    if (ent.wallMode === 'sec') {
+      const len = ent.lengthMM || 0;
+      const cat = (typeof V25_BLOCK_DB !== 'undefined' && V25_BLOCK_DB[ent.blockKey]) || { thk: 190 };
+      const half = (cat.thk || 190) / 2;
+      const rot = (ent.rot || 0) * Math.PI / 180, cosR = Math.cos(rot), sinR = Math.sin(rot);
+      let L = Infinity, R = -Infinity, B = Infinity, T = -Infinity;
+      [[0, -half], [len, -half], [len, half], [0, half]].forEach(p => {
+        const wu = ent.u + p[0] * cosR - p[1] * sinR;
+        const wv = ent.v + p[0] * sinR + p[1] * cosR;
+        if (wu < L) L = wu; if (wu > R) R = wu;
+        if (wv < B) B = wv; if (wv > T) T = wv;
+      });
+      return { L, R, B, T };
+    }
+    // Elevation extent — axis-aligned rect.
+    return { L: ent.u, R: ent.u + (ent.lengthMM || 0), B: ent.v, T: ent.v + (ent.heightMM || 0) };
+  }
+  if (ent.type === 'frame' || ent.type === 'mesh') {
     const w = ent.w || ent.lengthMM || 0;
     const h = ent.h || ent.heightMM || 0;
     return { L: ent.u, R: ent.u + w, B: ent.v, T: ent.v + h };
@@ -120,6 +139,7 @@ function v25EntBounds(ent) {
   if (ent.type === 'txtBox') {
     return { L: ent.u, R: ent.u + 200, B: ent.v - 30, T: ent.v + 5 };
   }
+  if (ent.type === 'noteBox' && typeof nbBounds === 'function') return nbBounds(ent);
   return null;
 }
 
@@ -186,6 +206,7 @@ function v25HitTest(blk, u, v) {
 function v25EntHandles(ent) {
   const out = [];
   if (!ent) return out;
+  if (ent.type === 'noteBox' && typeof nbHandles === 'function') return nbHandles(ent);
   if (ent.type === 'lineSet' && ent.pts) {
     ent.pts.forEach((p, i) => out.push({ key: 'pt:' + i, u: p.u, v: p.v }));
   } else if (ent.type === 'mat' && ent.shape === 'poly' && ent.pts) {
@@ -217,6 +238,31 @@ function v25EntHandles(ent) {
         u: midU + (-sinR) * offsetMm,
         v: midV + ( cosR) * offsetMm,
       });
+    }
+  } else if (ent.type === 'blockWall') {
+    if (ent.wallMode === 'sec') {
+      // Section strip — end-a / end-b length-angle grips + perpendicular
+      // rotation ball at the midpoint (mirrors mem2).
+      const rot = (ent.rot || 0) * Math.PI / 180;
+      const len = ent.lengthMM || 0;
+      const cosR = Math.cos(rot), sinR = Math.sin(rot);
+      out.push({ key: 'end-a', u: ent.u, v: ent.v });
+      out.push({ key: 'end-b', u: ent.u + cosR * len, v: ent.v + sinR * len });
+      if (len > 0) {
+        const cat = (typeof V25_BLOCK_DB !== 'undefined' && V25_BLOCK_DB[ent.blockKey]) || { thk: 190 };
+        const half = (cat.thk || 190) / 2;
+        const offsetMm = half + Math.max(80, half * 0.8);
+        const midU = ent.u + cosR * (len / 2), midV = ent.v + sinR * (len / 2);
+        out.push({ key: 'rotate', shape: 'circle', u: midU + (-sinR) * offsetMm, v: midV + cosR * offsetMm });
+      }
+    } else {
+      // Elevation extent — one mid-edge handle per side. Drag an edge to
+      // resize / reposition it (e.g. to set where a break-line sits).
+      const w = ent.lengthMM || 0, h = ent.heightMM || 0;
+      out.push({ key: 'e-left',   u: ent.u,         v: ent.v + h / 2 });
+      out.push({ key: 'e-right',  u: ent.u + w,     v: ent.v + h / 2 });
+      out.push({ key: 'e-bottom', u: ent.u + w / 2, v: ent.v });
+      out.push({ key: 'e-top',    u: ent.u + w / 2, v: ent.v + h });
     }
   } else if (ent.type === 'leader2') {
     out.push({ key: 'tip', u: ent.tipU, v: ent.tipV });
@@ -668,11 +714,11 @@ function v25DrawSelectionHighlight(blk, cs) {
         // Dashed connector from anchor (member midpoint or mat centroid) to
         // the rotation ball so the user can see what the handle is anchored
         // to and what the rotation pivot is.
-        if (h.key === 'rotate' && (ent.type === 'mem2' || ent.type === 'mat')) {
+        if (h.key === 'rotate' && (ent.type === 'mem2' || ent.type === 'mat' || ent.type === 'blockWall')) {
           let mU, mV;
-          if (ent.type === 'mem2') {
+          if (ent.type === 'mem2' || ent.type === 'blockWall') {
             const r2 = (ent.rot || 0) * Math.PI / 180;
-            const lenR = ent.length || 0;
+            const lenR = (ent.type === 'blockWall') ? (ent.lengthMM || 0) : (ent.length || 0);
             mU = ent.u + Math.cos(r2) * (lenR / 2);
             mV = ent.v + Math.sin(r2) * (lenR / 2);
           } else {
@@ -835,12 +881,128 @@ function v25HitHandle(blk, ent, u, v) {
     }
     if (bestI >= 0) return 'pt:' + bestI;
   }
+  if (ent.type === 'blockWall') {
+    if (ent.wallMode === 'sec') {
+      const rot = (ent.rot || 0) * Math.PI / 180;
+      const len = ent.lengthMM || 0;
+      const ebu = ent.u + Math.cos(rot) * len, ebv = ent.v + Math.sin(rot) * len;
+      const dA = distPx(ent.u, ent.v), dB = distPx(ebu, ebv);
+      const aPx = real2px(blk, ent.u, ent.v), bPx = real2px(blk, ebu, ebv);
+      const spanPx = Math.hypot(bPx.x - aPx.x, bPx.y - aPx.y);
+      const TOL = Math.max(3, Math.min(12, spanPx / 3));
+      if (dA < TOL || dB < TOL) return dA <= dB ? 'end-a' : 'end-b';
+    } else {
+      const w = ent.lengthMM || 0, h = ent.heightMM || 0;
+      const tests = [
+        ['e-left', ent.u, ent.v + h / 2], ['e-right', ent.u + w, ent.v + h / 2],
+        ['e-bottom', ent.u + w / 2, ent.v], ['e-top', ent.u + w / 2, ent.v + h],
+      ];
+      let bk = null, bd = Infinity;
+      for (const t of tests) { const d = distPx(t[1], t[2]); if (d < 10 && d < bd) { bd = d; bk = t[0]; } }
+      if (bk) return bk;
+    }
+  }
   return 'body';
+}
+
+// Which blockwork edge/end is the cursor near? Returns a target descriptor for
+// the edge picker, or null if the cursor is too central. (u,v) real-world.
+//   elevation → { kind:'elev', side:'top'|'bottom'|'left'|'right' }
+//   section   → { kind:'sec',  end:'start'|'end' }
+function v25NearestWallEdge(blk, ent, u, v) {
+  if (!ent || ent.type !== 'blockWall') return null;
+  if (ent.wallMode === 'sec') {
+    const rot = (ent.rot || 0) * Math.PI / 180, len = ent.lengthMM || 0;
+    if (len < 1) return null;
+    const bx = ent.u + Math.cos(rot) * len, by = ent.v + Math.sin(rot) * len;
+    const dA = Math.hypot(u - ent.u, v - ent.v), dB = Math.hypot(u - bx, v - by);
+    if (Math.min(dA, dB) > len * 0.45) return null;
+    return { kind: 'sec', end: (dA <= dB) ? 'start' : 'end' };
+  }
+  const w = ent.lengthMM || 0, h = ent.heightMM || 0;
+  if (w < 1 || h < 1) return null;
+  const dl = Math.abs(u - ent.u), dr = Math.abs(u - (ent.u + w));
+  const db = Math.abs(v - ent.v), dt = Math.abs(v - (ent.v + h));
+  const m = Math.min(dl, dr, db, dt);
+  if (m > Math.min(w, h) * 0.4) return null;
+  return { kind: 'elev', side: (m === dl) ? 'left' : (m === dr) ? 'right' : (m === db) ? 'bottom' : 'top' };
+}
+
+// Small popup at the cursor letting the user set a blockwork edge/end to be an
+// "Edge of wall" (solid datum — coursing starts full from it) or a break-line.
+// Applying it re-renders, so the coursing re-anchors immediately.
+function v25ShowWallEdgeMenu(ent, target, x, y) {
+  const ex = document.getElementById('v25WallEdgeMenu');
+  if (ex) ex.remove();
+  const isSec = target.kind === 'sec';
+  let curBreak;
+  if (isSec) { const eb = ent.endBreak || 'none'; curBreak = (eb === 'both') || (eb === target.end); }
+  else { curBreak = !!(ent.breakEdges && ent.breakEdges[target.side]); }
+
+  const menu = document.createElement('div');
+  menu.id = 'v25WallEdgeMenu';
+  menu.style.cssText = 'position:fixed;z-index:99999;left:' + x + 'px;top:' + y + 'px;min-width:160px;'
+    + 'background:var(--surface-2,#fff);color:var(--text,#222);border:1px solid var(--border,#ccc);'
+    + 'border-radius:6px;box-shadow:0 6px 22px rgba(0,0,0,.22);overflow:hidden;font:12px system-ui';
+  const headEl = document.createElement('div');
+  headEl.textContent = isSec
+    ? (target.end === 'start' ? 'Start end' : 'Finish end')
+    : (target.side.charAt(0).toUpperCase() + target.side.slice(1) + ' edge');
+  headEl.style.cssText = 'padding:6px 12px;font-weight:700;font-size:10.5px;color:var(--text-mute,#888);'
+    + 'text-transform:uppercase;letter-spacing:.05em;border-bottom:1px solid var(--border,#eee)';
+  menu.appendChild(headEl);
+
+  const setVal = (makeBreak) => {
+    if (isSec) {
+      let s = (ent.endBreak === 'both' || ent.endBreak === 'start');
+      let en = (ent.endBreak === 'both' || ent.endBreak === 'end');
+      if (target.end === 'start') s = makeBreak; else en = makeBreak;
+      ent.endBreak = (s && en) ? 'both' : s ? 'start' : en ? 'end' : 'none';
+    } else {
+      ent.breakEdges = ent.breakEdges || { top: false, bottom: false, left: false, right: false };
+      ent.breakEdges[target.side] = makeBreak;
+    }
+    menu.remove();
+    if (typeof v25UpdateInspector === 'function') v25UpdateInspector();
+    if (typeof requestRender === 'function') requestRender();
+  };
+  const mk = (label, makeBreak, active) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = (active ? '✓  ' : ' ') + label;
+    btn.style.cssText = 'display:block;width:100%;text-align:left;padding:8px 12px;border:0;'
+      + 'background:transparent;color:var(--text,#222);cursor:pointer;font:12px system-ui;white-space:nowrap';
+    btn.onmouseenter = () => { btn.style.background = 'var(--surface-3,#eee)'; };
+    btn.onmouseleave = () => { btn.style.background = 'transparent'; };
+    btn.onclick = () => setVal(makeBreak);
+    return btn;
+  };
+  menu.appendChild(mk('Edge of wall', false, !curBreak));
+  menu.appendChild(mk(isSec ? 'Section break' : 'Break-line', true, curBreak));
+  document.body.appendChild(menu);
+
+  // Keep on-screen.
+  const r = menu.getBoundingClientRect();
+  if (r.right > window.innerWidth) menu.style.left = Math.max(4, x - r.width) + 'px';
+  if (r.bottom > window.innerHeight) menu.style.top = Math.max(4, y - r.height) + 'px';
+  // Dismiss on any outside interaction.
+  const close = (ev) => {
+    if (!menu.contains(ev.target)) {
+      menu.remove();
+      document.removeEventListener('mousedown', close, true);
+      document.removeEventListener('wheel', close, true);
+    }
+  };
+  setTimeout(() => {
+    document.addEventListener('mousedown', close, true);
+    document.addEventListener('wheel', close, true);
+  }, 0);
 }
 
 // Move an entity by (du, dv) in real-world coords.
 function v25Move(ent, du, dv, handle) {
   handle = handle || 'body';
+  if (ent.type === 'noteBox') { if (typeof nbMove==='function') nbMove(ent, handle, du, dv); return; }
   if (handle === 'tip' && ent.type === 'leader2') { ent.tipU += du; ent.tipV += dv; return; }
   if (handle === 'txt' && ent.type === 'leader2') { ent.txtU += du; ent.txtV += dv; return; }
   if (handle === 'txt' && ent.type === 'anchor') { ent.txtU += du; ent.txtV += dv; return; }
@@ -886,6 +1048,53 @@ function v25Move(ent, du, dv, handle) {
     const cursorRot = Math.atan2(dy, dx) - Math.PI / 2;
     const newRot = applySnappedRotation(cursorRot, !!(typeof shiftHeld !== 'undefined' && shiftHeld));
     ent.rot = newRot * 180 / Math.PI;
+    return;
+  }
+
+  // Blockwork section strip — rotation ball (snap to 0/45/90… unless Shift).
+  if (ent.type === 'blockWall' && ent.wallMode === 'sec' && handle === 'rotate') {
+    const len = ent.lengthMM || 0;
+    if (len < 1) return;
+    const oldRot = (ent.rot || 0) * Math.PI / 180;
+    const midU = ent.u + Math.cos(oldRot) * (len / 2);
+    const midV = ent.v + Math.sin(oldRot) * (len / 2);
+    const cu = (typeof v25Drag === 'object' && v25Drag) ? (v25Drag.lastU + du) : (midU + du);
+    const cv = (typeof v25Drag === 'object' && v25Drag) ? (v25Drag.lastV + dv) : (midV + dv);
+    const dx = cu - midU, dy = cv - midV;
+    if (dx * dx + dy * dy < 1) return;
+    const cursorRot = Math.atan2(dy, dx) - Math.PI / 2;
+    const newRot = applySnappedRotation(cursorRot, !!(typeof shiftHeld !== 'undefined' && shiftHeld));
+    ent.u = midU - Math.cos(newRot) * (len / 2);
+    ent.v = midV - Math.sin(newRot) * (len / 2);
+    ent.rot = newRot * 180 / Math.PI;
+    return;
+  }
+
+  // Blockwork section strip — end grips re-length / re-angle (other end fixed).
+  if (ent.type === 'blockWall' && ent.wallMode === 'sec' && (handle === 'end-a' || handle === 'end-b')) {
+    const rot = (ent.rot || 0) * Math.PI / 180;
+    const len = ent.lengthMM || 0;
+    const ax = ent.u, ay = ent.v;
+    const bx = ent.u + Math.cos(rot) * len, by = ent.v + Math.sin(rot) * len;
+    let nax = ax, nay = ay, nbx = bx, nby = by;
+    if (handle === 'end-a') { nax = ax + du; nay = ay + dv; }
+    else                    { nbx = bx + du; nby = by + dv; }
+    const dx = nbx - nax, dy = nby - nay, nl = Math.hypot(dx, dy);
+    if (nl < 1) return;
+    ent.u = nax; ent.v = nay;
+    ent.lengthMM = nl;
+    ent.rot = Math.atan2(dy, dx) * 180 / Math.PI;
+    return;
+  }
+
+  // Blockwork elevation extent — mid-edge grips resize / reposition one edge.
+  if (ent.type === 'blockWall' && ent.wallMode !== 'sec' &&
+      (handle === 'e-left' || handle === 'e-right' || handle === 'e-bottom' || handle === 'e-top')) {
+    const MIN = 50;
+    if (handle === 'e-left')   { const nl = (ent.lengthMM || 0) - du; if (nl >= MIN) { ent.u += du; ent.lengthMM = nl; } }
+    if (handle === 'e-right')  { const nl = (ent.lengthMM || 0) + du; if (nl >= MIN) ent.lengthMM = nl; }
+    if (handle === 'e-bottom') { const nh = (ent.heightMM || 0) - dv; if (nh >= MIN) { ent.v += dv; ent.heightMM = nh; } }
+    if (handle === 'e-top')    { const nh = (ent.heightMM || 0) + dv; if (nh >= MIN) ent.heightMM = nh; }
     return;
   }
 
@@ -990,8 +1199,19 @@ function v25UpdateInspector() {
     sel('Style', 'edgeStyle', ['solid','dashed','centre','phantom']);
   } else if (ent.type === 'blockWall') {
     sel('Block', 'blockKey', Object.keys(V25_BLOCK_DB));
-    sel('Aspect', 'aspect', ['elev','plan','sec']);
-    num('Length (mm)', 'lengthMM'); num('Height (mm)', 'heightMM');
+    if (ent.wallMode === 'sec') {
+      num('Length (mm)', 'lengthMM');
+      num('Rotation°', 'rot', 0.5);
+      sel('End break', 'endBreak', ['start','end','both','none']);
+      sel('Grout cores', 'grouted', ['','true']);
+    } else {
+      num('Length (mm)', 'lengthMM'); num('Height (mm)', 'heightMM');
+      fields.push({ kind:'h', label: 'Break-line edges' });
+      sel('Top', 'breakEdges.top', ['','true']);
+      sel('Bottom', 'breakEdges.bottom', ['','true']);
+      sel('Left', 'breakEdges.left', ['','true']);
+      sel('Right', 'breakEdges.right', ['','true']);
+    }
   } else if (ent.type === 'anchor') {
     sel('Kind', 'kind', Object.keys(V25_ANCHOR_DB));
     const def = V25_ANCHOR_DB[ent.kind] || V25_ANCHOR_DB.chemset;
@@ -1027,10 +1247,11 @@ function v25UpdateInspector() {
     if (ent.section && !secNames.includes(ent.section)) secNames = [ent.section, ...secNames];
     sel('Section', 'section', secNames);
     sel('Aspect', 'aspect', ['elev','sec']);
-    // PFC-only: open-face side. Affects cross-section drawing only.
-    if (ent.memberType === 'pfc') {
-      sel('Open face', 'openSide', ['-v','+v']);
-    }
+    // Axial roll about the member's long axis (0/90/180/270). In section it
+    // spins the glyph (web-vert vs web-horiz); in elevation it picks the face
+    // (UB web vs flange · RHS deep vs flat · PFC toes away vs toward). Replaces
+    // the old PFC open-face select, which the renderer no longer reads.
+    sel('Roll° (axis)', 'roll', ['0','90','180','270']);
     num('Length (mm)', 'length');
     num('Rotation°', 'rot', 0.5);
     // End cap kinds get an extra "mitre" option when a join is present so the
@@ -1092,6 +1313,13 @@ function v25UpdateInspector() {
     txt('Text (multiline ok)', 'txt', true);
     num('Size (mm)', 'sz', 0.5);
     sel('Align', 'align', ['left','center','right']);
+  } else if (ent.type === 'noteBox') {
+    txt('Text', 'text', true);
+    sel('Style', 'style', ['professional','draftsman','engineer','plex']);
+    sel('Outline box', 'boxed', ['true','']);
+    num('Text size (mm)', 'sz', 0.5);
+    sel('Arrow', 'arrowStyle', ['arrow','dot','open']);
+    sel('Case', 'textCase', ['upper','normal']);
   }
 
   // V25-layout-overhaul Phase 7 — common per-entity display overrides.

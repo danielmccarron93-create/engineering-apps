@@ -107,6 +107,16 @@ const v25Last = {
   reoBar: 'N16',
   mesh: 'SL72',
   blockThk: '190',
+  // Blockwork draw mode — 'sec' = thin vertical section strip (two-click
+  // directional, width = block thickness), 'elev' = elevation extent (rect
+  // with running-bond coursing). Chosen via the blockwork options-bar icon
+  // row; persists across tool re-arms (v25SetTool wipes v25State, not v25Last).
+  wallMode: 'sec',
+  // Which end of a section strip carries the AS 1100 break-line: 'start'
+  // (first click), 'end' (second click), 'both', or 'none'.
+  wallEnd: 'start',
+  // Show grout fill in the section-strip cores (reinforced/grouted cells).
+  wallGrouted: false,
   material: 'concrete',
 };
 

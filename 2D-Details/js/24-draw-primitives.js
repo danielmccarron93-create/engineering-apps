@@ -59,6 +59,36 @@ function rLine(blk, u1, v1, u2, v2) {
   _lineW(p1.x, p1.y, p2.x, p2.y);
 }
 
+// Real-world AS 1100 zigzag break-line between two points. Strokes with the
+// current ctx style (caller sets strokeStyle/lineWidth). `ampMm` is the peak
+// amplitude in real-world mm (defaults to ~10px-equivalent). Straight to 35%,
+// 3 alternating peaks, straight to the end — the same notation as the standalone
+// breakline entity (34-draw-2d.js), but reusable for member/wall edges.
+function rZigzag(blk, u1, v1, u2, v2, ampMm) {
+  const p1 = real2px(blk, u1, v1);
+  const p2 = real2px(blk, u2, v2);
+  const dx = p2.x - p1.x, dy = p2.y - p1.y;
+  const len = Math.hypot(dx, dy);
+  if (len < 2) return;
+  const ux = dx / len, uy = dy / len;   // unit along
+  const nx = -uy, ny = ux;              // perpendicular
+  const amp = (ampMm != null)
+    ? Math.max(3, (ampMm / drawingScale) * viewport.zoom)
+    : Math.max(4, 5 * ppm());
+  const s1 = 0.35, s2 = 0.65, zigN = 3;
+  ctx.beginPath();
+  ctx.moveTo(p1.x, p1.y);
+  ctx.lineTo(p1.x + dx * s1, p1.y + dy * s1);
+  for (let i = 0; i < zigN; i++) {
+    const t = s1 + (s2 - s1) * (i + 0.5) / zigN;
+    const sign = (i % 2 === 0) ? 1 : -1;
+    ctx.lineTo(p1.x + dx * t + nx * amp * sign, p1.y + dy * t + ny * amp * sign);
+  }
+  ctx.lineTo(p1.x + dx * s2, p1.y + dy * s2);
+  ctx.lineTo(p2.x, p2.y);
+  ctx.stroke();
+}
+
 function rRect(blk, u, v, w, h) {
   const p = real2px(blk, u, v + h); // top-left in screen (v+h because Y is up)
   const sw = w / drawingScale * viewport.zoom;

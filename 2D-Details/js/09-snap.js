@@ -104,9 +104,13 @@ function getCursor(block) {
   const plateOrthoForce = (tool === 'draw-plate' && platePts.length > 0);
   // V25 — in 2D mode, ortho/45° is the DEFAULT for v25 draw tools; Shift
   // releases the constraint so the user can free-draw any angle.
+  // v25-wall-sec (blockwork section strip) is excluded here because its
+  // placement/preview apply strict H/V ortho (v25OrthoSnap) themselves, with
+  // Shift releasing to a free angle — constrainUV's 45° steps would be wrong
+  // for a wall.
   const v25OrthoForce = sheetMode === '2d' && tool && tool.startsWith('v25-')
     && tool !== 'v25-frame' && tool !== 'v25-mat' && tool !== 'v25-wall' && tool !== 'v25-mesh'
-    && tool !== 'v25-hatch' && tool !== 'v25-mem'
+    && tool !== 'v25-hatch' && tool !== 'v25-mem' && tool !== 'v25-wall-sec'
     && origin === v25Origin && origin;
   if (origin && (orthoOn || shiftHeld || plateOrthoForce || v25OrthoForce)) {
     // For plates: Shift DISABLES ortho (opposite of normal)

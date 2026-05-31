@@ -2,6 +2,8 @@
 
 **Active.** Read end-to-end before changing anything. This file replaces the now-archived `HANDOFF_V2.md` (which described an abandoned Bluebeam-shell rewrite).
 
+> **Architecture status (2026-05-30): the `architecture-v2` layered rebuild was ABANDONED.** It tried to grow a clean `js/v2/` Model/View/Render/Tool/Engine tree alongside v1 and migrate features across, but its plate pilot retired the mature v1 plate path before the v2 plate could weld/rotate/resize/edit — degrading plates badly enough that the whole rebuild wasn't worth it. **One fragment survived and is LIVE: the v2 plate path.** 2D-mode plates are v2; `js/76-v25-plate.js` is deleted; the v2 plate was rescued to working in `js/v2/tools/edit-plate.js` (+ re-injection into v1 auto-weld). **Everything else is v1** — bolts are flag-gated off (`js/v2/feature-flags.js` → `useV2For.bolts=false`); members/timber/joints/annotations were never migrated. So: do **not** resume the rebuild, do **not** revert the v2 plate, and treat the `js/v2/` tree as "live plate path + dormant scaffolding," not active work. The rebuild's planning folders are parked in `PlannedBuilds/(failed rebuild)/`. The governing lesson — never retire a working path before its replacement is at full parity — is baked into the "Adding a new member" checklist below.
+
 ---
 
 ## What this app is
@@ -43,8 +45,8 @@ A new structural feature gets palette tiles in **both** of these locations and b
 ├── PlannedBuilds/                  canonical home for in-flight planning (NEW 2026-05-18)
 │   ├── README.md                   the dashboard — every idea + status + files touched
 │   ├── _TEMPLATE/                  skeleton folder; copy when starting a new idea
-│   ├── timber-screws/              active — Rothoblaas HBS screw-to-timber connection designer
-│   └── (future ideas — one folder each)
+│   ├── orientation-presets/        the only in-flight idea — V25 orientation icon-row
+│   └── (failed rebuild)/           PARKED — abandoned architecture-v2 rebuild + absorbed ideas (2026-05-30)
 │
 ├── css/
 │   └── styles.css                  ~1,500 lines, 5 themes, all CSS tokens
@@ -125,8 +127,9 @@ A new structural feature gets palette tiles in **both** of these locations and b
 │   ├── 73-init.js                  DOMContentLoaded bootstrap
 │   └── 74-v26-bb-rail.js           V26 BB-rail IIFE (registers AFTER 73-init)
 │   (Number 76 was 76-v25-plate.js — V25 2D-mode plate2 entity, 422 lines.
-│    Deleted by architecture-v2 Phase 2 on 2026-05-22 once plates became
-│    v2-authoritative via js/v2/tools/place-plate-tool.js. Number reserved.)
+│    Deleted on 2026-05-22 when 2D-mode plates moved to the v2 path
+│    (js/v2/tools/place-plate-tool.js). The wider architecture-v2 rebuild was
+│    later ABANDONED; this plate migration is the one part kept. Number reserved.)
 │
 ├── archive/
 │   ├── snapshots/                  point-in-time backups (gitignored)
@@ -145,9 +148,9 @@ A new structural feature gets palette tiles in **both** of these locations and b
 └── .claude/                        Claude Code settings + git worktrees
 ```
 
-*File-map as of 2026-05-22 (architecture-v2 Phase 2). `js/` has 83 numbered classic-script files (`01`–`99`, including the sub-letter `23a`) plus the `v2/` architecture tree (see `PlannedBuilds/architecture-v2/`). Nine of the numbered files are the in-flight timber-screws feature — see "In-flight feature files" below. Number 76 (`76-v25-plate.js`, the V25 2D plate entity) was retired on 2026-05-22 — plates are now v2-authoritative.*
+*File-map as of 2026-05-30. `js/` has 83 numbered classic-script files (`01`–`99`, including the sub-letter `23a`) plus the `v2/` tree. The `v2/` tree is the residue of the **abandoned** architecture-v2 rebuild (see the Architecture-status note at the top, and `PlannedBuilds/(failed rebuild)/architecture-v2/`): it is now just the LIVE 2D-mode plate path plus dormant flag-gated scaffolding — not active migration work. Nine of the numbered files are the **parked** timber-screws feature — see "Parked feature files" below. Number 76 (`76-v25-plate.js`, the old V25 2D plate entity) was deleted on 2026-05-22 — 2D-mode plates are v2.*
 
-**In-flight feature files.** `js/` carries nine files for the not-yet-finished Rothoblaas HBS timber-screw connection feature: timber catalogues `02b-data-timber.js` / `02c-data-screws.js` / `02d-data-rothoblaas-rules.js` / `02e-catalogue-lookups.js`; entity modules `75-timber-conn-entities.js` / `77-screw-entity.js` / `78-connection.js`; rule engine `79-checks-timber.js`; and `99-tmbr-autoload.js`. See `PlannedBuilds/timber-screws/`. ⚠ `99-tmbr-autoload.js` is an autoload demo + floating button of exactly the kind this playbook says doesn't ship; it is slated for deletion when the timber-screws corrective (`PlannedBuilds/timber-screws/10-corrective-plan.md`, Phase 5) runs.
+**Parked feature files (timber-screws).** `js/` carries nine files for the unfinished Rothoblaas HBS timber-screw connection feature: timber catalogues `02b-data-timber.js` / `02c-data-screws.js` / `02d-data-rothoblaas-rules.js` / `02e-catalogue-lookups.js`; entity modules `75-timber-conn-entities.js` / `77-screw-entity.js` / `78-connection.js`; rule engine `79-checks-timber.js`; and `99-tmbr-autoload.js`. The feature is **parked** — its planning folder moved to `PlannedBuilds/(failed rebuild)/timber-screws/` when the rebuild was abandoned (it had been re-scoped as a rebuild phase). The code files remain in the tree but are not active work; if revived, the feature would be re-planned as a standalone v1 feature. ⚠ `99-tmbr-autoload.js` is an autoload demo + floating button of exactly the kind this playbook says doesn't ship — a safe deletion candidate on any cleanup pass.
 
 ---
 
@@ -167,11 +170,11 @@ The flat `01`–`79` numbering encodes topical bands. The bands below are policy
 | 8 | `64` | Three.js iso engine | 3D-mode only |
 | 9 | `65–72, 74` | V25 2D-mode core + V26 BB-rail (number 76 retired by architecture-v2 Phase 2 on 2026-05-22 — plates are v2-authoritative via `js/v2/tools/place-plate-tool.js`) | 2D-mode only |
 | 10 | `73` | DOMContentLoaded bootstrap | shared |
-| 11 | `02b–02e, 75, 77–79, 99` | In-flight timber-screws feature | not yet finished — see `PlannedBuilds/timber-screws/` |
+| 11 | `02b–02e, 75, 77–79, 99` | Parked timber-screws feature | parked — see `PlannedBuilds/(failed rebuild)/timber-screws/` |
 
 **Sub-letter numbers** (`02b`, `23a`, …) are sibling modules at the same band — they let a file slot in without renumbering everything after it. Reserved ranges: `80–89` future shared modules, `90–95` future 3D-mode, `96–98` future 2D-mode, `99` bootstrap/init only.
 
-A per-file `LAYER:` header comment (naming the band plus the file's global READS/WRITES surface) is a convention planned for the architecture-v2 rebuild — see `PlannedBuilds/architecture-v2/`. v1 files are not retrofitted with it; v2 files carry it from the start.
+A per-file `LAYER:` header comment (naming the band plus the file's global READS/WRITES surface) was introduced by the now-abandoned architecture-v2 rebuild and survives only on the existing `js/v2/` files. v1 files are not retrofitted with it, and since the rebuild is parked there is no plan to roll it out further.
 
 ---
 
@@ -234,7 +237,7 @@ Feature work is done across **two separate chat sessions** so the planning think
 - Read the existing code thoroughly — every integration point in the V25 / V26 BB-rail palette, every existing entity type that might fit, every catalogue / picker / options-bar wiring.
 - Think hard about the idea from the perspective of an Australian structural engineer who will use this daily — not as an abstract product feature, but as a tool in a real-day workflow.
 - Identify every UI surface the feature touches: 3D-mode palette (`60-tile-palette.js`), 2D-mode V26 BB-rail (`74-v26-bb-rail.js`), size picker (`58-size-picker.js`), options bar (`72-v25-options-bar.js`), inspector (`59-inspector.js`), save/load (`46-save-load.js`), export (`44-pdf-export.js`, `45-dxf-export.js`).
-- Produce or update a planning folder at `PlannedBuilds/<idea>/` containing: README, context, design (data model + architecture + integration points), build plan, open questions, test cases (for ideas with logic). Larger ideas can split further; smaller ones can collapse files. See `PlannedBuilds/timber-screws/` for the canonical example — ten markdown files covering everything from EN/ETA rule research through to numbered test fixtures with exact expected outputs.
+- Produce or update a planning folder at `PlannedBuilds/<idea>/` containing: README, context, design (data model + architecture + integration points), build plan, open questions, test cases (for ideas with logic). Larger ideas can split further; smaller ones can collapse files. See `PlannedBuilds/(failed rebuild)/timber-screws/` for a canonical example of a fully fleshed-out folder (parked now, but still a good structural template) — ten markdown files covering everything from EN/ETA rule research through to numbered test fixtures with exact expected outputs.
 - Declare the "Files touched" list in the idea's `02-design.md` (or equivalent) — every `js/NN-*.js`, `index.html`, `css/styles.css` the build will modify. Updates the dashboard table in `PlannedBuilds/README.md` for multi-build conflict detection.
 - Surface every open question for Dan to answer before any code is written. Recommend one option per question. Don't proceed if a blocking question is unanswered.
 
@@ -300,8 +303,8 @@ This is the checklist that would have prevented the timber-screw Phase-4 misstep
 
 1. **Read the V25 entity types.** They cover most structural concepts already:
    - `mem2` (V25 member, `68-v25-tools.js`) — any rectangular structural member with a section catalogue and a long axis. UB, UC, SHS, PFC, RHS today; timber GLT slots in as `memberType: 'timber'`.
-   - Plates — **v2-authoritative** since architecture-v2 Phase 2 (2026-05-22). New plate families register in `js/v2/catalogues/families/` (e.g. `plate-flat.js`); the placement tool lives in `js/v2/tools/place-plate-tool.js`; the v26 BB-rail Plate tile routes to `v2.ui.paletteBBRail.activatePlate()`. See `PlannedBuilds/architecture-v2/09-build-plan.md` "Phase 2". Do NOT add a `plate2` v1 entity — that path is retired.
-   - `screw`, `connection` — the in-flight timber-screws fastener + connection-grouping types (see `PlannedBuilds/timber-screws/`).
+   - Plates — **v2-authoritative**, and the ONE element the abandoned rebuild migrated and that was rescued to working. 2D-mode plates live in the `js/v2/` tree: families register in `js/v2/catalogues/families/` (e.g. `plate-flat.js`); placement is `js/v2/tools/place-plate-tool.js`; rotate/vertex/body editing is `js/v2/tools/edit-plate.js`; the v26 BB-rail Plate tile routes to `v2.ui.paletteBBRail.activatePlate()`. Do NOT add a `plate2` v1 entity (deleted) AND do NOT revert plates to v1 (Dan spent several chats rescuing this path). This v2 plate path is the only live piece of the rebuild — it is NOT a template for migrating other element types; everything else stays v1. Background: `PlannedBuilds/(failed rebuild)/architecture-v2/12-plate-fix-plan.md`.
+   - `screw`, `connection` — the (parked) timber-screws fastener + connection-grouping types; the entity code exists in the tree but the feature is parked (see `PlannedBuilds/(failed rebuild)/timber-screws/`).
    - `anchor`, `mat` (hatch material), `blockWall`, `reoBar`, `mesh`, `leader2`, `frame` — the other established 2D entity types.
 2. **Decide: variant of an existing type, or a new type?** Default to extending an existing type if the structural concept fits. A new structural member is almost always a `mem2` variant. A new plate family is almost always a new entry in `js/v2/catalogues/families/` reusing the v2 `plate-flat` patterns. A new fastener gets its own type only if it has a distinct interaction model (e.g., the existing `screw` type — single-click placement, fastener catalogue rather than section catalogue, parallels `anchor`). Don't invent a parallel type for something that fits `mem2` or the v2 plate family. If a new type is genuinely needed, justify it in the planning folder's `02-data-model.md`.
 3. **Both modes are mandatory.** Place a tile in the 3D-mode Model palette (`60-tile-palette.js` `getPaletteDef().model`) AND the 2D-mode V26 BB-rail Members section (`74-v26-bb-rail.js` `getDrawTabDef()`). Test placement and rendering in both. A feature that only works in one mode is incomplete and doesn't ship.
@@ -328,7 +331,7 @@ This is the checklist that would have prevented the timber-screw Phase-4 misstep
    - `js/59-inspector.js` — its properties panel.
    - `js/45-dxf-export.js` — its DXF branch. Save/load is automatic via `entities2D[viewKey]` JSON; PDF picks up the shared draw fns.
 
-   **2D-mode plates (v2-authoritative, post-Phase-2 — different wiring):** for a new PLATE family, wire through the v2 layer instead of the V25 paper-space:
+   **2D-mode plates (v2-authoritative — different wiring):** plates are the one element that lives on the v2 path. For a new PLATE family, wire through the v2 layer instead of the V25 paper-space:
    - `js/v2/catalogues/families/<plate-family>.js` — new family in the v2 catalogue (e.g. mirror `plate-flat.js`).
    - `js/v2/tools/place-plate-tool.js` — already supports any plate-flat family/type via `appState.ui.activePlateFamily` / `activeType`; usually no edit needed.
    - `js/74-v26-bb-rail.js` — the existing Plate tile already routes to `v2.ui.paletteBBRail.activatePlate()`; extend with new tiles only if the new family needs its own button.
@@ -421,4 +424,4 @@ The reference for "is this detail good enough?" is the **STP Typical Structural 
 
 ---
 
-*End of playbook. Last updated: 2026-05-18 after the timber-screw feature taught us about palette integration, the two-mode requirement, and the two-chat workflow.*
+*End of playbook. Last updated: 2026-05-30 — recorded the abandonment of the architecture-v2 rebuild (plates were its casualty; the v2 plate path was rescued and remains live) and parked its planning folders in `PlannedBuilds/(failed rebuild)/`. Prior update 2026-05-18 after the timber-screw feature taught us about palette integration, the two-mode requirement, and the two-chat workflow.*

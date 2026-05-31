@@ -178,6 +178,9 @@
         { id: 'd-textbox', kind: 'soon', label: 'Text box',
           icon: 'icon-rect', soonTag: 'soon',
           soonNote: 'Bordered text box — coming in a follow-on build.' },
+        { id: 'v25-notebox', kind: 'tool', label: 'Note',
+          icon: 'icon-note',
+          onClick: () => { if (typeof v25SetTool === 'function') v25SetTool('v25-notebox'); } },
         { id: 'v25-leader', kind: 'tool', label: 'Leader',
           icon: 'icon-note', onClick: () => v25SetTool('v25-leader') },
         { id: 'd-text', kind: 'tool', label: 'Text',
@@ -258,6 +261,17 @@
               v2.ui.paletteBBRail.activatePlate();
             } else {
               setTool('draw-plate');
+            }
+          } },
+        { id: 'd-blk-wall', kind: 'member', label: 'Block wall',
+          sub: ((typeof v25Last !== 'undefined' && v25Last.blockThk) || '190') + ' BLK',
+          icon: 'icon-block-sec',
+          onClick: () => {
+            // Arm blockwork at the last-used draw mode. Section vs Elevation is
+            // then chosen from the options-bar View icon row (mirrors how a UB
+            // tile arms the member then offers elevation/section icons).
+            if (typeof v25ArmWall === 'function') {
+              v25ArmWall((typeof v25Last !== 'undefined' && v25Last.wallMode) || 'sec');
             }
           } },
       ]},
