@@ -59,6 +59,7 @@ const _palCommands = [
   { label: 'Load project',               cat: 'Project',     run: () => importProject() },
   { label: 'Undo',                       cat: 'Edit',        run: () => undo() },
   { label: 'Redo',                       cat: 'Edit',        run: () => redo() },
+  { label: 'Check spelling…',            cat: 'Edit',        run: () => { if (typeof spellSweep === 'function') spellSweep(); } },
 ];
 
 let _palFocusIdx = 0;

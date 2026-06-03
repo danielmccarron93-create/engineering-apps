@@ -15,6 +15,8 @@ let v25Drag = null;   // { ent, handle:'body'|'tip'|'txt'|'p1'..., dx, dy } duri
 // AABB for any v25 entity in real-world (u,v) coords. Used for hit-test +
 // selection highlight box.
 function v25EntBounds(ent) {
+  if (ent.type === 'stiff2' && typeof v25StiffBounds === 'function') { const _sb = v25StiffBounds(ent); if (_sb) return _sb; }
+  if (ent.type === 'jweld' && typeof v25JWeldBounds === 'function') { const _jb = v25JWeldBounds(ent); if (_jb) return _jb; }
   // Mat (rect) — handle rotation explicitly so the AABB encloses the rotated
   // polygon, not the unrotated one. Without this, selection highlights, snap
   // points, and hit-test all drift away from the visible geometry once you
@@ -139,6 +141,36 @@ function v25EntBounds(ent) {
   if (ent.type === 'txtBox') {
     return { L: ent.u, R: ent.u + 200, B: ent.v - 30, T: ent.v + 5 };
   }
+  if (ent.type === 'bolt2') {
+    // 2D bolt glyph (js/72c-v25-bolt.js). BOLT_DB carries diameters / AF.
+    const b = (typeof BOLT_DB === 'object' && (BOLT_DB[ent.size] || BOLT_DB.M20))
+            || { washOD: 40, headAF: 30, nutAF: 30, headH: 13, nutH: 16, washT: 3, pitch: 2.5 };
+    const orient = ent.boltOrient || 'end';
+    if (orient === 'end') {
+      // Head-on: circular footprint of the washer outer diameter.
+      const r = (b.washOD || 40) / 2;
+      return { L: ent.u - r, R: ent.u + r, B: ent.v - r, T: ent.v + r };
+    }
+    // Section orientations: clamp-rect along the bolt axis. v25EntBounds has no
+    // block context, so the entities2D clamp scanner (v25BoltClampSpan) can't
+    // run here — size from gripOverride if the inspector set one, else a
+    // sensible default grip. The bbox is centred on ent.u/ent.v (the placed
+    // on-axis point); the live glyph re-centres on detected material at draw
+    // time, so this is a generous selection box, not a pixel-exact footprint.
+    const grip = (ent.gripOverride != null) ? ent.gripOverride : 20;
+    // Axial half-length: half grip + washer + head/nut + thread protrusion + overrun.
+    const axHalf = (grip / 2)
+      + (b.washT || 3)
+      + Math.max(b.headH || 13, b.nutH || 16)
+      + 2 * (b.pitch || 2.5)
+      + 4; // centreline overrun
+    const halfWO = (b.washOD || 40) / 2; // transverse half-extent (washer Ø)
+    const isH = (orient === 'h-nutR' || orient === 'h-nutL');
+    if (isH) {
+      return { L: ent.u - axHalf, R: ent.u + axHalf, B: ent.v - halfWO, T: ent.v + halfWO };
+    }
+    return { L: ent.u - halfWO, R: ent.u + halfWO, B: ent.v - axHalf, T: ent.v + axHalf };
+  }
   if (ent.type === 'noteBox' && typeof nbBounds === 'function') return nbBounds(ent);
   return null;
 }
@@ -156,6 +188,15 @@ function v25HitTest(blk, u, v) {
   const LINE_TOL_PX = cap(4, 20);
   const TXT_TOL_PX_X = cap(30, 60);   // text anchor pickup width
   const TXT_TOL_PX_Y = cap(8, 20);
+  // Point-to-segment distance in px (for picking up leader lines).
+  const distToSeg = (p, a, b) => {
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const lenSq = dx * dx + dy * dy;
+    if (lenSq === 0) return Math.hypot(p.x - a.x, p.y - a.y);
+    let t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / lenSq;
+    t = Math.max(0, Math.min(1, t));
+    return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
+  };
   // Iterate in reverse so top-most is selected first.
   const arr = entities2D[blk.viewKey] || [];
   for (let i = arr.length - 1; i >= 0; i--) {
@@ -177,6 +218,19 @@ function v25HitTest(blk, u, v) {
         }
       }
       continue;
+    }
+    // NoteBox — pick up when the cursor is on a leader segment or near a tip.
+    // Falls through (no continue) so the box body is still hit by the generic
+    // bounds test below.
+    if (ent.type === 'noteBox' && typeof nbLeaderPoints === 'function' && Array.isArray(ent.arrows)) {
+      for (const a of ent.arrows) {
+        const pts = nbLeaderPoints(ent, a).map(p => real2Px(p.u, p.v));
+        const tip = pts[pts.length - 1];
+        if (tip && Math.hypot(cursorPx.x - tip.x, cursorPx.y - tip.y) < 8) return ent;
+        for (let k = 0; k < pts.length - 1; k++) {
+          if (distToSeg(cursorPx, pts[k], pts[k + 1]) < LINE_TOL_PX) return ent;
+        }
+      }
     }
     // Other entities: convert bounds to screen px and test.
     const b = v25EntBounds(ent);
@@ -204,6 +258,7 @@ function v25HitTest(blk, u, v) {
 // becomes a clickable Bluebeam-style "grip square" when the entity is
 // selected. The `key` matches what v25HitHandle returns / v25Move expects.
 function v25EntHandles(ent) {
+  if (ent.type === 'stiff2' && typeof v25StiffGrips === 'function') return v25StiffGrips(ent);
   const out = [];
   if (!ent) return out;
   if (ent.type === 'noteBox' && typeof nbHandles === 'function') return nbHandles(ent);
@@ -269,6 +324,10 @@ function v25EntHandles(ent) {
     out.push({ key: 'txt', u: ent.txtU, v: ent.txtV });
   } else if (ent.type === 'anchor' && ent.txtU != null && ent.txtV != null) {
     out.push({ key: 'txt', u: ent.txtU, v: ent.txtV });
+  } else if (ent.type === 'bolt2') {
+    // Single body grip at the bolt centre — drag to reposition (mirrors the
+    // anchor's simple point-move; v25Move's generic body-move translates u,v).
+    out.push({ key: 'body', u: ent.u, v: ent.v });
   }
   // Mat — rotation handle (Bluebeam-style perpendicular ball above the top
   // edge). Same affordance as mem2 so the user has one mental model for
@@ -829,6 +888,11 @@ function v25HitHandle(blk, ent, u, v) {
   if (ent.type === 'anchor' && ent.txtU != null && ent.txtV != null) {
     if (distPx(ent.txtU, ent.txtV) < 16) return 'txt';
   }
+  if (ent.type === 'bolt2') {
+    // Single body grip at the bolt centre (mirrors anchor — simple point move).
+    // Always falls through to 'body' so a click anywhere on the glyph drags it.
+    return 'body';
+  }
   if (ent.type === 'mem2') {
     // End-A is the entity origin (u,v); End-B is the other end after rot+length.
     // Tolerance is the smaller of (a) Bluebeam-like 12 px, (b) 1/3 the member's
@@ -901,6 +965,18 @@ function v25HitHandle(blk, ent, u, v) {
       for (const t of tests) { const d = distPx(t[1], t[2]); if (d < 10 && d < bd) { bd = d; bk = t[0]; } }
       if (bk) return bk;
     }
+  }
+  if (ent.type === 'noteBox' && typeof nbHandles === 'function') {
+    // Grab a leader tip / manual knee / auto-dogleg shoulder directly without
+    // pre-selecting. Width/move grips keep coming through v25NearestHandleOnSelected.
+    const hs = nbHandles(ent);
+    let bestK = null, bestD = Infinity;
+    for (const h of hs) {
+      if (!(h.key && (h.key.indexOf('arrow:') === 0 || h.key.indexOf('elbow:') === 0 || h.key.indexOf('auto:') === 0))) continue;
+      const d = distPx(h.u, h.v);
+      if (d < 10 && d < bestD) { bestD = d; bestK = h.key; }
+    }
+    if (bestK) return bestK;
   }
   return 'body';
 }
@@ -1002,6 +1078,13 @@ function v25ShowWallEdgeMenu(ent, target, x, y) {
 // Move an entity by (du, dv) in real-world coords.
 function v25Move(ent, du, dv, handle) {
   handle = handle || 'body';
+  // plate-grouping-stiffener — body-moving a grouped item drags the whole
+  // group. Runs before the per-type branches so mates translate by the same
+  // (du,dv); end-grip / rotate edits stay local (handle !== 'body').
+  if (handle === 'body' && ent && ent.groupId && typeof window.v25GroupOnV25Move === 'function') {
+    window.v25GroupOnV25Move(ent, du, dv, handle);
+  }
+  if (ent.type === 'stiff2') { if (typeof v25StiffApplyGrip === 'function') v25StiffApplyGrip(ent, du, dv, handle, (typeof window!=='undefined' && window.shiftHeld===true)); return; }
   if (ent.type === 'noteBox') { if (typeof nbMove==='function') nbMove(ent, handle, du, dv); return; }
   if (handle === 'tip' && ent.type === 'leader2') { ent.tipU += du; ent.tipV += dv; return; }
   if (handle === 'txt' && ent.type === 'leader2') { ent.txtU += du; ent.txtV += dv; return; }
@@ -1031,6 +1114,11 @@ function v25Move(ent, du, dv, handle) {
     ent.u = midU - Math.cos(newRot) * (len / 2);
     ent.v = midV - Math.sin(newRot) * (len / 2);
     ent.rot = newRot * 180 / Math.PI;
+    // plate-grouping-stiffener — a grouped member rotates the whole assembly
+    // rigidly about this member's own pivot (its midpoint).
+    if (ent.groupId && typeof window.v25GroupOnV25Rotate === 'function') {
+      window.v25GroupOnV25Rotate(ent, midU, midV, newRot - oldRot);
+    }
     return;
   }
 
@@ -1040,6 +1128,7 @@ function v25Move(ent, du, dv, handle) {
   // to update ent.rot here.
   if (ent.type === 'mat' && handle === 'rotate') {
     const c = _v25MatCentroid(ent);
+    const matOldRot = (ent.rot || 0) * Math.PI / 180;
     const cu = (typeof v25Drag === 'object' && v25Drag) ? (v25Drag.lastU + du) : (c.u + du);
     const cv = (typeof v25Drag === 'object' && v25Drag) ? (v25Drag.lastV + dv) : (c.v + dv);
     const dx = cu - c.u, dy = cv - c.v;
@@ -1048,6 +1137,11 @@ function v25Move(ent, du, dv, handle) {
     const cursorRot = Math.atan2(dy, dx) - Math.PI / 2;
     const newRot = applySnappedRotation(cursorRot, !!(typeof shiftHeld !== 'undefined' && shiftHeld));
     ent.rot = newRot * 180 / Math.PI;
+    // plate-grouping-stiffener — grouped mates rotate rigidly about the mat
+    // centroid by the same delta.
+    if (ent.groupId && typeof window.v25GroupOnV25Rotate === 'function') {
+      window.v25GroupOnV25Rotate(ent, c.u, c.v, newRot - matOldRot);
+    }
     return;
   }
 
@@ -1067,6 +1161,11 @@ function v25Move(ent, du, dv, handle) {
     ent.u = midU - Math.cos(newRot) * (len / 2);
     ent.v = midV - Math.sin(newRot) * (len / 2);
     ent.rot = newRot * 180 / Math.PI;
+    // plate-grouping-stiffener — grouped mates rotate rigidly about this
+    // strip's midpoint by the same delta.
+    if (ent.groupId && typeof window.v25GroupOnV25Rotate === 'function') {
+      window.v25GroupOnV25Rotate(ent, midU, midV, newRot - oldRot);
+    }
     return;
   }
 
@@ -1315,10 +1414,11 @@ function v25UpdateInspector() {
     sel('Align', 'align', ['left','center','right']);
   } else if (ent.type === 'noteBox') {
     txt('Text', 'text', true);
-    sel('Style', 'style', ['professional','draftsman','engineer','plex']);
+    sel('Style', 'style', ['professional','draftsman','engineer','plex','routed','routedWide','routedHalf']);
     sel('Outline box', 'boxed', ['true','']);
     num('Text size (mm)', 'sz', 0.5);
     sel('Arrow', 'arrowStyle', ['arrow','dot','open']);
+    num('Arrow line (mm)', 'leaderLwMm', 0.05);
     sel('Case', 'textCase', ['upper','normal']);
   }
 

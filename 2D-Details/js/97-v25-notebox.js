@@ -60,7 +60,23 @@ const NB_STYLES = {
                   label:'Engineer (inclined)' },
   plex:         { font:'web', family:"'IBM Plex Sans', system-ui, sans-serif", weight:500,
                   wobble:0, jitter:0, sizeMm:2.5, textWeightMm:0, boxLwMm:0.18, leaderLwMm:0.38,
-                  letterSpacingMm:0.20, upperDefault:false, label:'Plex (modern)' },
+                  letterSpacingMm:0, upperDefault:false, label:'Plex (modern)' },
+  // Routed Gothic (Darren Embry, SIL OFL v1.1) — an outline TTF traced from a
+  // Leroy lettering stencil: the genuine drafting-template lineage. Bundled in
+  // /fonts, declared via @font-face (css/styles.css) and explicitly loaded by
+  // nbPreloadWebFonts (js/98). Rendered as a FILLED web face (the `web` path,
+  // like plex), NOT the single-stroke font. letterSpacingMm:0 because the web
+  // draw path uses native glyph spacing — keeping it 0 makes the measured box
+  // hug the drawn text. Three cuts map to the three families declared in CSS:
+  routed:     { font:'web', family:"'Routed Gothic', monospace", weight:400,
+                wobble:0, jitter:0, sizeMm:2.5, textWeightMm:0, boxLwMm:0.18, leaderLwMm:0.38,
+                letterSpacingMm:0, upperDefault:true, label:'Routed Gothic' },
+  routedWide: { font:'web', family:"'Routed Gothic Wide', monospace", weight:400,
+                wobble:0, jitter:0, sizeMm:2.5, textWeightMm:0, boxLwMm:0.18, leaderLwMm:0.38,
+                letterSpacingMm:0, upperDefault:true, label:'Routed Gothic Wide' },
+  routedHalf: { font:'web', family:"'Routed Gothic Half Italic', monospace", weight:400,
+                wobble:0, jitter:0, sizeMm:2.5, textWeightMm:0, boxLwMm:0.18, leaderLwMm:0.38,
+                letterSpacingMm:0, upperDefault:true, label:'Routed Gothic Lean' },
 };
 function nbStyle(name){ return NB_STYLES[name] || NB_STYLES.professional; }
 
@@ -69,7 +85,13 @@ function nbStyle(name){ return NB_STYLES[name] || NB_STYLES.professional; }
 // ============================================================
 // Keyed by the entity object so saved JSON stays clean. The cached value is
 // invalidated by comparing a cheap signature of the inputs that affect layout.
-const _nbLayoutCache = new WeakMap();
+let _nbLayoutCache = new WeakMap();
+
+// nbClearLayoutCache() — drop every cached layout. Called when a web font
+// (Routed Gothic) finishes loading async: notes measured/wrapped against the
+// fallback face must re-flow against the real glyph metrics. Cheap — layouts
+// recompute lazily on next nbLayout(ent).
+function nbClearLayoutCache() { _nbLayoutCache = new WeakMap(); }
 
 // Measure a string's width in mm for the active style. Stroke styles defer to
 // js/96; the web (plex) style measures via the canvas at a 100px scale.
@@ -442,7 +464,7 @@ function drawNoteBox2D(blk, ent, cs) {
       const pts = nbLeaderPoints(ent, a);
       const px = pts.map(p => real2px(blk, p.u, p.v));
       ctx.strokeStyle = col;
-      ctx.lineWidth = lwPx(st.leaderLwMm);
+      ctx.lineWidth = lwPx((ent.leaderLwMm != null) ? ent.leaderLwMm : st.leaderLwMm);
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
       if (canWobble) {
@@ -555,11 +577,10 @@ function nbHandles(ent) {
 // autoSize and re-flow text; the left grip keeps the right edge fixed.
 function nbMove(ent, handle, du, dv) {
   if (handle === 'body' || handle === 'move') {
+    // Move ONLY the box origin. Arrow tips + manual elbows stay fixed so the
+    // arrowhead keeps pointing at its target while the box is dragged away; the
+    // auto-dogleg leader re-routes from the box edge to the fixed tip on render.
     ent.u += du; ent.v += dv;
-    (ent.arrows || []).forEach(a => {
-      a.u += du; a.v += dv;
-      (a.elbows || []).forEach(e => { e.u += du; e.v += dv; });
-    });
   } else if (handle === 'w-e') {
     // du is a real-world delta; box width is paper-mm → divide by drawingScale.
     ent.autoSize = false;

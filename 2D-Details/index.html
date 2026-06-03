@@ -142,9 +142,79 @@
       <!-- web vertical = "I" -->
       <path d="M5 3.8 H15 M5 16.2 H15 M10 3.8 V16.2"/>
     </symbol>
+    <!-- ===== Bolt 2D orientation icons (referenced from 72c-v25-bolt.js) ===== -->
+    <!-- Bolt end-on: circle with crosshair, head viewed straight-on -->
+    <symbol id="icon-orient-bolt-end" viewBox="0 0 20 20">
+      <!-- Washer ring (dashed, light) -->
+      <circle cx="10" cy="10" r="7.5" stroke-dasharray="2 1.5" opacity="0.6"/>
+      <!-- Bolt hole circle -->
+      <circle cx="10" cy="10" r="5"/>
+      <!-- Head AF crosshair (perpendicular lines through centre) -->
+      <path d="M4 10 H16 M10 4 V16" stroke-width="0.85" opacity="0.8"/>
+    </symbol>
+    <!-- Bolt horizontal section, nut on right: head-block L, shaft, nut-block R -->
+    <symbol id="icon-orient-bolt-h-nutr" viewBox="0 0 20 20">
+      <!-- Head (left) -->
+      <path d="M2.5 6.5 L5.5 6.5 L5.5 13.5 L2.5 13.5 Z" stroke-width="0.85"/>
+      <!-- Shank (middle) -->
+      <path d="M5.5 8 L14 8 L14 12 L5.5 12"/>
+      <!-- Nut (right) -->
+      <path d="M14 6.5 L17.5 6.5 L17.5 13.5 L14 13.5 Z" stroke-width="0.85"/>
+      <!-- Bolt centreline (dashed) -->
+      <line x1="1.5" y1="10" x2="18.5" y2="10" stroke-dasharray="2 1.5" stroke-width="0.55" opacity="0.6"/>
+    </symbol>
+    <!-- Bolt horizontal section, nut on left: nut-block L, shaft, head-block R -->
+    <symbol id="icon-orient-bolt-h-nutl" viewBox="0 0 20 20">
+      <!-- Nut (left) -->
+      <path d="M2.5 6.5 L5.5 6.5 L5.5 13.5 L2.5 13.5 Z" stroke-width="0.85"/>
+      <!-- Shank (middle) -->
+      <path d="M5.5 8 L14 8 L14 12 L5.5 12"/>
+      <!-- Head (right) -->
+      <path d="M14 6.5 L17.5 6.5 L17.5 13.5 L14 13.5 Z" stroke-width="0.85"/>
+      <!-- Bolt centreline (dashed) -->
+      <line x1="1.5" y1="10" x2="18.5" y2="10" stroke-dasharray="2 1.5" stroke-width="0.55" opacity="0.6"/>
+    </symbol>
+    <!-- Bolt vertical section, nut at bottom: head-block T, shaft, nut-block B -->
+    <symbol id="icon-orient-bolt-v-nutb" viewBox="0 0 20 20">
+      <!-- Head (top) -->
+      <path d="M6.5 2.5 L13.5 2.5 L13.5 5.5 L6.5 5.5 Z" stroke-width="0.85"/>
+      <!-- Shank (middle) -->
+      <path d="M8 5.5 L8 14 L12 14 L12 5.5"/>
+      <!-- Nut (bottom) -->
+      <path d="M6.5 14 L13.5 14 L13.5 17.5 L6.5 17.5 Z" stroke-width="0.85"/>
+      <!-- Bolt centreline (dashed) -->
+      <line x1="10" y1="1.5" x2="10" y2="18.5" stroke-dasharray="2 1.5" stroke-width="0.55" opacity="0.6"/>
+    </symbol>
+    <!-- Bolt vertical section, nut at top: nut-block T, shaft, head-block B -->
+    <symbol id="icon-orient-bolt-v-nutt" viewBox="0 0 20 20">
+      <!-- Nut (top) -->
+      <path d="M6.5 2.5 L13.5 2.5 L13.5 5.5 L6.5 5.5 Z" stroke-width="0.85"/>
+      <!-- Shank (middle) -->
+      <path d="M8 5.5 L8 14 L12 14 L12 5.5"/>
+      <!-- Head (bottom) -->
+      <path d="M6.5 14 L13.5 14 L13.5 17.5 L6.5 17.5 Z" stroke-width="0.85"/>
+      <!-- Bolt centreline (dashed) -->
+      <line x1="10" y1="1.5" x2="10" y2="18.5" stroke-dasharray="2 1.5" stroke-width="0.55" opacity="0.6"/>
+    </symbol>
     <symbol id="icon-orient-i-sec-h" viewBox="0 0 20 20">
       <!-- web horizontal = "H" -->
       <path d="M3.8 5 V15 M16.2 5 V15 M3.8 10 H16.2"/>
+    </symbol>
+    <!-- ===== Plate 2D orientation icons (referenced from 72d-v25-plate.js) ===== -->
+    <!-- Plate elevation (face on): square plate + weld ticks down the left edge -->
+    <symbol id="icon-orient-plate-elev" viewBox="0 0 20 20">
+      <!-- plate face -->
+      <path d="M5 4 H16 V16 H5 Z"/>
+      <!-- weld ticks down the left edge -->
+      <path d="M5 5 L3.4 6 M5 7.5 L3.4 8.5 M5 10 L3.4 11 M5 12.5 L3.4 13.5 M5 15 L3.4 16"/>
+    </symbol>
+    <!-- Flat horizontal cleat: thin horizontal strip, centred -->
+    <symbol id="icon-orient-plate-hcleat" viewBox="0 0 20 20">
+      <path d="M3 8.5 H17 V11.5 H3 Z"/>
+    </symbol>
+    <!-- Vertical cleat: thin vertical strip, centred -->
+    <symbol id="icon-orient-plate-vcleat" viewBox="0 0 20 20">
+      <path d="M8.5 3 H11.5 V17 H8.5 Z"/>
     </symbol>
     <!-- PFC channel -->
     <symbol id="icon-orient-pfc-elev-away" viewBox="0 0 20 20">
@@ -687,6 +757,7 @@
       <path d="M11.5 5.5 L16.5 10 L11.5 14.5 L11.5 11.5 L17.5 11.5 L17.5 8.5 L11.5 8.5 Z"
             stroke-width="0.9" opacity="0.55"/>
     </symbol>
+    <symbol id="icon-stiffener" viewBox="0 0 20 20"><path d="M3 5h14M3 15h14M3 5v10M17 5v10M9 6v8M11 6v8" stroke="currentColor" fill="none" stroke-width="1.1"/><path d="M9 12l2-2M9 10l2-2M9 8l1.5-1.5" stroke="currentColor" fill="none" stroke-width="0.7"/></symbol>
   </defs>
 </svg>
 <!-- ============================================================
@@ -1336,6 +1407,8 @@
 <script src="js/02c-data-screws.js"></script>
 <script src="js/02d-data-rothoblaas-rules.js"></script>
 <script src="js/02e-catalogue-lookups.js"></script>
+<!-- Engineering spell-check term database (added 2026-06-01). See PlannedBuilds/notebox-spellcheck/. -->
+<script src="js/02f-data-spell-terms.js"></script>
 <script src="js/03-data-bolts.js"></script>
 <script src="js/05-state.js"></script>
 <script src="js/06-detail-block.js"></script>
@@ -1407,11 +1480,21 @@
 <script src="js/71-v25-selection.js"></script>
 <script src="js/72-v25-options-bar.js"></script>
 <script src="js/72b-orientation-presets.js"></script>
+<script src="js/72c-v25-bolt.js"></script>
+<script src="js/72d-v25-plate.js"></script>
+<script src="js/72e-v25-stiffener.js"></script>
+<script src="js/72f-v25-grouping.js"></script>
+<script src="js/72g-v25-joint.js"></script>
 <script src="js/73-init.js"></script>
 <script src="js/74-v26-bb-rail.js"></script>
 <script src="js/96-stroke-font.js"></script>
 <script src="js/97-v25-notebox.js"></script>
 <script src="js/98-v25-notebox-ui.js"></script>
+<!-- Note spell-check (added 2026-06-01): vendored Typo.js + en-AU Hunspell dict,
+     engine, and UI. Must load AFTER js/98 (it hooks the noteBox editor). -->
+<script src="lib/typo.js"></script>
+<script src="js/80-spellcheck.js"></script>
+<script src="js/81-spellcheck-ui.js"></script>
 <!-- Timber-screw connection feature — Phase 2 entity types (added 2026-05-18).
      Note: number 76 was originally js/76-v25-plate.js (the v1 V25 plate path),
      deleted by architecture-v2 Phase 2 on 2026-05-22 once plates became

@@ -32,22 +32,26 @@
   const v2 = (window.v2 = window.v2 || {});
   v2.tools = v2.tools || {};
 
-  /** Screen pixels of slack on the vertex / edge hit-test. */
-  const HIT_TOL_PX = 8;
+  /** Screen pixels of slack on the vertex / edge hit-test. Generous so a plate
+   *  corner is easy to grab for resize and an edge easy to hit for select —
+   *  the body interior is point-in-polygon (whole plate), so this only governs
+   *  the vertex/edge catch zones. (plate-usability pass) */
+  const HIT_TOL_PX = 13;
 
   /** Module-level drag + selection state. Read by live-render for previews. */
   const state = {
     dragging:    null,   // Vertex drag: { elementId, vertexIndex, origVertex, currentVertex, viewKey }
     selectedId:  null,   // Fix O (2026-05-23) — currently-selected plate id
-    bodyDrag:    null,   // Fix O — { elementId, origPolygon, anchorWorld:{u,v}, currentDelta:{u,v} }
+    bodyDrag:    null,   // Fix O / plate-orientation-presets — { elementId, origPolygon, anchorWorld:{u,v}, currentDelta:{u,v}, orthoAxis:'u'|'v'|null, snapLines:[{axis,value,label}]|null }
     rotateDrag:  null,   // Fix O — { elementId, origPolygon, centroid:{x,y}, anchorAngle, currentAngle }
+    edgeDrag:    null,   // plate corner→END-edge reshape — { elementId, iA, iB, origVA:{x,y}, origVB:{x,y}, anchorWorld:{u,v}, currentDelta:{u,v}(projected), normal:{x,y} }. Moves BOTH corners of the short edge, constrained to the long axis (normal) → widen/narrow.
   };
 
   /** Fix O (2026-05-23) — handle is rendered 30 screen-pixels above the
    *  plate's bounding-box top so it stays a constant visual distance
    *  regardless of zoom. */
   const HANDLE_PIXEL_OFFSET = 30;
-  const HANDLE_HIT_PX       = 8;
+  const HANDLE_HIT_PX       = 12;
   const ROTATE_SNAP_DEG     = 15;
 
   function num(n, dflt) { return (typeof n === 'number' && isFinite(n)) ? n : (dflt === undefined ? 0 : dflt); }
@@ -57,6 +61,15 @@
     if (typeof window !== 'undefined' && typeof window.shiftHeld === 'boolean' && window.shiftHeld) return true;
     if (event && event.shiftKey) return true;
     return false;
+  }
+
+  /** plate-orientation-presets — 2D-only render during a live drag. Calls v1's
+   *  requestRender (canvas only) WITHOUT v3dMarkDirty, so the Three.js engine
+   *  is not re-rendered on every mouse-move while nudging a 2D plate. The full
+   *  ctx.requestRender() (which marks 3D dirty once) still fires on the
+   *  pointerup commit and on selection changes in onPointerDown. */
+  function render2D() {
+    if (typeof requestRender === 'function') requestRender();
   }
 
   /**
@@ -201,6 +214,113 @@
     });
   }
 
+  /** Axis-aligned bounding box of a polygon → {L,R,B,T} or null. */
+  function polyBBox(polygon) {
+    if (!Array.isArray(polygon) || polygon.length === 0) return null;
+    let L = Infinity, R = -Infinity, B = Infinity, T = -Infinity;
+    for (const p of polygon) {
+      const px = num(p.x), py = num(p.y);
+      if (px < L) L = px;
+      if (px > R) R = px;
+      if (py < B) B = py;
+      if (py > T) T = py;
+    }
+    return { L: L, R: R, B: B, T: T };
+  }
+
+  /**
+   * plate-orientation-presets — soft snap of the dragged plate to nearby
+   * member faces / other plate edges / projected 3D members. Pure helper used
+   * by the free-move path (Shift disables it). Returns { du, dv, lines } where
+   * lines is an array of {axis:'u'|'v', value:Number, label:String} for the
+   * snap guides. Every global it reaches for (entities2D, getV25EntSnapEdges,
+   * getSnapEdges, objects3D, viewport, drawingScale) is typeof-guarded so a
+   * missing global never throws — same convention as the rest of this file.
+   */
+  function computeBodySnap(origPolygon, du, dv, blk) {
+    const lines = [];
+    if (!blk || !Array.isArray(origPolygon)) return { du: du, dv: dv, lines: lines };
+    // Source edges = bbox of the polygon at the raw (du,dv) position.
+    const bb = polyBBox(translatePolygon(origPolygon, du, dv));
+    if (!bb) return { du: du, dv: dv, lines: lines };
+    const srcU = [bb.L, (bb.L + bb.R) / 2, bb.R];
+    const srcV = [bb.B, (bb.B + bb.T) / 2, bb.T];
+
+    // Collect target edges {axis,value,label} from everything in this view.
+    const targets = [];
+    const viewKey = blk.viewKey;
+    // (a) v25 members drawn in 2D (UB web/flange faces + centrelines).
+    if (typeof entities2D !== 'undefined' && entities2D &&
+        typeof getV25EntSnapEdges === 'function') {
+      const ents = entities2D[viewKey];
+      if (Array.isArray(ents)) {
+        for (const e of ents) {
+          if (e && e.type === 'mem2') {
+            const es = getV25EntSnapEdges(e, viewKey);
+            if (Array.isArray(es)) for (const s of es) targets.push(s);
+          }
+        }
+      }
+    }
+    // (b) other v2 plates → their bbox edges.
+    const selfId = state.bodyDrag && state.bodyDrag.elementId;
+    eachV2Plate(function (el) {
+      if (el.id === selfId) return;
+      if (plateViewKey(el) !== viewKey) return;
+      const ob = polyBBox(el.geometry && el.geometry.polygon);
+      if (!ob) return;
+      targets.push({ axis: 'u', value: ob.L,             label: 'Plate edge' });
+      targets.push({ axis: 'u', value: (ob.L + ob.R) / 2, label: 'Plate edge' });
+      targets.push({ axis: 'u', value: ob.R,             label: 'Plate edge' });
+      targets.push({ axis: 'v', value: ob.B,             label: 'Plate edge' });
+      targets.push({ axis: 'v', value: (ob.B + ob.T) / 2, label: 'Plate edge' });
+      targets.push({ axis: 'v', value: ob.T,             label: 'Plate edge' });
+    });
+    // (c) defensive — projected 3D members.
+    if (typeof objects3D !== 'undefined' && objects3D && objects3D.length &&
+        typeof getSnapEdges === 'function') {
+      for (const obj of objects3D) {
+        const es = getSnapEdges(obj, viewKey);
+        if (Array.isArray(es)) for (const s of es) targets.push(s);
+      }
+    }
+    if (targets.length === 0) return { du: du, dv: dv, lines: lines };
+
+    // Tolerance: ~10 screen-px → world-mm, zoom-independent (mirrors pxTolMM
+    // with a 10-px constant so the soft-snap catch zone is the same on screen
+    // at any zoom / drawing scale).
+    const zoom = (typeof viewport !== 'undefined' && viewport && typeof viewport.zoom === 'number')
+      ? viewport.zoom : 1;
+    const scale = (typeof drawingScale === 'number' && drawingScale) ? drawingScale : 10;
+    const tolMM = 10 * scale / Math.max(0.001, zoom);
+
+    // Per axis: closest source-target pair; if within tol, nudge that axis.
+    let bestU = null, bestUd = Infinity;
+    let bestV = null, bestVd = Infinity;
+    for (const t of targets) {
+      if (t.axis === 'u') {
+        for (const s of srcU) {
+          const d = Math.abs(s - t.value);
+          if (d < bestUd) { bestUd = d; bestU = { src: s, target: t }; }
+        }
+      } else if (t.axis === 'v') {
+        for (const s of srcV) {
+          const d = Math.abs(s - t.value);
+          if (d < bestVd) { bestVd = d; bestV = { src: s, target: t }; }
+        }
+      }
+    }
+    if (bestU && bestUd < tolMM) {
+      du += (bestU.target.value - bestU.src);
+      lines.push({ axis: 'u', value: bestU.target.value, label: bestU.target.label });
+    }
+    if (bestV && bestVd < tolMM) {
+      dv += (bestV.target.value - bestV.src);
+      lines.push({ axis: 'v', value: bestV.target.value, label: bestV.target.label });
+    }
+    return { du: du, dv: dv, lines: lines };
+  }
+
   /** Fix O — body hit-test (point-in-polygon). Returns the topmost matching
    *  plate; iteration order is insertion order so the latest-placed wins
    *  when polygons overlap. */
@@ -297,31 +417,52 @@
           anchorAngle:  anchorAngle,
           currentAngle: anchorAngle,
         };
+        // plate-grouping-stiffener — if this plate is grouped, snapshot the
+        // mates so they rotate rigidly about the plate centroid with it.
+        if (typeof window.v25GroupOnPlateRotateBegin === 'function') window.v25GroupOnPlateRotateBegin(rHit.elementId, centroid);
         if (ctx.requestRender) ctx.requestRender();
       }
       return true;
     }
 
-    // Priority 2: vertex hit (Fix M behaviour).
+    // Priority 2: CORNER (vertex) hit. plate-edge-drag (2026-06-02, reworked):
+    //   plain drag  → move the END (short) edge this corner belongs to, so the
+    //                 plate gets wider / narrower. BOTH corners of that short
+    //                 edge move together, constrained to the plate's long axis
+    //                 (perpendicular to the end edge) so it stays rectangular.
+    //   Shift+click → delete the vertex (refuse below 3).
     const vHit = hitTestVertex(blk, cursor.u, cursor.v);
     if (vHit) {
+      const el = v2.appState.model.elements.get(vHit.elementId);
+      if (!el || !el.geometry || !Array.isArray(el.geometry.polygon)) return false;
+      const poly = el.geometry.polygon;
       if (shift) {
-        // Delete vertex — refuse if it would collapse the polygon to < 3.
-        const el = v2.appState.model.elements.get(vHit.elementId);
-        if (!el || !el.geometry || !Array.isArray(el.geometry.polygon)) return false;
-        if (el.geometry.polygon.length <= 3) return true;   // claim the click so v1 doesn't react
-        const next = el.geometry.polygon.filter(function (_, i) { return i !== vHit.vertexIndex; });
+        if (poly.length <= 3) return true;   // claim the click so v1 doesn't react
+        const next = poly.filter(function (_, i) { return i !== vHit.vertexIndex; });
         apply(buildPolygonEdit(vHit.elementId, next));
         return true;
       }
-      // Fix O — also select the plate so the user sees feedback while dragging.
+      if (poly.length < 2) return false;
+      const n = poly.length;
+      const vi = vHit.vertexIndex;
+      const prev = (vi - 1 + n) % n, nxt = (vi + 1) % n;
+      const dPrev = Math.hypot(num(poly[vi].x) - num(poly[prev].x), num(poly[vi].y) - num(poly[prev].y));
+      const dNext = Math.hypot(num(poly[vi].x) - num(poly[nxt].x), num(poly[vi].y) - num(poly[nxt].y));
+      const partner = (dPrev <= dNext) ? prev : nxt;   // the shorter (END) edge
+      const ex = num(poly[partner].x) - num(poly[vi].x), ey = num(poly[partner].y) - num(poly[vi].y);
+      const elen = Math.hypot(ex, ey) || 1;
+      // unit normal to the end edge = the plate's long axis = the width direction
+      const nx = -ey / elen, ny = ex / elen;
       state.selectedId = vHit.elementId;
-      state.dragging = {
-        elementId:     vHit.elementId,
-        vertexIndex:   vHit.vertexIndex,
-        origVertex:    vHit.vertex,
-        currentVertex: { x: vHit.vertex.x, y: vHit.vertex.y },
-        viewKey:       blk.viewKey,
+      state.edgeDrag = {
+        elementId:    vHit.elementId,
+        iA:           vi,
+        iB:           partner,
+        origVA:       { x: num(poly[vi].x), y: num(poly[vi].y) },
+        origVB:       { x: num(poly[partner].x), y: num(poly[partner].y) },
+        anchorWorld:  { u: cursor.u, v: cursor.v },
+        currentDelta: { u: 0, v: 0 },
+        normal:       { x: nx, y: ny },     // drag is projected onto this (long axis)
       };
       if (ctx.requestRender) ctx.requestRender();
       return true;
@@ -340,29 +481,46 @@
       }
     }
 
-    // Fix O (2026-05-23) — priority 4: body hit. Click anywhere inside a
-    // plate's outline → select it AND start a body drag (move). If the user
-    // releases without moving, the plate stays selected; if they drag, the
-    // translation commits on pointerup.
-    const bHit = hitTestBody(blk, cursor.u, cursor.v);
+    // Priority 4: body OR a (non-corner) edge → MOVE the whole plate. A click on
+    // a long top/bottom edge, or anywhere inside the outline, just selects and
+    // moves the plate as one. (Corner grabs were already claimed at priority 2.)
+    let bHit = hitTestBody(blk, cursor.u, cursor.v);
+    if (!bHit) {
+      const eHit = hitTestEdge(blk, cursor.u, cursor.v);
+      if (eHit) bHit = { elementId: eHit.elementId };
+    }
     if (bHit) {
       const el = v2.appState.model.elements.get(bHit.elementId);
       if (!el || !el.geometry || !Array.isArray(el.geometry.polygon)) return false;
       state.selectedId = bHit.elementId;
+      // plate multi-select — Shift accumulates the co-selection set so several
+      // plates can be grouped at once; a plain click resets it to just this one.
+      if (!Array.isArray(window.v25SelPlateIds)) window.v25SelPlateIds = [];
+      if (shift) { if (window.v25SelPlateIds.indexOf(bHit.elementId) < 0) window.v25SelPlateIds.push(bHit.elementId); }
+      else { window.v25SelPlateIds = [bHit.elementId]; }
       state.bodyDrag = {
         elementId:    bHit.elementId,
         origPolygon:  el.geometry.polygon.slice(),
         anchorWorld:  { u: cursor.u, v: cursor.v },
         currentDelta: { u: 0, v: 0 },
+        orthoAxis:    null,
+        snapLines:    null,
       };
+      // plate-grouping-stiffener — selecting a grouped plate selects the whole
+      // group; snapshot the v25 mates so they translate with this plate's drag.
+      if (typeof window.v25GroupOnPlateSelected === 'function') window.v25GroupOnPlateSelected(bHit.elementId);
+      if (typeof window.v25GroupOnPlateDragBegin === 'function') window.v25GroupOnPlateDragBegin(bHit.elementId);
       if (ctx.requestRender) ctx.requestRender();
       return true;
     }
 
     // Fix O — empty click: deselect, then fall through to v1.
-    if (state.selectedId) {
-      state.selectedId = null;
-      if (ctx.requestRender) ctx.requestRender();
+    // plate-grouping-stiffener — but NOT while Shift is held: the user is
+    // Shift-adding a v25 member (e.g. the column) to a cross-system selection,
+    // so the plate(s) must stay selected for the subsequent Group.
+    if (!shift) {
+      if (state.selectedId) { state.selectedId = null; if (ctx.requestRender) ctx.requestRender(); }
+      window.v25SelPlateIds = [];   // a plain click clears the plate co-selection
     }
     return false;
   }
@@ -375,21 +533,45 @@
       let uvt = { u: cursor.u, v: cursor.v };
       if (!shiftIsHeld(event)) uvt = applyOrtho(cursor.u, cursor.v, state.dragging.origVertex);
       state.dragging.currentVertex = { x: uvt.u, y: uvt.v };
-      if (ctx.requestRender) ctx.requestRender();
+      render2D();   // plate-orientation-presets — 2D-only render mid-drag
       return true;
     }
-    // Fix O (2026-05-23) — body drag (move). Ortho-constrained delta unless
-    // Shift is held.
+    // plate corner→END-edge reshape — move both corners of the short edge by the
+    // cursor delta PROJECTED onto the long axis (normal), so the plate widens /
+    // narrows without skewing. 2D-only render mid-drag.
+    if (state.edgeDrag) {
+      if (!cursor) return true;
+      const ed = state.edgeDrag;
+      let du = cursor.u - ed.anchorWorld.u, dv = cursor.v - ed.anchorWorld.v;
+      if (ed.normal) { const pr = du * ed.normal.x + dv * ed.normal.y; du = pr * ed.normal.x; dv = pr * ed.normal.y; }
+      ed.currentDelta = { u: du, v: dv };
+      render2D();
+      return true;
+    }
+    // plate-orientation-presets — body drag (move). FREE by default; Shift
+    // locks to one axis (the inverse of the old behaviour). Free moves run a
+    // soft snap to nearby member faces / plate edges; Shift moves show a
+    // dotted ortho guide instead. 2D-only render (render2D) so the 3D engine
+    // isn't re-rendered every mouse-move.
     if (state.bodyDrag) {
       if (!cursor) return true;
       let du = cursor.u - state.bodyDrag.anchorWorld.u;
       let dv = cursor.v - state.bodyDrag.anchorWorld.v;
-      if (!shiftIsHeld(event)) {
-        if (Math.abs(du) >= Math.abs(dv)) dv = 0;
-        else du = 0;
+      if (shiftIsHeld(event)) {
+        if (Math.abs(du) >= Math.abs(dv)) { dv = 0; state.bodyDrag.orthoAxis = 'u'; }
+        else                              { du = 0; state.bodyDrag.orthoAxis = 'v'; }
+        state.bodyDrag.snapLines = null;
+      } else {
+        const snap = computeBodySnap(state.bodyDrag.origPolygon, du, dv, ctx && ctx.blk);
+        du = snap.du; dv = snap.dv;
+        state.bodyDrag.snapLines = snap.lines;
+        state.bodyDrag.orthoAxis = null;
       }
       state.bodyDrag.currentDelta = { u: du, v: dv };
-      if (ctx.requestRender) ctx.requestRender();
+      // plate-grouping-stiffener — translate the grouped v25 mates live so the
+      // whole assembly previews together while the plate is dragged.
+      if (typeof window.v25GroupOnPlateDragMove === 'function') window.v25GroupOnPlateDragMove(state.bodyDrag.elementId, du, dv);
+      render2D();
       return true;
     }
     // Fix O — rotate drag. Angle-snap to 15° increments unless Shift is held.
@@ -403,7 +585,10 @@
         angle = state.rotateDrag.anchorAngle + Math.round(delta / SNAP_RAD) * SNAP_RAD;
       }
       state.rotateDrag.currentAngle = angle;
-      if (ctx.requestRender) ctx.requestRender();
+      // plate-grouping-stiffener — rotate grouped mates live so the whole
+      // assembly previews turning together.
+      if (typeof window.v25GroupOnPlateRotateMove === 'function') window.v25GroupOnPlateRotateMove(state.rotateDrag.elementId, angle - state.rotateDrag.anchorAngle);
+      render2D();   // plate-orientation-presets — 2D-only render mid-drag
       return true;
     }
     return false;
@@ -430,21 +615,59 @@
       if (ctx && ctx.requestRender) ctx.requestRender();
       return true;
     }
-    // Fix O (2026-05-23) — body drag commit. No commit if the user clicked
+    // plate corner→END-edge reshape commit. Dragged ≥0.5 mm (along the long
+    // axis) → translate BOTH corners of the short edge; a sub-threshold release
+    // → just select (no undo entry), mirroring the vertex/body convention.
+    if (state.edgeDrag) {
+      const ed = state.edgeDrag;
+      state.edgeDrag = null;
+      if (!cursor) { if (ctx && ctx.requestRender) ctx.requestRender(); return true; }
+      const el = v2.appState && v2.appState.model && v2.appState.model.elements.get(ed.elementId);
+      if (!el || !el.geometry || !Array.isArray(el.geometry.polygon)) {
+        if (ctx && ctx.requestRender) ctx.requestRender();
+        return true;
+      }
+      let du = cursor.u - ed.anchorWorld.u, dv = cursor.v - ed.anchorWorld.v;
+      if (ed.normal) { const pr = du * ed.normal.x + dv * ed.normal.y; du = pr * ed.normal.x; dv = pr * ed.normal.y; }
+      if (Math.hypot(du, dv) >= 0.5) {
+        const next = el.geometry.polygon.slice();
+        if (ed.iA >= 0 && ed.iA < next.length) next[ed.iA] = { x: ed.origVA.x + du, y: ed.origVA.y + dv };
+        if (ed.iB >= 0 && ed.iB < next.length) next[ed.iB] = { x: ed.origVB.x + du, y: ed.origVB.y + dv };
+        apply(buildPolygonEdit(ed.elementId, next));
+      }
+      if (ctx && ctx.requestRender) ctx.requestRender();
+      return true;
+    }
+    // plate-orientation-presets — body drag commit. Applies the SAME
+    // free+snap (no Shift) OR Shift+ortho logic as onPointerMove so the
+    // committed translation equals the preview. No commit if the user clicked
     // without dragging (delta < 0.5 mm) — plate stays selected, no undo entry.
     if (state.bodyDrag) {
       const b = state.bodyDrag;
-      state.bodyDrag = null;
-      if (!cursor) { if (ctx && ctx.requestRender) ctx.requestRender(); return true; }
+      if (!cursor) { state.bodyDrag = null; if (ctx && ctx.requestRender) ctx.requestRender(); return true; }
       let du = cursor.u - b.anchorWorld.u;
       let dv = cursor.v - b.anchorWorld.v;
-      if (!shiftIsHeld(event)) {
+      if (shiftIsHeld(event)) {
         if (Math.abs(du) >= Math.abs(dv)) dv = 0;
         else du = 0;
+      } else {
+        // computeBodySnap reads state.bodyDrag.elementId for the self-exclude,
+        // so run it BEFORE clearing state.bodyDrag below.
+        const snap = computeBodySnap(b.origPolygon, du, dv, ctx && ctx.blk);
+        du = snap.du; dv = snap.dv;
       }
+      state.bodyDrag = null;
       if (Math.hypot(du, dv) >= 0.5) {
         apply(buildPolygonEdit(b.elementId, translatePolygon(b.origPolygon, du, dv)));
       }
+      // plate-grouping-stiffener — commit the grouped v25 mates to the same
+      // final delta (they were moved directly during the drag preview).
+      if (typeof window.v25GroupOnPlateDragEnd === 'function') window.v25GroupOnPlateDragEnd(b.elementId, du, dv);
+      // plate-grouping-stiffener — if the dropped plate is in a group, snap the
+      // assembly flush to a beam flange and register the (default-bare) joint.
+      var _pel = v2.appState && v2.appState.model && v2.appState.model.elements.get(b.elementId);
+      var _gid = _pel && _pel.params && _pel.params.groupId;
+      if (_gid && typeof window.v25JointSnapGroupToFlange === 'function') window.v25JointSnapGroupToFlange(_gid);
       if (ctx && ctx.requestRender) ctx.requestRender();
       return true;
     }
@@ -463,6 +686,9 @@
       if (Math.abs(deltaRad) >= 0.002) {  // ~0.1°
         apply(buildPolygonEdit(r.elementId, rotatePolygon(r.origPolygon, r.centroid, deltaRad)));
       }
+      // plate-grouping-stiffener — settle the grouped mates at the same final
+      // rotation (they were rotated live during the preview).
+      if (typeof window.v25GroupOnPlateRotateEnd === 'function') window.v25GroupOnPlateRotateEnd(r.elementId, deltaRad);
       if (ctx && ctx.requestRender) ctx.requestRender();
       return true;
     }
@@ -474,8 +700,12 @@
     if (!event) return false;
     // Esc — cancel any drag first, then deselect.
     if (event.key === 'Escape') {
-      if (state.dragging || state.bodyDrag || state.rotateDrag) {
-        state.dragging = null; state.bodyDrag = null; state.rotateDrag = null;
+      if (state.dragging || state.bodyDrag || state.rotateDrag || state.edgeDrag) {
+        // plate-grouping-stiffener — restore grouped mates to their pre-drag
+        // pose so a cancelled rotate / move doesn't desync the group.
+        if (state.rotateDrag && typeof window.v25GroupOnPlateRotateCancel === 'function') window.v25GroupOnPlateRotateCancel();
+        if (state.bodyDrag && typeof window.v25GroupOnPlateDragCancel === 'function') window.v25GroupOnPlateDragCancel();
+        state.dragging = null; state.bodyDrag = null; state.rotateDrag = null; state.edgeDrag = null;
         if (ctx && ctx.requestRender) ctx.requestRender();
         return true;
       }
@@ -500,6 +730,37 @@
     return false;
   }
 
+  /**
+   * plate-marquee-fix (2026-06-01) — select a v2 plate enclosed by (window) or
+   * touched by (crossing) the v1 marquee box. v1's marquee in js/39-events.js
+   * iterates entities2D only, so it cannot see v2 plates (they live in
+   * v2.appState.model); it calls this AFTER its own pass. The edit-plate tool
+   * holds a single selection, so when several plates fall in the box we keep
+   * the topmost (last in insertion order — the same tie-break hitTestBody uses).
+   * Sets state.selectedId exactly like a single-click select. Returns the
+   * selected plate id, or null when none matched.
+   * @param {object} blk       v1 active block
+   * @param {{L:number,R:number,B:number,T:number}} rect  marquee bounds (L<R, B<T)
+   * @param {boolean} crossing true = touch (R→L drag); false = full-enclose (L→R)
+   * @param {boolean} additive true = keep the current selection when nothing new is hit
+   */
+  function selectInRect(blk, rect, crossing, additive) {
+    if (!blk || !rect) return null;
+    let hitId = null;
+    eachV2Plate(function (el) {
+      if (plateViewKey(el) !== blk.viewKey) return;
+      const bb = polyBBox(el.geometry && el.geometry.polygon);
+      if (!bb) return;
+      const inside = crossing
+        ? (bb.L <= rect.R && bb.R >= rect.L && bb.B <= rect.T && bb.T >= rect.B)
+        : (bb.L >= rect.L && bb.R <= rect.R && bb.B >= rect.B && bb.T <= rect.T);
+      if (inside) hitId = el.id;   // keep last (topmost) on overlap
+    });
+    if (hitId) state.selectedId = hitId;
+    else if (!additive) state.selectedId = null;
+    return hitId;
+  }
+
   v2.tools.editPlate = {
     state:                state,
     HIT_TOL_PX:           HIT_TOL_PX,
@@ -515,9 +776,12 @@
     rotatePolygon:        rotatePolygon,               // Fix O
     translatePolygon:     translatePolygon,            // Fix O
     pointInPolygon:       pointInPolygon,              // Fix O
+    computeBodySnap:      computeBodySnap,             // plate-orientation-presets
+    render2D:             render2D,                    // plate-orientation-presets
     onPointerDown:        onPointerDown,
     onPointerMove:        onPointerMove,
     onPointerUp:          onPointerUp,
     onKey:                onKey,
+    selectInRect:         selectInRect,                // plate-marquee-fix (2026-06-01)
   };
 })();

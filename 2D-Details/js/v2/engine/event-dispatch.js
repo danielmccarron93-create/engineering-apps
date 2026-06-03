@@ -52,6 +52,7 @@
       case 'canvas':       return (typeof canvas       !== 'undefined') ? canvas       : null;
       case 'viewport':     return (typeof viewport     !== 'undefined') ? viewport     : null;
       case 'drawingScale': return (typeof drawingScale !== 'undefined') ? drawingScale : 1;
+      case 'tool':         return (typeof tool         !== 'undefined') ? tool         : null;
       default: return null;
     }
   }
@@ -75,6 +76,14 @@
     // px2real returns { u, v } already in real-world mm.
     const uv = px2real(blk, px, py);
     let u = uv.u, v = uv.v;
+    // plate-orientation-presets: RAW cursor while an edit-plate drag is live.
+    // Skips per-move snapUV grid-snap + scan lag and lets edit-plate do its own
+    // ortho / soft-snap. Placement is unaffected — no edit-plate drag is live
+    // when the place-plate tool is the one running.
+    const _ep = window.v2 && v2.tools && v2.tools.editPlate && v2.tools.editPlate.state;
+    if (_ep && (_ep.bodyDrag || _ep.dragging || _ep.rotateDrag)) {
+      return { u: u, v: v, blk: blk };
+    }
     // Fix A (2026-05-23): v25 endpoint snap FIRST — catches vertex points
     // precisely with smaller tolerance + visual marker priority. Mirrors v1
     // getCursor()'s pipeline so v2 tools feel identical to v1 v25 tools.
@@ -162,6 +171,16 @@
   function route(handlerName, event) {
     const tool = v2.engine.activeTool();
     if (!tool) {
+      // noteBox fix (2026-06-02) — the edit-plate fallback below only gets
+      // "first dibs" when the v1 tool is SELECT. When a v1 drawing / placement
+      // tool is active (e.g. 'v25-notebox', 'v25-note'), v2.engine.activeTool()
+      // is null but the click belongs to v1: claiming it for plate selection
+      // would stopImmediatePropagation() and swallow v1's placement click.
+      // Bail to v1 (return false = pass-through) for any non-select v1 tool.
+      // `tool` here is shadowed by the local v2 const above, so read the v1
+      // global via readBare('tool').
+      const v1tool = (typeof readBare('tool') === 'string') ? readBare('tool') : null;
+      if (v1tool && v1tool !== 'select') return false;
       // Fix M (2026-05-23) — no active v2 tool, but the edit-plate fallback
       // wants first dibs on vertex / edge clicks (and pointermove / up during
       // a drag it started). Dispatch to editPlate; if it doesn't claim, fall

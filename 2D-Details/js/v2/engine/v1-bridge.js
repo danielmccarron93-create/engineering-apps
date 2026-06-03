@@ -345,6 +345,53 @@
   }
 
   /**
+   * plate-undo-fix (2026-06-01) — wrap v2.engine.undoStack.applyTransaction so
+   * every FRESH v2 transaction also drops an {act:'v2tx'} marker onto v1's
+   * undoStack. v2's own redo() calls v2.model.applyTransaction directly (not
+   * this public method), so the wrap fires for new user actions only, never for
+   * redo replays. Core undo()/redo() in js/05-state.js consume the marker and
+   * route Ctrl+Z / Ctrl+Y to v2.engine.undoStack.undo()/redo(), keeping v1 and
+   * v2 (plate) edits on a single LIFO timeline. Idempotent; a no-op if the v2
+   * undo stack or v1's undoStack global is absent.
+   */
+  function installUndoMarkerBridge() {
+    const us = v2.engine && v2.engine.undoStack;
+    if (!us || typeof us.applyTransaction !== 'function') return;
+    if (us.applyTransaction._v1UndoBridged) return;
+    const origApply = us.applyTransaction;
+    function applyTransactionWithV1Marker() {
+      const result = origApply.apply(this, arguments);
+      try {
+        if (typeof undoStack !== 'undefined' && Array.isArray(undoStack)) {
+          undoStack.push({ act: 'v2tx' });
+          if (undoStack.length > 100) undoStack.shift();
+          // A fresh action invalidates redo — match v1's addObj/addEnt2D idiom.
+          if (typeof redoStack !== 'undefined' && Array.isArray(redoStack)) redoStack.length = 0;
+        }
+      } catch (e) {
+        if (window.console && console.error) {
+          console.error('[v2.engine.v1Bridge] v2tx undo-marker push failed:', e);
+        }
+      }
+      return result;
+    }
+    applyTransactionWithV1Marker._v1UndoBridged = true;
+    applyTransactionWithV1Marker._v1UndoOrig = origApply;
+    us.applyTransaction = applyTransactionWithV1Marker;
+    bridge._undoMarkerBridged = true;
+  }
+
+  /** plate-undo-fix — restore the original applyTransaction. Idempotent. */
+  function uninstallUndoMarkerBridge() {
+    const us = v2.engine && v2.engine.undoStack;
+    if (us && typeof us.applyTransaction === 'function' &&
+        us.applyTransaction._v1UndoBridged && us.applyTransaction._v1UndoOrig) {
+      us.applyTransaction = us.applyTransaction._v1UndoOrig;
+    }
+    bridge._undoMarkerBridged = false;
+  }
+
+  /**
    * Wrap every present v1 mutator and take an initial shadow snapshot.
    * Idempotent — a second call while installed is a no-op.
    * @returns {object} the bridge
@@ -410,6 +457,8 @@
         refreshMirrors(payload && payload.source || 'unknown');
       });
     }
+    // plate-undo-fix (2026-06-01) — bridge the v2 undo stack onto v1's Ctrl+Z.
+    installUndoMarkerBridge();
     bridge.installed = true;
     syncSafe('install');
     return bridge;
@@ -443,6 +492,8 @@
       try { bridge._modelChangedOff(); } catch (e) { /* harmless */ }
       bridge._modelChangedOff = null;
     }
+    // plate-undo-fix (2026-06-01) — restore the original applyTransaction.
+    uninstallUndoMarkerBridge();
     bridge.installed = false;
     bridge.installedNames = [];
     bridge.releaseInstalledNames = [];
@@ -468,6 +519,9 @@
     mirrorV2IntoV1: mirrorV2IntoV1,                          // Fix F (2026-05-23)
     refreshMirrors: refreshMirrors,                          // Fix K (2026-05-23)
     _modelChangedOff: null,                                  // Fix K (2026-05-23)
+    installUndoMarkerBridge: installUndoMarkerBridge,        // plate-undo-fix (2026-06-01)
+    uninstallUndoMarkerBridge: uninstallUndoMarkerBridge,    // plate-undo-fix (2026-06-01)
+    _undoMarkerBridged: false,                               // plate-undo-fix (2026-06-01)
   };
 
   v2.engine.v1Bridge = bridge;

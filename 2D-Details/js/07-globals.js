@@ -63,6 +63,7 @@ let spaceHeld = false, shiftHeld = false, altHeld = false;
 let snapOn = true, orthoOn = false, gridOn = false;
 let gridSize = 10;
 let nudgeSize = 10;
+let spellEnabled = true;   // note spell-check on by default (js/80 + js/81); persisted to localStorage
 
 let clipboardObjs = null;
 
@@ -77,6 +78,12 @@ let boltGroupConfig = null; // { boltSize, rows, cols, gauge, pitch }
 // ---- WELD SYMBOL STATE ----
 let weldStep = 0;
 let weldP1 = null;
+
+// ---- GROUPING STATE (plate-grouping-stiffener) ----
+// Monotonic counter for minting group ids (see js/72f-v25-grouping.js). A
+// `groupId` is stamped on every member (v25 ent.groupId / v2 plate
+// params.groupId) so a welded assembly moves as one unit.
+let v25GroupSeq = 0;
 
 // ---- DIMENSION TYPE STATE ----
 let dimType = 'horizontal'; // 'horizontal', 'vertical', 'aligned', 'angular'

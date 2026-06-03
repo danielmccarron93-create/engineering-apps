@@ -96,6 +96,7 @@ function initKeyboard() {
     if (e.key === 'c' || e.key === 'C') setTool('circle');
     if (e.key === 'p' || e.key === 'P') setTool('polyline');
     if (e.key === 'd' || e.key === 'D') setTool('dimension');
+    if ((e.key === 't' || e.key === 'T') && sheetMode === '2d' && typeof v25SetTool === 'function') { v25SetTool('v25-note'); return; }
     if (e.key === 't' || e.key === 'T') setTool('text');
     if ((e.key === 'q' || e.key === 'Q') && sheetMode === '2d' && typeof v25SetTool === 'function') v25SetTool('v25-notebox');
 
@@ -144,11 +145,22 @@ function initKeyboard() {
       document.getElementById('btnOrtho').classList.toggle('active', orthoOn);
       document.getElementById('sbOrtho')?.classList.toggle('active', orthoOn);
       e.preventDefault(); }
+    // plate-grouping-stiffener — Ctrl+G group / Ctrl+Shift+G ungroup. MUST
+    // come before the bare g/G grid toggle below (which has no ctrl guard).
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'g' || e.key === 'G')) {
+      e.preventDefault();
+      if (sheetMode === '2d') {
+        if (e.shiftKey) { if (typeof v25Ungroup === 'function') v25Ungroup(); }
+        else            { if (typeof v25Group   === 'function') v25Group(); }
+      }
+      return;
+    }
     if (e.key === 'g' || e.key === 'G') { gridOn = !gridOn;
       document.getElementById('btnGrid').classList.toggle('active', gridOn);
       document.getElementById('sbGrid')?.classList.toggle('active', gridOn);
       requestRender(); }
     if (e.key === 'f' || e.key === 'F') { fitToView(); e.preventDefault(); }
+    if (e.key === 'F7') { if (typeof spellSweep === 'function') spellSweep(); e.preventDefault(); return; }
 
     // Dynamic dimension input for draw-plate and draw-member
     if ((tool === 'draw-plate' && platePts.length > 0) || (tool === 'draw-member' && drawStart)) {

@@ -345,8 +345,12 @@ function drawClickPreview(blk, cs) {
     ctx.textAlign = 'start'; ctx.textBaseline = 'alphabetic';
   }
   // Premium note / text-box placement preview (v25 'noteBox' entity — see js/96–98)
-  else if (tool === 'v25-notebox' && typeof nbToolPreview === 'function') {
+  else if ((tool === 'v25-notebox' || tool === 'v25-note') && typeof nbToolPreview === 'function') {
     nbToolPreview(blk, cs);
+  }
+  // Web stiffener placement preview (v25 'stiff2' entity — see js/72e)
+  else if (tool === 'v25-stiffener' && typeof v25PreviewStiffener === 'function') {
+    v25PreviewStiffener(blk, cu, cv);
   }
   ctx.setLineDash([]);
 }

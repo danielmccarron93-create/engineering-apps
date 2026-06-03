@@ -11,6 +11,58 @@ function getPixelXY(e) {
   return { px: e.clientX - r.left, py: e.clientY - r.top };
 }
 
+// V25 entity-move undo support. Snapshots a v25 entity for undo, and — if the
+// entity is grouped — every group mate too (other v25 entities + any v2 plates),
+// so a grouped-assembly move records as ONE atomic action. Returns
+//   { ents: [ <deep clone of each affected v25 entity> ],
+//     plates: [ { id, polygon: <clone of el.geometry.polygon>,
+//                 flange: <clone of el.params.flange | null> } ] }
+// A deep clone of each entity captures every mutable field (u,v,rot,length,pts,
+// tipU/V,txtU/V,uTop/vTop/uBot/vBot,lengthMM,heightMM,…) regardless of type.
+// Reach the v2 namespace via window.v2 (bare `v2` is shadowed locally below).
+function v25SnapshotMoveTargets(ent) {
+  const out = { ents: [], plates: [] };
+  if (!ent) return out;
+  const gid = ent.groupId;
+  if (gid && typeof window.v25GroupMembersOf === 'function') {
+    const m = window.v25GroupMembersOf(gid) || {};
+    (m.ents || []).forEach(function (e) {
+      if (e) out.ents.push(JSON.parse(JSON.stringify(e)));
+    });
+    (m.plates || []).forEach(function (el) {
+      if (el && el.geometry && Array.isArray(el.geometry.polygon)) {
+        out.plates.push({
+          id: el.id,
+          polygon: JSON.parse(JSON.stringify(el.geometry.polygon)),
+          // Capture the flange-joint metadata too: a grouped drop runs
+          // v25JointSnapGroupToFlange, which writes el.params.flange. Without
+          // this, undo reverts the polygon but leaves a phantom joint record
+          // pointing at a beam the plate no longer touches. Shape-agnostic deep
+          // clone (or null when there is no joint) so it survives joint-feature
+          // changes owned by the grouping/joint modules.
+          flange: (el.params && el.params.flange) ? JSON.parse(JSON.stringify(el.params.flange)) : null,
+        });
+      }
+    });
+    // Defensive: if membership lookup somehow missed the dragged entity, still
+    // snapshot it so an ungrouped-feeling move is never recorded empty.
+    if (!out.ents.some(function (e) { return e.id === ent.id; })) {
+      out.ents.push(JSON.parse(JSON.stringify(ent)));
+    }
+  } else {
+    out.ents.push(JSON.parse(JSON.stringify(ent)));
+  }
+  return out;
+}
+
+// True when a before/after pair of v25-move snapshots differ in any recorded
+// field (any entity property or any plate-polygon coordinate). Used to skip
+// pushing a no-op undo entry for a click that didn't actually move anything.
+function v25MoveSnapshotsDiffer(before, after) {
+  if (!before || !after) return false;
+  return JSON.stringify(before) !== JSON.stringify(after);
+}
+
 function initEvents() {
   canvas.addEventListener('mousedown', (e) => {
     const { px, py } = getPixelXY(e);
@@ -188,6 +240,7 @@ function initEvents() {
       if (nearestSel) {
         if (!v25Selected.includes(nearestSel.ent.id)) v25Selected = [nearestSel.ent.id];
         v25Drag = { ent: nearestSel.ent, handle: nearestSel.handle, lastU: cu, lastV: cv };
+        v25Drag.undoBefore = v25SnapshotMoveTargets(nearestSel.ent);
         if (typeof v25UpdateInspector === 'function') v25UpdateInspector();
         requestRender();
         return;
@@ -195,8 +248,12 @@ function initEvents() {
       const hit = v25HitTest(activeBlock, cu, cv);
       if (hit) {
         v25Selected = e.shiftKey ? Array.from(new Set([...(v25Selected||[]), hit.id])) : [hit.id];
+        // plate-grouping-stiffener — clicking any grouped member selects the
+        // whole group so it highlights + moves as one (skip while Shift-adding).
+        if (!e.shiftKey && typeof v25ExpandGroupSelection === 'function') v25ExpandGroupSelection();
         const handle = (typeof v25HitHandle === 'function') ? v25HitHandle(activeBlock, hit, cu, cv) : 'body';
         v25Drag = { ent: hit, handle, lastU: cu, lastV: cv };
+        v25Drag.undoBefore = v25SnapshotMoveTargets(hit);
         if (typeof v25UpdateInspector === 'function') v25UpdateInspector();
         requestRender();
         return;
@@ -1132,6 +1189,10 @@ function initEvents() {
     if (tool === 'select' && activeBlock) {
       const { px, py } = getPixelXY(e);
       const real = px2real(activeBlock, px, py);
+      // plate-grouping-stiffener — double-click a plate↔flange joint opens the
+      // weld / bolt / none menu (priority over the inspector-open dblclick).
+      if (typeof v25JointTryMenu === 'function' &&
+          v25JointTryMenu(activeBlock, real.u, real.v, e.clientX, e.clientY)) return;
       const hit = (typeof v25HitTest === 'function') ? v25HitTest(activeBlock, real.u, real.v) : null;
       // Premium note (noteBox): double-click opens the inline text editor. Uses
       // the same block-local coords as the other 2D click paths (real.u/real.v).
@@ -1229,6 +1290,18 @@ function initEvents() {
       requestRender();
       return;
     }
+    // V25 plain text-box (v25-note) decides single-click vs press-drag-to-size
+    // on release — mirrors the hatch tool branch above.
+    if (tool === 'v25-note' && v25State.noteDownPx && v25State.noteDownWorld && activeBlock) {
+      const dx = e.clientX - v25State.noteDownPx.x, dy = e.clientY - v25State.noteDownPx.y;
+      const moved = Math.hypot(dx, dy);
+      const { px, py } = getPixelXY(e);
+      const up = px2real(activeBlock, px, py);
+      if (typeof nbTextToolCommit === 'function') nbTextToolCommit(activeBlock, v25State.noteDownWorld, { u: up.u, v: up.v }, moved > 4);
+      v25State.noteDownPx = null; v25State.noteDownWorld = null;
+      requestRender();
+      return;
+    }
     // v1 V25 plate placement commit branch retired by architecture-v2
     // Phase 2 on 2026-05-22. v2 plates commit through
     // js/v2/tools/place-plate-tool.js's onPointerUp ->
@@ -1242,7 +1315,45 @@ function initEvents() {
     }
     // V25 — release v25 entity drag
     if (v25Drag) {
+      // plate-grouping-stiffener — on dropping a grouped assembly, snap its
+      // end-plate flush to a beam flange and register the (default-bare) joint.
+      const _grpDrag = (v25Drag.handle === 'body' && v25Drag.ent && v25Drag.ent.groupId) ? v25Drag.ent.groupId : null;
+      // Hold the move-undo context before clearing the drag. The flange-snap
+      // below mutates the assembly further, so the AFTER snapshot is taken once
+      // the on-screen state is fully settled (post-snap).
+      const _dragEnt = v25Drag.ent;
+      const _undoBefore = v25Drag.undoBefore;
+      const _undoView = (activeBlock && activeBlock.viewKey) || null;
       v25Drag = null;
+      // The flange-snap can RE-WELD/RE-BOLT an already-jointed assembly at the
+      // drop point: v25JointSnapGroupToFlange -> applyJoint splices the old
+      // weld/bolt out and creates fresh ones via addEnt2D, which each push their
+      // OWN {act:'addEnt2D'} undo entry. Those would sit UNDER the v25Move push
+      // below, so the move would not be atomic — one Ctrl+Z would strand the
+      // new weld, a second would delete it (orphaned-then-lost). Capture the
+      // stack depth here, then strip any addEnt2D entries the snap added so the
+      // joint delta is owned solely by the single v25Move action. The new
+      // weld/bolt stay on-screen and are picked up by the _undoAfter snapshot;
+      // undo()/redo() reconcile the changed entity set by id.
+      const _undoDepth = undoStack.length;
+      if (_grpDrag && typeof v25JointSnapGroupToFlange === 'function') v25JointSnapGroupToFlange(_grpDrag);
+      if (undoStack.length > _undoDepth) {
+        for (let i = undoStack.length - 1; i >= _undoDepth; i--) {
+          if (undoStack[i] && undoStack[i].act === 'addEnt2D') undoStack.splice(i, 1);
+        }
+      }
+      // Record the entity move as ONE atomic undo action. moveObj only restores
+      // objects3D, so 2D-entity moves get their own 'v25Move' act (handled in
+      // base undo()/redo() in 05-state.js). Skip if nothing actually changed
+      // (a click with no drag) — otherwise Ctrl+Z would unwind a no-op.
+      if (_undoBefore && _undoView) {
+        const _undoAfter = v25SnapshotMoveTargets(_dragEnt);
+        if (v25MoveSnapshotsDiffer(_undoBefore, _undoAfter)) {
+          undoStack.push({ act: 'v25Move', view: _undoView, before: _undoBefore, after: _undoAfter });
+          if (undoStack.length > 100) undoStack.shift();
+          redoStack = [];
+        }
+      }
       // V25-layout-overhaul Phase 6.3 — clear snap state + feedback when the
       // drag ends so the dashed guides don't linger.
       activeEdgeSnaps = [];
@@ -1327,6 +1438,7 @@ function initEvents() {
           // and dispatch through v25Selected (ids, not refs).
           const list = (typeof entities2D !== 'undefined' && entities2D[activeBlock.viewKey]) || [];
           const hitIds = list.filter(ent => {
+            if (ent._v2Mirror) return false;   // plate mirrors are v2-selected below
             const b = (typeof v25EntBounds === 'function') ? v25EntBounds(ent) : null;
             if (!b) return false;
             // v25EntBounds returns {L,R,B,T} with L<R and B<T already.
@@ -1337,6 +1449,21 @@ function initEvents() {
             ? Array.from(new Set([...(v25Selected || []), ...hitIds]))
             : hitIds;
           if (typeof v25UpdateInspector === 'function') v25UpdateInspector();
+          // plate-marquee-fix (2026-06-01) — v2 plates live in v2.appState.model,
+          // not entities2D, so the loop above can't see them. Let the v2 edit-
+          // plate tool select an enclosed plate via its own polygon hit-test
+          // (sets state.selectedId, exactly like a single-click select). The
+          // requestRender() below repaints the plate's grips + rotation handle.
+          // NB: `v2` is a LOCAL here (the box's max-V coord, line ~1329), so the
+          // global v2 namespace MUST be reached via window.v2 — using bare `v2`
+          // reads the number and silently no-ops (the original bug).
+          const _v2ns = window.v2;
+          if (_v2ns && _v2ns.tools && _v2ns.tools.editPlate &&
+              typeof _v2ns.tools.editPlate.selectInRect === 'function') {
+            _v2ns.tools.editPlate.selectInRect(
+              activeBlock, { L: u1, R: u2, B: v1, T: v2 }, crossing, e.shiftKey
+            );
+          }
         } else {
           // 3D-projected mode marquee — existing behaviour.
           const hits = objects3D.filter(obj => {
@@ -1528,7 +1655,18 @@ function initEvents() {
     requestRender();
   }, { passive: false });
 
-  canvas.addEventListener('contextmenu', e => e.preventDefault());
+  canvas.addEventListener('contextmenu', e => {
+    e.preventDefault();
+    // plate-grouping-stiffener — right-click in 2D select mode: a plate↔flange
+    // joint menu (weld / bolt / none) takes priority, else Group / Ungroup.
+    if (sheetMode === '2d' && tool === 'select' && activeBlock) {
+      const _r = canvas.getBoundingClientRect();
+      const _real = px2real(activeBlock, e.clientX - _r.left, e.clientY - _r.top);
+      if (typeof v25JointTryMenu === 'function' && _real &&
+          v25JointTryMenu(activeBlock, _real.u, _real.v, e.clientX, e.clientY)) return;
+      if (typeof v25ShowGroupContextMenu === 'function') v25ShowGroupContextMenu(e.clientX, e.clientY);
+    }
+  });
 }
 
 // ============================================================

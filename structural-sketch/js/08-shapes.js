@@ -2219,8 +2219,8 @@ if (cbIdx_callout !== -1) engine._renderCallbacks[cbIdx_callout] = calloutDraw;
 
 // ── Callout hit-testing ──────────────────────────────────
 const prevHitTest3 = hitTestElement;
-hitTestElement = function(sheetPos) {
-    const tolerance = 6 / engine.viewport.zoom;
+hitTestElement = function(sheetPos, tolerance) {
+    const calloutTol = 6 / engine.viewport.zoom;
     for (let i = project.elements.length - 1; i >= 0; i--) {
         const el = project.elements[i];
         if (el.type !== 'callout') continue;
@@ -2231,7 +2231,7 @@ hitTestElement = function(sheetPos) {
         const p2 = engine.coords.realToSheet(el.x2, el.y2);
 
         // Hit on leader line
-        if (pointToSegmentDist(sheetPos.x, sheetPos.y, p1.x, p1.y, p2.x, p2.y) < tolerance + 2)
+        if (pointToSegmentDist(sheetPos.x, sheetPos.y, p1.x, p1.y, p2.x, p2.y) < calloutTol + 2)
             return el;
 
         // Hit on text box area (compute box bounds in sheet-mm)
@@ -2241,11 +2241,11 @@ hitTestElement = function(sheetPos) {
         const boxTL = engine.coords.screenToSheet(geom.boxX, geom.boxY);
         const boxBR = engine.coords.screenToSheet(geom.boxX + geom.boxW, geom.boxY + geom.boxH);
 
-        if (sheetPos.x >= boxTL.x - tolerance && sheetPos.x <= boxBR.x + tolerance &&
-            sheetPos.y >= boxTL.y - tolerance && sheetPos.y <= boxBR.y + tolerance)
+        if (sheetPos.x >= boxTL.x - calloutTol && sheetPos.x <= boxBR.x + calloutTol &&
+            sheetPos.y >= boxTL.y - calloutTol && sheetPos.y <= boxBR.y + calloutTol)
             return el;
     }
-    return prevHitTest3(sheetPos);
+    return prevHitTest3(sheetPos, tolerance);
 };
 
 // ══════════════════════════════════════════════════════════
@@ -2582,8 +2582,8 @@ if (cbIdx_textbox !== -1) engine._renderCallbacks[cbIdx_textbox] = textboxDraw;
 
 // ── Textbox hit-testing ──────────────────────────────────
 const prevHitTest4 = hitTestElement;
-hitTestElement = function(sheetPos) {
-    const tolerance = 6 / engine.viewport.zoom;
+hitTestElement = function(sheetPos, tolerance) {
+    const textboxTol = 6 / engine.viewport.zoom;
     const zoom = engine.viewport.zoom;
     for (let i = project.elements.length - 1; i >= 0; i--) {
         const el = project.elements[i];
@@ -2595,11 +2595,11 @@ hitTestElement = function(sheetPos) {
         const boxTL = engine.coords.screenToSheet(geom.boxX, geom.boxY);
         const boxBR = engine.coords.screenToSheet(geom.boxX + geom.boxW, geom.boxY + geom.boxH);
 
-        if (sheetPos.x >= boxTL.x - tolerance && sheetPos.x <= boxBR.x + tolerance &&
-            sheetPos.y >= boxTL.y - tolerance && sheetPos.y <= boxBR.y + tolerance)
+        if (sheetPos.x >= boxTL.x - textboxTol && sheetPos.x <= boxBR.x + textboxTol &&
+            sheetPos.y >= boxTL.y - textboxTol && sheetPos.y <= boxBR.y + textboxTol)
             return el;
     }
-    return prevHitTest4(sheetPos);
+    return prevHitTest4(sheetPos, tolerance);
 };
 
 // ── Hatch PDF Export Patch ────────────────────────────────

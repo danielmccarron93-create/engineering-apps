@@ -10,6 +10,7 @@ function v25DrawEnt(blk, ent, cs) {
   if (ent.type === 'mat') { drawMat2D(blk, ent, cs); return true; }
   if (ent.type === 'blockWall') { drawBlockWall2D(blk, ent, cs); return true; }
   if (ent.type === 'anchor') { drawAnchor2D(blk, ent, cs); return true; }
+  if (ent.type === 'bolt2' && typeof drawBolt2D === 'function') { drawBolt2D(blk, ent, cs); return true; }
   if (ent.type === 'reoBar') { drawReoBar2D(blk, ent, cs); return true; }
   if (ent.type === 'mesh') { drawMesh2D(blk, ent, cs); return true; }
   if (ent.type === 'leader2') { drawLeader2D(blk, ent, cs); return true; }
@@ -17,6 +18,8 @@ function v25DrawEnt(blk, ent, cs) {
   if (ent.type === 'lineSet' && typeof drawLineSet2D === 'function') { drawLineSet2D(blk, ent, cs); return true; }
   if (ent.type === 'txtBox' && typeof drawTxtBox2D === 'function') { drawTxtBox2D(blk, ent, cs); return true; }
   if (ent.type === 'noteBox' && typeof drawNoteBox2D === 'function') { drawNoteBox2D(blk, ent, cs); return true; }
+  if (ent.type === 'stiff2' && typeof drawStiff2D === 'function') { drawStiff2D(blk, ent, cs); return true; }
+  if (ent.type === 'jweld' && typeof drawJWeld2D === 'function') { drawJWeld2D(blk, ent, cs); return true; }
   return false;
 }
 
@@ -144,14 +147,21 @@ function v25SetTool(t) {
   platePts = []; plateBlock = null; plateDimInput = ''; plateDimActive = false;
   boltGroupConfig = null; weldStep = 0; weldP1 = null;
   cycleHits = []; cycleIndex = 0;
-  v25State = { polyPts: [], dragStart: null };
+  v25State = { polyPts: [], dragStart: null, boltOrient: lastBoltOrient, boltSize: lastBoltSize, boltGrade: lastBoltGrade, boltCat: lastBoltCat };
+  // Clear any half-finished leader placement so switching tools never leaves a
+  // dangling first-click (noteBox leader head) behind.
+  if (typeof window !== 'undefined') window.nbPlace = null;
   tool = t;
   if (canvas) canvas.style.cursor = 'crosshair';
   if (typeof updateStatus === 'function') updateStatus();
   if (typeof highlightActiveTile === 'function') highlightActiveTile();
   requestRender();
 }
-let v25State = { polyPts: [], dragStart: null };
+// Bolt tool defaults persist across v25SetTool resets (which rebuild v25State
+// from scratch). The 72c-v25-bolt picker writes v25State.bolt* directly; these
+// module-level latches keep the last choice so re-arming the tool restores it.
+let lastBoltOrient = 'end', lastBoltSize = 'M20', lastBoltGrade = '8.8', lastBoltCat = 'S';
+let v25State = { polyPts: [], dragStart: null, boltOrient: lastBoltOrient, boltSize: lastBoltSize, boltGrade: lastBoltGrade, boltCat: lastBoltCat };
 
 function v25SetMember(type, section, aspect) {
   v25SetTool('v25-mem');
@@ -260,6 +270,8 @@ function v25TryHandleClick(blk, cu, cv, e) {
   if (!tool || !tool.startsWith('v25-')) return false;
 
   if (tool === 'v25-notebox') return (typeof nbToolClick === 'function') ? nbToolClick(blk, cu, cv, e) : false;
+  if (tool === 'v25-note') return (typeof nbTextToolClick === 'function') ? nbTextToolClick(blk, cu, cv, e) : false;
+  if (tool === 'v25-stiffener') return (typeof v25PlaceStiffener === 'function') ? v25PlaceStiffener(blk, cu, cv, e) : false;
 
   if (tool === 'v25-frame') {
     // Two-click rectangle frame. Place with placeholder title/ref and let the
@@ -502,6 +514,24 @@ function v25TryHandleClick(blk, cu, cv, e) {
     return true;
   }
 
+  if (tool === 'v25-bolt') {
+    // Single-click drops a 2D bolt at the cursor. Size / grade / category /
+    // orientation come from v25State (set by v25PickAndSetBolt + the options-bar
+    // orientation row in 72c-v25-bolt.js). The glyph self-orients via
+    // ent.boltOrient; section orientations re-centre on detected material via
+    // v25BoltClampSpan at draw time, so the placed u,v is the on-axis centre.
+    const ent = v25Add('bolt2', {
+      size: v25State.boltSize || lastBoltSize || 'M20',
+      grade: v25State.boltGrade || lastBoltGrade || '8.8',
+      cat: v25State.boltCat || lastBoltCat || 'S',
+      boltOrient: v25State.boltOrient || lastBoltOrient || 'end',
+      u: cu, v: cv, rot: 0,
+    });
+    v25Selected = [ent.id];
+    if (typeof v25UpdateInspector === 'function') v25UpdateInspector();
+    return true;
+  }
+
   if (tool === 'v25-bar') {
     // Polyline bar: each click adds a vertex; Enter or right-click finishes
     v25State.polyPts.push({ u: cu, v: cv });
@@ -624,6 +654,24 @@ function v25DrawPreview(blk, cs) {
   if (!tool || !tool.startsWith('v25-')) return;
   if (!cursorSheet) return;
   const [cu, cv] = getCursor(blk);
+
+  // Bolt ghost — a faded preview of the bolt in the chosen orientation follows
+  // the (snapped) cursor so the engineer sees what they're about to place
+  // (direction + nut side), not just the crosshair. Drawn before the other
+  // tool previews; harmless for non-bolt tools. (bolt-orientation-presets)
+  if (tool === 'v25-bolt' && typeof drawBolt2D === 'function') {
+    const _gb = {
+      type: 'bolt2',
+      size:  (typeof v25State !== 'undefined' && v25State.boltSize)  || 'M20',
+      grade: (typeof v25State !== 'undefined' && v25State.boltGrade) || '8.8',
+      cat:   (typeof v25State !== 'undefined' && v25State.boltCat)   || 'S',
+      boltOrient: (typeof v25State !== 'undefined' && v25State.boltOrient) || 'end',
+      u: cu, v: cv, rot: 0, opacity: 0.45, _preview: true,
+    };
+    ctx.save();
+    drawBolt2D(blk, _gb, cs);
+    ctx.restore();
+  }
   const col = cs.getPropertyValue('--selected-color').trim();
   const pm = ppm();
   ctx.strokeStyle = colorAlpha(col, 0.55);
@@ -813,6 +861,7 @@ function v25ActiveTileId() {
   if (tool === 'v25-leader') return 'v25-leader';
   if (tool === 'v25-text') return 'v25-text';
   if (tool === 'v25-notebox') return 'v25-notebox';
+  if (tool === 'v25-note') return 'v25-note';
   if (tool === 'v25-line') {
     const lw = v25Last.lineLw, ls = v25Last.lineLs;
     if (ls === 'centre') return 'v25-line-cl';

@@ -41,19 +41,34 @@
 
   /** Default family + type when the UI hasn't picked one yet. */
   const DEFAULT_FAMILY      = 'plate-flat';
-  const DEFAULT_TYPE        = 'PL12';      // Fix G (2026-05-23): 12 mm by default
-  const DEFAULT_ORIENTATION = 'vertical';  // Fix H (2026-05-23)
+  const DEFAULT_TYPE        = 'PL12';        // Fix G (2026-05-23): 12 mm by default
+  const DEFAULT_ORIENTATION = 'elevation';   // plate-orientation-presets (2026-05-31)
 
   /** Resolve the current placement orientation from appState.ui.
-   *  - 'vertical' (default): free-form rectangle or polygon — the user draws
-   *    the visible face of the cleat at any size; thickness is "into the page".
-   *  - 'horizontal': a flat cleat seen in elevation as a thin strip; the user
-   *    defines the LENGTH by clicking start + end, and the thickness from
-   *    the size picker fixes the perpendicular extent.
-   *  See Fix H in PlannedBuilds/architecture-v2/12-plate-fix-plan.md (round 3). */
+   *  Three presets (plate-orientation-presets, 2026-05-31):
+   *  - 'elevation' (default): free-form rectangle or polygon — the user draws
+   *    the visible face of the plate at any size; thickness is "into the page".
+   *  - 'h-cleat': a flat horizontal cleat seen in elevation as a thin strip; the
+   *    user defines the LENGTH along u by clicking start + end, and the thickness
+   *    from the size picker fixes the vertical (perpendicular) extent; cursor
+   *    side picks up/down.
+   *  - 'v-cleat': a vertical cleat — the LENGTH runs along v, thickness along u;
+   *    cursor side picks left/right.
+   *  Legacy in-memory values are mapped: 'vertical'->'elevation',
+   *  'horizontal'->'h-cleat'. See PlannedBuilds/plate-orientation-presets/02-design.md. */
   function activeOrientation(ctx) {
     const ui = (ctx && ctx.appState && ctx.appState.ui) || {};
-    return (ui.activePlateOrientation === 'horizontal') ? 'horizontal' : 'vertical';
+    const raw = ui.activePlateOrientation;
+    if (raw === 'h-cleat' || raw === 'v-cleat' || raw === 'elevation') return raw;
+    if (raw === 'horizontal') return 'h-cleat';     // legacy map
+    if (raw === 'vertical')   return 'elevation';   // legacy map
+    return DEFAULT_ORIENTATION;
+  }
+
+  /** True for either cleat mode (h-cleat or v-cleat) — both share the
+   *  two-click "set the length, thickness is perpendicular" flow. */
+  function isCleat(orient) {
+    return orient === 'h-cleat' || orient === 'v-cleat';
   }
 
   /** Build a horizontal cleat polygon — the v=anchor.v line is the cleat's
@@ -71,6 +86,31 @@
       { x: u1, y: Math.max(v0, v1) },
       { x: u0, y: Math.max(v0, v1) },
     ];
+  }
+
+  /** Build a vertical cleat polygon — the mirror of horizontalCleatPolygon with
+   *  the LENGTH running along v and the THICKNESS along u. The u=anchor.u line
+   *  is the cleat's LEFT (if user dragged rightward) or RIGHT (if leftward)
+   *  edge; the cleat extends `thk` perpendicular in the direction of cursor.u. */
+  function verticalCleatPolygon(anchor, cursor, thk) {
+    const dir = (cursor.u >= anchor.u) ? 1 : -1;
+    const v0 = Math.min(anchor.v, cursor.v);
+    const v1 = Math.max(anchor.v, cursor.v);
+    const u0 = anchor.u;
+    const u1 = anchor.u + dir * thk;
+    return [
+      { x: Math.min(u0, u1), y: v0 },
+      { x: Math.max(u0, u1), y: v0 },
+      { x: Math.max(u0, u1), y: v1 },
+      { x: Math.min(u0, u1), y: v1 },
+    ];
+  }
+
+  /** Pick the cleat polygon builder for the active orientation. */
+  function cleatPolygon(orient, anchor, cursor, thk) {
+    return (orient === 'v-cleat')
+      ? verticalCleatPolygon(anchor, cursor, thk)
+      : horizontalCleatPolygon(anchor, cursor, thk);
   }
 
   /** Constrain `cursor` to be ortho (horizontal or vertical) from `origin`.
@@ -223,14 +263,14 @@
       const s = ctx.toolState;
       const orient = activeOrientation(ctx);
       let preview = null;
-      if (orient === 'horizontal') {
+      if (isCleat(orient)) {
         if (s.anchor) {
           const sel = activeSelection(ctx);
           const thk = thicknessFor(sel.family, sel.type);
-          preview = horizontalCleatPolygon(s.anchor, cursor, thk);
+          preview = cleatPolygon(orient, s.anchor, cursor, thk);
         }
       } else {
-        // Vertical orientation: rect drag preview OR poly rubber-band.
+        // Elevation orientation: rect drag preview OR poly rubber-band.
         if (s.mode === 'poly' && s.poly.length) {
           const last = lastPolyVertex(s.poly);
           const useCursor = shiftIsHeld(event) ? cursor : applyOrtho(cursor, last);
@@ -253,9 +293,9 @@
       const s = ctx.toolState;
       const orient = activeOrientation(ctx);
 
-      if (orient === 'horizontal') {
-        // Horizontal cleat: two-click line OR drag-release. First click sets
-        // anchor; second click commits.
+      if (isCleat(orient)) {
+        // Cleat (h-cleat / v-cleat): two-click line OR drag-release. First
+        // click sets anchor; second click commits.
         if (!s.anchor) {
           ctx.setToolState({
             anchor:   { u: cursor.u, v: cursor.v },
@@ -264,11 +304,11 @@
           ctx.requestRender();
           return true;
         }
-        commitHorizontalCleat(ctx, s.anchor, cursor);
+        commitCleat(ctx, s.anchor, cursor, orient);
         return true;
       }
 
-      // Vertical orientation
+      // Elevation orientation
       if (s.mode === 'poly') {
         // Append a vertex (with ortho snap unless Shift held), or close near
         // the first vertex.
@@ -308,17 +348,17 @@
       const dy = num(event.clientY) - num(s.anchorPx.y);
       const dragged = Math.hypot(dx, dy) >= DRAG_THRESHOLD_PX;
 
-      if (orient === 'horizontal') {
+      if (isCleat(orient)) {
         if (dragged) {
           const cursor = ctx.cursor;
           if (!cursor) return false;
-          commitHorizontalCleat(ctx, s.anchor, cursor);
+          commitCleat(ctx, s.anchor, cursor, orient);
         }
         // else: leave anchor in place for the second click to commit.
         return true;
       }
 
-      // Vertical orientation
+      // Elevation orientation
       if (dragged) {
         const cursor = ctx.cursor;
         if (!cursor) return false;
@@ -384,10 +424,15 @@
     statusText(ctx) {
       const s = ctx.toolState;
       const orient = activeOrientation(ctx);
-      if (orient === 'horizontal') {
+      if (orient === 'h-cleat') {
         return s && s.anchor
           ? 'Plate (horizontal cleat) — click / drag end · cursor side sets thickness direction'
           : 'Plate (horizontal cleat) — click start point';
+      }
+      if (orient === 'v-cleat') {
+        return s && s.anchor
+          ? 'Plate (vertical cleat) — click / drag end · cursor side sets thickness direction'
+          : 'Plate (vertical cleat) — click start point';
       }
       if (s && s.mode === 'poly') {
         return s.poly.length === 0
@@ -405,6 +450,42 @@
     },
   };
 
+  /** Resolve the just-placed element id from the placeElement transaction and
+   *  auto-select it: hand it to edit-plate's selection state and release the
+   *  Plate tool (firing tool-changed → options-bar refresh). Called by every
+   *  successful commit AFTER ctx.applyTransaction(tx). Degenerate commits (the
+   *  < 1 mm guards) never reach here, so they don't auto-select.
+   *  plate-orientation-presets (2026-05-31). */
+  function selectAfterPlace(ctx, tx) {
+    if (!tx) return;
+    // The placeElement tx carries the freshly-minted element on tx.data.element
+    // (see js/v2/transactions/place-element.js + js/v2/model/element.js
+    // makeElement, which mints el.id). Read the id straight off it; fall back
+    // to the newest plate element by createdAt if the shape ever changes.
+    let id = (tx.data && tx.data.element && tx.data.element.id) || null;
+    if (!id) {
+      const model = v2.appState && v2.appState.model;
+      const elements = model && model.elements;
+      if (elements && typeof elements.forEach === 'function') {
+        let newest = null;
+        elements.forEach(function (el) {
+          if (el && el.category === 'plate' &&
+              (!newest || (el.createdAt || 0) >= (newest.createdAt || 0))) {
+            newest = el;
+          }
+        });
+        if (newest) id = newest.id;
+      }
+    }
+    if (id && v2.tools && v2.tools.editPlate && v2.tools.editPlate.state) {
+      v2.tools.editPlate.state.selectedId = id;
+    }
+    if (v2.engine && typeof v2.engine.setActiveTool === 'function') {
+      v2.engine.setActiveTool(null);   // release the Plate tool → tool-changed
+    }
+    ctx.requestRender();
+  }
+
   /** Commit a rectangle plate, reset the rect-mode state. */
   function commitRect(ctx, a, b) {
     const w = Math.abs(a.u - b.u), h = Math.abs(a.v - b.v);
@@ -419,7 +500,7 @@
     if (!tx) return null;
     ctx.applyTransaction(tx);
     ctx.setToolState({ anchor: null, anchorPx: null, preview: null });
-    ctx.requestRender();
+    selectAfterPlace(ctx, tx);
     return tx;
   }
 
@@ -435,16 +516,18 @@
     // Fix H (2026-05-23) — return to rect mode after a polygon commit so the
     // next placement starts from the default drag-vs-click flow.
     ctx.setToolState({ mode: 'rect', poly: [], preview: null });
-    ctx.requestRender();
+    selectAfterPlace(ctx, tx);
     return tx;
   }
 
-  /** Fix H (2026-05-23) — commit a horizontal cleat plate from two clicks
-   *  (or drag-release). The polygon is a thin rectangle along the click line
-   *  with `thickness` perpendicular. Degenerate (length < 1 mm) drops the
-   *  anchor without committing — same UX as commitRect's degeneracy guard. */
-  function commitHorizontalCleat(ctx, a, b) {
-    const len = Math.abs(b.u - a.u);
+  /** Commit a cleat plate (h-cleat / v-cleat) from two clicks (or drag-release).
+   *  The polygon is a thin rectangle along the click line with `thickness`
+   *  perpendicular — horizontal (length along u) or vertical (length along v)
+   *  per `orient`. Degenerate (length < 1 mm along the relevant axis) drops the
+   *  anchor without committing — same UX as commitRect's degeneracy guard.
+   *  plate-orientation-presets (2026-05-31), formerly commitHorizontalCleat. */
+  function commitCleat(ctx, a, b, orient) {
+    const len = (orient === 'v-cleat') ? Math.abs(b.v - a.v) : Math.abs(b.u - a.u);
     if (len < 1) {
       ctx.setToolState({ anchor: null, anchorPx: null, preview: null });
       ctx.requestRender();
@@ -452,12 +535,12 @@
     }
     const sel = activeSelection(ctx);
     const thk = thicknessFor(sel.family, sel.type);
-    const polygon = horizontalCleatPolygon(a, b, thk);
+    const polygon = cleatPolygon(orient, a, b, thk);
     const tx = buildPlateTx(polygon, ctx);
     if (!tx) return null;
     ctx.applyTransaction(tx);
     ctx.setToolState({ anchor: null, anchorPx: null, preview: null });
-    ctx.requestRender();
+    selectAfterPlace(ctx, tx);
     return tx;
   }
 

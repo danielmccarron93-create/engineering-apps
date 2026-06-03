@@ -90,11 +90,12 @@ function _nbLayout(ent) {
 function nbDefaultProps() {
   const L = (typeof v25Last === 'object' && v25Last) ? v25Last : {};
   return {
-    style: L.noteStyle || 'professional',
+    style: L.noteStyle || 'plex',
     boxed: (L.noteBoxed !== false),
-    sz: L.noteSz || 2.5,
+    sz: L.noteSz || 3.5,
     arrowStyle: L.noteArrow || 'arrow',
     textCase: 'upper',
+    leaderLwMm: ((typeof v25Last === 'object' && v25Last && v25Last.noteLeaderLw) || 0.25),
   };
 }
 
@@ -107,8 +108,9 @@ function nbLoadDefaults() {
     if (!d || typeof d !== 'object') return;
     if (d.style != null) v25Last.noteStyle = d.style;
     if (d.boxed != null) v25Last.noteBoxed = !!d.boxed;
-    if (d.sz != null) v25Last.noteSz = +d.sz || 2.5;
+    if (d.sz != null) v25Last.noteSz = +d.sz || 3.5;
     if (d.arrow != null) v25Last.noteArrow = d.arrow;
+    if (d.leaderLw != null) v25Last.noteLeaderLw = +d.leaderLw || 0.25;
   } catch (_e) { /* ignore — defaults just fall back to literals */ }
 }
 
@@ -119,8 +121,9 @@ function nbSaveDefaults() {
     window.localStorage.setItem('sd2.noteDefaults', JSON.stringify({
       style: v25Last.noteStyle || 'professional',
       boxed: (v25Last.noteBoxed !== false),
-      sz: v25Last.noteSz || 2.5,
+      sz: v25Last.noteSz || 3.5,
       arrow: v25Last.noteArrow || 'arrow',
+      leaderLw: (v25Last.noteLeaderLw || 0.25),
     }));
   } catch (_e) { /* localStorage may be unavailable (private mode / file://) */ }
 }
@@ -137,22 +140,24 @@ function nbToolClick(blk, cu, cv, e) {
 
   const place = window.nbPlace;
   if (!place) {
-    // FIRST click — remember the box top-left, wait for the arrow tip.
-    window.nbPlace = { blk: blk, u: cu, v: cv };
+    // FIRST click — the ARROW HEAD (head-first placement). Remember the tip and
+    // wait for the box top-left.
+    window.nbPlace = { blk: blk, tipU: cu, tipV: cv };
     if (typeof requestRender === 'function') requestRender();
     return true;
   }
 
-  // SECOND click — sets the arrow tip (or none, if it lands on the box origin).
+  // SECOND click — the BOX top-left at (cu,cv). The arrow points at the fixed
+  // head; a second click within CLOSE_MM of the head means "box only", no arrow.
   const a = place;
   window.nbPlace = null;
-  const CLOSE_MM = 3; // CONTRACT §5: a second click within 3mm = "box only", no arrow
-  const arrows = (_nbDist(a.u, a.v, cu, cv) < CLOSE_MM) ? [] : [{ u: cu, v: cv }];
+  const CLOSE_MM = 3; // CONTRACT §3: a second click within 3mm of the head = "box only", no arrow
+  const arrows = (_nbDist(a.tipU, a.tipV, cu, cv) < CLOSE_MM) ? [] : [{ u: a.tipU, v: a.tipV }];
 
   let ent = null;
   if (typeof v25Add === 'function') {
     ent = v25Add('noteBox', Object.assign(nbDefaultProps(), {
-      u: a.u, v: a.v, text: '', autoSize: true, arrows: arrows,
+      u: cu, v: cv, text: '', autoSize: true, arrows: arrows,
     }));
   }
   if (ent) {
@@ -163,21 +168,26 @@ function nbToolClick(blk, cu, cv, e) {
   return true;
 }
 
-// Placement preview. BEFORE the first click a ghost text box (2 lines × ~4 words)
-// follows the cursor, so it's unmistakable that the FIRST click places the BOX.
-// AFTER the first click the ghost box is pinned at that point and a dashed
-// auto-dogleg leader (orthogonal shoulder off the facing side → angled leg)
-// previews to the cursor — matching what the second click will create.
+// Placement preview, branching on the active tool:
+//   v25-notebox (LEADER note, head-first): BEFORE the first click a small
+//     arrowhead/target marker tracks the cursor ("click to place the arrow
+//     head"). AFTER the first click the head is PINNED, a ghost box tracks the
+//     cursor (top-left at cursor) and a dashed auto-dogleg leader previews from
+//     the box edge back to the fixed head — matching what the second click makes.
+//   v25-note (PLAIN text box, no arrow): a ghost box tracks the cursor; if a
+//     press-drag is active (v25State.noteDownWorld set) a dashed sizing
+//     rectangle is drawn from the drag-start to the cursor instead.
 function nbToolPreview(blk, cs) {
   if (typeof ctx === 'undefined' || !ctx || typeof real2px !== 'function') return;
   const C = _nbC();
   const z = _nbPm();   // px per sheet-mm (paper-space)
   const ds = (typeof drawingScale !== 'undefined' && drawingScale) ? drawingScale : 10;
-  const cap = ((typeof v25Last === 'object' && v25Last && v25Last.noteSz) || C.CAP_MM || 2.5);
+  const cap = ((typeof v25Last === 'object' && v25Last && v25Last.noteSz) || 3.5);
   const pad = Math.max(C.PAD_MIN_MM || 1.0, cap * (C.PAD_FACTOR || 0.45));
   const lineH = cap * (C.LINEH || 1.3);
   const boxW = (C.PLACEHOLDER_W_MM || 36) + 2 * pad;   // paper-mm, ~4 words
   const boxH = 2 * lineH + 2 * pad;                    // 2 lines
+  const leaderLw = ((typeof v25Last === 'object' && v25Last && v25Last.noteLeaderLw) || 0.25);
 
   const accent = (function () {
     try {
@@ -186,6 +196,8 @@ function nbToolPreview(blk, cs) {
       return (c && c.trim()) || '#4a90d9';
     } catch (_e) { return '#4a90d9'; }
   })();
+
+  const activeTool = (typeof tool !== 'undefined') ? tool : '';
 
   let cur = null;
   if (typeof getCursor === 'function') { const r = getCursor(blk); if (r && r.length === 2) cur = { u: r[0], v: r[1] }; }
@@ -201,47 +213,96 @@ function nbToolPreview(blk, cs) {
     if (ctx.setLineDash) ctx.setLineDash([]);
   }
 
-  const place = window.nbPlace;
-  if (!place || place.blk !== blk) {
-    // BEFORE the first click — the box ghost tracks the cursor (top-left at cursor).
+  // Small target/arrowhead marker at a pixel point — "click to place the head".
+  function targetMarker(P) {
+    ctx.save();
+    ctx.globalAlpha = 0.8;
+    ctx.strokeStyle = accent;
+    ctx.fillStyle = accent;
+    ctx.lineWidth = Math.max(C.MIN_PX || 0.75, 0.25 * z);
+    // little ring
+    ctx.beginPath();
+    ctx.arc(P.x, P.y, Math.max(3, 0.9 * z), 0, Math.PI * 2);
+    ctx.stroke();
+    // centre dot
+    ctx.beginPath();
+    ctx.arc(P.x, P.y, Math.max(1, 0.25 * z), 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  // Dashed leader + faint arrowhead at the head end, given ordered px points
+  // (last point is the head/tip).
+  function dashedLeader(px) {
+    ctx.save();
+    ctx.globalAlpha = 0.6;
+    ctx.strokeStyle = accent;
+    ctx.lineWidth = Math.max(C.MIN_PX || 0.75, leaderLw * z);
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    ctx.setLineDash([5, 3]);
+    ctx.beginPath();
+    ctx.moveTo(px[0].x, px[0].y);
+    for (let k = 1; k < px.length; k++) ctx.lineTo(px[k].x, px[k].y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    // faint arrowhead at the head end (final segment)
+    const A = px[px.length - 2], T = px[px.length - 1];
+    const dx = T.x - A.x, dy = T.y - A.y, L = Math.hypot(dx, dy) || 1;
+    const ux = dx / L, uy = dy / L, nx = -uy, ny = ux;
+    const hl = (C.ARROW_LEN_MM || 3.0) * z, hw = (C.ARROW_HW_MM || 0.7) * z;
+    ctx.beginPath();
+    ctx.moveTo(T.x, T.y); ctx.lineTo(T.x - ux * hl + nx * hw, T.y - uy * hl + ny * hw);
+    ctx.moveTo(T.x, T.y); ctx.lineTo(T.x - ux * hl - nx * hw, T.y - uy * hl - ny * hw);
+    ctx.stroke();
+    ctx.restore();
+    if (ctx.setLineDash) ctx.setLineDash([]);
+  }
+
+  // -- PLAIN text box (no arrow) -------------------------------------------
+  if (activeTool === 'v25-note') {
+    const down = (typeof v25State === 'object' && v25State) ? v25State.noteDownWorld : null;
+    if (down && down.blk === blk && cur) {
+      // Press-drag in progress — dashed sizing rectangle from drag-start to cursor.
+      const A = real2px(blk, down.u, down.v);
+      const B = real2px(blk, cur.u, cur.v);
+      ctx.save();
+      ctx.globalAlpha = 0.6;
+      ctx.strokeStyle = accent;
+      ctx.lineWidth = Math.max(C.MIN_PX || 0.75, 0.18 * z);
+      ctx.setLineDash([5, 3]);
+      ctx.strokeRect(Math.min(A.x, B.x), Math.min(A.y, B.y), Math.abs(B.x - A.x), Math.abs(B.y - A.y));
+      ctx.restore();
+      if (ctx.setLineDash) ctx.setLineDash([]);
+      return;
+    }
+    // Idle — the box ghost tracks the cursor (top-left at cursor).
     if (cur) ghostBox(real2px(blk, cur.u, cur.v));
     return;
   }
 
-  // AFTER the first click — box pinned at the first click; preview the auto-dogleg.
-  ghostBox(real2px(blk, place.u, place.v));
-  if (!cur) return;
-  const rect = { uL: place.u, uR: place.u + boxW * ds, vT: place.v, vB: place.v - boxH * ds };
+  // -- LEADER note (head-first) --------------------------------------------
+  const place = window.nbPlace;
+  if (!place || place.blk !== blk) {
+    // BEFORE the first click — a target marker tracks the cursor (the arrow head).
+    if (cur) targetMarker(real2px(blk, cur.u, cur.v));
+    return;
+  }
+
+  // AFTER the first click — head pinned; ghost box tracks the cursor, dashed
+  // dogleg leader previews from the box edge back to the fixed head.
+  if (!cur) { return; }
+  ghostBox(real2px(blk, cur.u, cur.v));
+  const head = { u: place.tipU, v: place.tipV };
+  const rect = { uL: cur.u, uR: cur.u + boxW * ds, vT: cur.v, vB: cur.v - boxH * ds };
   let pts;
   if (typeof nbAutoShoulderForRect === 'function') {
-    const sh = nbAutoShoulderForRect(rect, cur, ds);
-    pts = [sh.mid, sh.node, cur];
+    const sh = nbAutoShoulderForRect(rect, head, ds);
+    pts = [sh.mid, sh.node, head];
   } else {
-    pts = [{ u: (rect.uL + rect.uR) / 2, v: rect.vB }, cur];
+    pts = [{ u: (rect.uL + rect.uR) / 2, v: rect.vB }, head];
   }
   const px = pts.map(function (p) { return real2px(blk, p.u, p.v); });
-  ctx.save();
-  ctx.globalAlpha = 0.6;
-  ctx.strokeStyle = accent;
-  ctx.lineWidth = Math.max(C.MIN_PX || 0.75, 0.38 * z);
-  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-  ctx.setLineDash([5, 3]);
-  ctx.beginPath();
-  ctx.moveTo(px[0].x, px[0].y);
-  for (let k = 1; k < px.length; k++) ctx.lineTo(px[k].x, px[k].y);
-  ctx.stroke();
-  ctx.setLineDash([]);
-  // faint arrowhead at the cursor end (final segment)
-  const A = px[px.length - 2], T = px[px.length - 1];
-  const dx = T.x - A.x, dy = T.y - A.y, L = Math.hypot(dx, dy) || 1;
-  const ux = dx / L, uy = dy / L, nx = -uy, ny = ux;
-  const hl = (C.ARROW_LEN_MM || 3.0) * z, hw = (C.ARROW_HW_MM || 0.7) * z;
-  ctx.beginPath();
-  ctx.moveTo(T.x, T.y); ctx.lineTo(T.x - ux * hl + nx * hw, T.y - uy * hl + ny * hw);
-  ctx.moveTo(T.x, T.y); ctx.lineTo(T.x - ux * hl - nx * hw, T.y - uy * hl - ny * hw);
-  ctx.stroke();
-  ctx.restore();
-  if (ctx.setLineDash) ctx.setLineDash([]);
+  dashedLeader(px);
 }
 
 function nbSelectShiftClick(blk, cu, cv) {
@@ -349,17 +410,22 @@ function _nbPositionEditor() {
   el.style.fontSize = capPx + 'px';
   el.style.lineHeight = lineHPx + 'px';
 
-  // Style-dependent presentation.
+  // Style-dependent presentation. For `web` styles (plex, routed*) the editor
+  // uses the style's real font family so typing is WYSIWYG — including the
+  // Routed Gothic cuts (the half-italic's lean is baked into the font, so no
+  // synthetic slant). Stroke styles get a monospace stand-in.
   const styleName = ent.style || 'professional';
-  if (styleName === 'plex') {
-    el.style.fontFamily = "'IBM Plex Sans', system-ui, sans-serif";
-    el.style.fontWeight = '500';
+  const stDef = (typeof nbStyle === 'function') ? nbStyle(styleName) : null;
+  if (stDef && stDef.font === 'web') {
+    el.style.fontFamily = stDef.family || "'IBM Plex Sans', system-ui, sans-serif";
+    el.style.fontWeight = String(stDef.weight || 400);
   } else {
     // Technical monospace stand-in for the stroke font so typing feels WYSIWYG.
     el.style.fontFamily = "'IBM Plex Mono', ui-monospace, monospace";
     el.style.fontWeight = '400';
   }
-  // Inclined "engineer" style → lean the editor text to match the slanted render.
+  // Inclined "engineer" stroke style → synthetic lean to match the slanted
+  // render. The Routed Gothic Lean cut carries its slope in the font itself.
   el.style.fontStyle = (styleName === 'engineer') ? 'italic' : 'normal';
   el.style.textTransform = (ent.textCase !== 'normal') ? 'uppercase' : 'none';
 
@@ -372,6 +438,9 @@ function _nbPositionEditor() {
     } catch (_e) { col = ''; }
   }
   el.style.color = col || '#111';
+
+  // Spell-check: keep the squiggle overlay glued to the textarea each frame.
+  if (typeof nbSpellSync === 'function') nbSpellSync();
 }
 
 // rAF loop that keeps the textarea glued to the box while panning/zooming.
@@ -394,6 +463,10 @@ function nbOpenEditor(ent) {
   ent._editing = true;
   window.nbEditor = { ent: ent, el: el, blk: blk, raf: 0 };
 
+  // Spell-check: attach the live red-squiggle overlay (guarded; no-op if js/81
+  // is absent or spell-check is switched off).
+  if (typeof nbSpellAttach === 'function') nbSpellAttach(el, ent);
+
   // input → live update + autoSize relayout + re-render.
   el.oninput = function () {
     const cur = window.nbEditor;
@@ -402,6 +475,7 @@ function nbOpenEditor(ent) {
     if (ent.autoSize && typeof nbLayout === 'function') nbLayout(ent); // refresh derived boxW
     _nbPositionEditor();
     if (typeof requestRender === 'function') requestRender();
+    if (typeof nbSpellInput === 'function') nbSpellInput();   // re-check spelling (debounced)
   };
 
   // keys: Enter = newline (default textarea behaviour, allow it);
@@ -442,6 +516,10 @@ function _nbOutsideClick(e) {
   const ed = window.nbEditor;
   if (!ed || !ed.el) return;
   if (e.target === ed.el || ed.el.contains(e.target)) return;
+  // Swallow this click so it ONLY finishes the note (doesn't also place/select
+  // another entity underneath).
+  if (e.preventDefault) e.preventDefault();
+  if (e.stopImmediatePropagation) e.stopImmediatePropagation();
   nbCloseEditor(true);
 }
 
@@ -471,6 +549,9 @@ function nbCloseEditor(commit) {
       v25Selected = v25Selected.filter(id => id !== ent.id);
     }
   }
+
+  // Spell-check: tear down the squiggle overlay first (restores the textarea).
+  if (typeof nbSpellDetach === 'function') nbSpellDetach();
 
   // Tear down the overlay.
   if (el) { el.oninput = null; el.onkeydown = null; if (el.parentNode) el.parentNode.removeChild(el); }
@@ -506,10 +587,11 @@ function nbOpenEditorAt(blk, cu, cv) {
 
 function nbOptionsBarHTML() {
   const L = (typeof v25Last === 'object' && v25Last) ? v25Last : {};
-  const style = L.noteStyle || 'professional';
+  const style = L.noteStyle || 'plex';
   const boxed = (L.noteBoxed !== false);
-  const sz = L.noteSz || 2.5;
+  const sz = L.noteSz || 3.5;
   const arrow = L.noteArrow || 'arrow';
+  const leaderLw = (L.noteLeaderLw || 0.25);
 
   // Same `fld(label, innerHTML)` look as the other tools in js/72.
   const fld = (label, inner) =>
@@ -520,6 +602,9 @@ function nbOptionsBarHTML() {
     ['draftsman', 'Draftsman'],
     ['engineer', 'Engineer'],
     ['plex', 'Plex'],
+    ['routed', 'Routed Gothic'],
+    ['routedWide', 'Routed Gothic Wide'],
+    ['routedHalf', 'Routed Gothic Lean'],
   ].map(([v, lbl]) => `<option value="${v}"${v === style ? ' selected' : ''}>${lbl}</option>`).join('');
 
   const arrowOpts = ['arrow', 'dot', 'open']
@@ -529,6 +614,7 @@ function nbOptionsBarHTML() {
   html += fld('Style', `<select id="nbo-style">${styleOpts}</select>`);
   html += fld('Outline', `<input type="checkbox" id="nbo-boxed"${boxed ? ' checked' : ''}/>`);
   html += fld('Size mm', `<input type="number" id="nbo-sz" step="0.5" value="${sz}" style="width:56px"/>`);
+  html += fld('Arrow line mm', `<input type="number" id="nbo-leaderlw" step="0.05" value="${leaderLw}" style="width:56px"/>`);
   html += fld('Arrow', `<select id="nbo-arrow">${arrowOpts}</select>`);
   html += '<span style="color:var(--text-mute);font-size:11px;margin-left:4px">New notes use these · q to place · double-click to edit · Shift-click adds an arrow</span>';
   return html;
@@ -570,6 +656,14 @@ function nbBindOptionsBar(bar) {
     applyToSelected('sz', v);
   });
 
+  const leaderLwEl = bar.querySelector('#nbo-leaderlw');
+  if (leaderLwEl) leaderLwEl.addEventListener('input', (e) => {
+    const v = parseFloat(e.target.value) || 0.25;
+    if (L) L.noteLeaderLw = v;
+    nbSaveDefaults();
+    applyToSelected('leaderLwMm', v);
+  });
+
   const arrowEl = bar.querySelector('#nbo-arrow');
   if (arrowEl) arrowEl.addEventListener('change', (e) => {
     if (L) L.noteArrow = e.target.value;
@@ -579,8 +673,33 @@ function nbBindOptionsBar(bar) {
 }
 
 // ------------------------------------------------------------------
+// Web-font preload — nbPreloadWebFonts
+// ------------------------------------------------------------------
+// The stroke styles need no font. The `web` styles render via ctx.fillText,
+// which only paints a custom font once that font is actually LOADED. IBM Plex
+// is already loaded by the UI chrome; the bundled Routed Gothic cuts are used
+// nowhere else in the DOM, so the canvas would silently fall back until a note
+// happens to trigger a load. Load them explicitly here, then re-render and drop
+// any layout cached against fallback metrics (so a saved sheet opened with a
+// Routed Gothic note re-flows correctly the instant the real glyphs arrive).
+function nbPreloadWebFonts() {
+  try {
+    if (!(typeof document !== 'undefined' && document.fonts && document.fonts.load)) return;
+    const fams = ["'Routed Gothic'", "'Routed Gothic Wide'", "'Routed Gothic Half Italic'"];
+    const onReady = function () {
+      if (typeof nbClearLayoutCache === 'function') nbClearLayoutCache();
+      if (typeof requestRender === 'function') requestRender();
+    };
+    fams.forEach(function (fam) {
+      document.fonts.load('16px ' + fam).then(onReady).catch(function () { /* missing → keep fallback */ });
+    });
+  } catch (_e) { /* document.fonts unsupported → fallback face, still legible */ }
+}
+
+// ------------------------------------------------------------------
 // Load persisted defaults once at startup (guarded).
 // ------------------------------------------------------------------
 if (typeof v25Last !== 'undefined') {
   try { nbLoadDefaults(); } catch (_e) { /* defaults fall back to literals */ }
 }
+try { nbPreloadWebFonts(); } catch (_e) { /* preload is best-effort */ }

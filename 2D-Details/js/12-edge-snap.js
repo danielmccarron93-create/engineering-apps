@@ -274,6 +274,21 @@ function getV25EntSnapEdges(ent, viewKey) {
     faces = v25Mem2Faces(ent);
   } else if (ent.type === 'plate2' && typeof v25Plate2Faces === 'function') {
     faces = v25Plate2Faces(ent);
+  } else if (ent.type === 'mem2' && ent.aspect === 'sec') {
+    // Section glyph: emit the web faces (u = centre ± tw/2) and the section
+    // depth faces (v = centre ± half-depth) so a cleat / WSP edge snaps to the
+    // web face or the top/bottom of a member drawn in section. v25Mem2Faces
+    // only handles elevation members, so section members were un-snappable.
+    const _tw = (typeof v25BoltMemberWeb === 'function') ? v25BoltMemberWeb(ent)
+              : (typeof v25Mem2Thickness === 'function' ? v25Mem2Thickness(ent) : 10);
+    const _hd = (typeof v25Mem2HalfDepth === 'function') ? v25Mem2HalfDepth(ent) : 50;
+    const _lbl = ent.memberType ? ent.memberType.toUpperCase() : 'MEM';
+    return [
+      { axis: 'u', value: ent.u - _tw / 2, label: _lbl + ' web' },
+      { axis: 'u', value: ent.u + _tw / 2, label: _lbl + ' web' },
+      { axis: 'v', value: ent.v - _hd,     label: _lbl + ' face' },
+      { axis: 'v', value: ent.v + _hd,     label: _lbl + ' face' },
+    ];
   } else {
     return [];
   }

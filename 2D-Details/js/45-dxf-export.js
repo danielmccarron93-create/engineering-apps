@@ -434,6 +434,167 @@ function _dxfEmit2DEntity(b, blk, ent) {
     const p1 = _dxfBlockPlace(blk, ent.u1, ent.v1);
     const p2 = _dxfBlockPlace(blk, ent.u2, ent.v2);
     _dxfLine(b, '0', p1.x, p1.y, p2.x, p2.y);
+  } else if (ent.type === 'bolt2') {
+    // 2D-mode bolt (V25). Mirrors drawBolt2D's grip-centred layout so the DXF
+    // matches the canvas. boltOrient: 'end' → washer ring + hole circle + hex
+    // head; section orientations → shank rect, chamfered hex head/nut, washers,
+    // thread sawtooth, dashed centreline. All on the S-BOLT layer.
+    const bd = (typeof BOLT_DB !== 'undefined' && BOLT_DB[ent.size]) ||
+               (typeof BOLT_DB !== 'undefined' && BOLT_DB.M20) ||
+               { d: 20, headAF: 30, headH: 13, nutAF: 30, nutH: 16, washOD: 37, washT: 3, minorD: 17.29, threadL: 46, pitch: 2.5 };
+    const place = (u, v) => { const p = _dxfBlockPlace(blk, u, v); return [p.x, p.y]; };
+    const polyDxf = (pts, closed) => _dxfPolyline(b, 'S-BOLT', pts, closed);
+    const lineDxf = (u1, v1, u2, v2) => { const a = place(u1, v1), c = place(u2, v2); _dxfLine(b, 'S-BOLT', a[0], a[1], c[0], c[1]); };
+    // Chamfered hex side profile along a given axis (mirrors hexPointsAlongU/V
+    // in js/33). 'outer' edge chamfered, 'inner' (washer-side) flat.
+    const hexAlongU = (cv, outerU, innerU, halfAF) => {
+      const span = outerU - innerU, dir = Math.sign(span) || 1, abs = Math.abs(span);
+      const ch = Math.min(abs * 0.25, halfAF * 0.3), chS = ch * dir;
+      return [
+        [innerU, cv - halfAF], [outerU - chS, cv - halfAF], [outerU, cv - halfAF + ch],
+        [outerU, cv + halfAF - ch], [outerU - chS, cv + halfAF], [innerU, cv + halfAF],
+      ].map(([u, v]) => place(u, v));
+    };
+    const hexAlongV = (cu, outerV, innerV, halfAF) => {
+      const span = outerV - innerV, dir = Math.sign(span) || 1, abs = Math.abs(span);
+      const ch = Math.min(abs * 0.25, halfAF * 0.3), chS = ch * dir;
+      return [
+        [cu - halfAF, innerV], [cu - halfAF, outerV - chS], [cu - halfAF + ch, outerV],
+        [cu + halfAF - ch, outerV], [cu + halfAF, outerV - chS], [cu + halfAF, innerV],
+      ].map(([u, v]) => place(u, v));
+    };
+
+    if (ent.boltOrient === 'end') {
+      // End-on: washer ring + bolt hole circle + hex head outline.
+      const ctr = _dxfBlockPlace(blk, ent.u, ent.v);
+      _dxfCircle(b, 'S-BOLT', ctr.x, ctr.y, bd.d / 2);
+      if (bd.washOD) _dxfCircle(b, 'S-BOLT', ctr.x, ctr.y, bd.washOD / 2);
+      const headR = (bd.headAF || bd.d * 1.5) / 2, headPts = [];
+      for (let i = 0; i < 6; i++) {
+        const a = i * Math.PI / 3;
+        headPts.push(place(ent.u + Math.cos(a) * headR, ent.v + Math.sin(a) * headR));
+      }
+      polyDxf(headPts, true);
+    } else {
+      const span = (typeof v25BoltClampSpan === 'function') ? v25BoltClampSpan(blk, ent) : null;
+      const orient = ent.boltOrient || 'h-nutR';
+      const isV = (orient === 'v-nutB' || orient === 'v-nutT');
+      const grip = (span && span.grip) || 20;
+      const centre = (span && span.centre != null) ? span.centre : (isV ? ent.v : ent.u);
+      const length = (span && span.length) || (typeof computeBoltLength === 'function' ? computeBoltLength(grip, ent.size) : grip + 50);
+      const hG = grip / 2;
+      const halfD = bd.d / 2, halfMin = (bd.minorD || bd.d * 0.85) / 2;
+      const halfAFh = bd.headAF / 2, halfAFn = bd.nutAF / 2, halfWO = (bd.washOD || bd.d * 1.8) / 2;
+      const washT = bd.washT || 3, headH = bd.headH || bd.d * 0.65, nutH = bd.nutH || bd.d * 0.8;
+      const threadProt = Math.max(2 * (bd.pitch || 2.5), length - (grip + 2 * washT + nutH));
+
+      if (!isV) {
+        // Horizontal section — bolt axis along u, transverse v = ent.v.
+        const cy = ent.v;
+        const gripL = (orient === 'h-nutR') ? centre - hG : centre + hG; // head side
+        const gripR = (orient === 'h-nutR') ? centre + hG : centre - hG; // nut side
+        const dirHead = (orient === 'h-nutR') ? -1 : 1; // head extends this way
+        const washHeadL = gripL + dirHead * washT;
+        const headOuter = washHeadL + dirHead * headH;
+        const washNutR = gripR - dirHead * washT;
+        const nutOuter = washNutR - dirHead * nutH;
+        const threadTip = nutOuter - dirHead * threadProt;
+        const shankA = washHeadL, shankB = threadTip;
+        // Shank rectangle
+        polyDxf([place(shankA, cy - halfD), place(shankB, cy - halfD), place(shankB, cy + halfD), place(shankA, cy + halfD)], true);
+        // Thread sawtooth at the nut/protrusion end (minor-diameter zigzag)
+        {
+          const tStart = nutOuter, tEnd = threadTip, p = bd.pitch || 2.5;
+          const lo = Math.min(tStart, tEnd), hi = Math.max(tStart, tEnd), spanT = hi - lo;
+          if (spanT > 0.1) {
+            const n = Math.max(1, Math.floor(spanT / p));
+            for (let i = 0; i <= n; i++) {
+              const u = lo + (spanT * i / n), hv = (i % 2 === 0) ? halfMin : halfD;
+              lineDxf(u, cy - hv, u, cy + hv);
+            }
+          }
+        }
+        // Washers (thin rects spanning washOD)
+        polyDxf([place(gripL, cy - halfWO), place(washHeadL, cy - halfWO), place(washHeadL, cy + halfWO), place(gripL, cy + halfWO)], true);
+        polyDxf([place(gripR, cy - halfWO), place(washNutR, cy - halfWO), place(washNutR, cy + halfWO), place(gripR, cy + halfWO)], true);
+        // Chamfered hex head + nut
+        polyDxf(hexAlongU(cy, headOuter, washHeadL, halfAFh), true);
+        polyDxf(hexAlongU(cy, nutOuter, washNutR, halfAFn), true);
+        // Dashed centreline (DASHDOT proxy via S-CL layer linetype)
+        lineDxf(headOuter - dirHead * 4, cy, threadTip + dirHead * 4, cy);
+      } else {
+        // Vertical section — bolt axis along v, transverse u = ent.u.
+        const cx = ent.u;
+        const gripL = (orient === 'v-nutB') ? centre + hG : centre - hG; // head side
+        const gripR = (orient === 'v-nutB') ? centre - hG : centre + hG; // nut side
+        const dirHead = (orient === 'v-nutB') ? 1 : -1; // head extends this way (v up = +)
+        const washHeadL = gripL + dirHead * washT;
+        const headOuter = washHeadL + dirHead * headH;
+        const washNutR = gripR - dirHead * washT;
+        const nutOuter = washNutR - dirHead * nutH;
+        const threadTip = nutOuter - dirHead * threadProt;
+        const shankA = washHeadL, shankB = threadTip;
+        // Shank rectangle
+        polyDxf([place(cx - halfD, shankA), place(cx + halfD, shankA), place(cx + halfD, shankB), place(cx - halfD, shankB)], true);
+        // Thread sawtooth
+        {
+          const tStart = nutOuter, tEnd = threadTip, p = bd.pitch || 2.5;
+          const lo = Math.min(tStart, tEnd), hi = Math.max(tStart, tEnd), spanT = hi - lo;
+          if (spanT > 0.1) {
+            const n = Math.max(1, Math.floor(spanT / p));
+            for (let i = 0; i <= n; i++) {
+              const v = lo + (spanT * i / n), hu = (i % 2 === 0) ? halfMin : halfD;
+              lineDxf(cx - hu, v, cx + hu, v);
+            }
+          }
+        }
+        // Washers
+        polyDxf([place(cx - halfWO, gripL), place(cx - halfWO, washHeadL), place(cx + halfWO, washHeadL), place(cx + halfWO, gripL)], true);
+        polyDxf([place(cx - halfWO, gripR), place(cx - halfWO, washNutR), place(cx + halfWO, washNutR), place(cx + halfWO, gripR)], true);
+        // Chamfered hex head + nut
+        polyDxf(hexAlongV(cx, headOuter, washHeadL, halfAFh), true);
+        polyDxf(hexAlongV(cx, nutOuter, washNutR, halfAFn), true);
+        // Dashed centreline
+        lineDxf(cx, headOuter + dirHead * 4, cx, threadTip - dirHead * 4);
+      }
+    }
+  } else if (ent.type === 'stiff2') {
+    // plate-grouping-stiffener — web stiffener plate: outline rectangle (two
+    // endpoints + thickness) + weld ticks per long edge on S-WELD.
+    const thk = (typeof ent.thk === 'number' && ent.thk) ? ent.thk : 10;
+    const ax = (ent.uTop || 0) - (ent.uBot || 0), av = (ent.vTop || 0) - (ent.vBot || 0);
+    const len = Math.hypot(ax, av) || 1;
+    const ppx = -av / len, ppy = ax / len, hh = thk / 2;
+    const corners = [
+      [ent.uBot - ppx * hh, ent.vBot - ppy * hh],
+      [ent.uBot + ppx * hh, ent.vBot + ppy * hh],
+      [ent.uTop + ppx * hh, ent.vTop + ppy * hh],
+      [ent.uTop - ppx * hh, ent.vTop - ppy * hh],
+    ].map(([u, v]) => { const p = _dxfBlockPlace(blk, u, v); return [p.x, p.y]; });
+    _dxfPolyline(b, 'S-STEEL', corners, true);
+    if (ent.weld !== 'none') {
+      const tickN = Math.max(3, Math.floor(len / 30));
+      for (const pair of [[0, 3], [1, 2]]) {
+        for (let k = 0; k <= tickN; k++) {
+          const t = k / tickN;
+          const ex = corners[pair[0]][0] + (corners[pair[1]][0] - corners[pair[0]][0]) * t;
+          const ey = corners[pair[0]][1] + (corners[pair[1]][1] - corners[pair[0]][1]) * t;
+          _dxfLine(b, 'S-WELD', ex, ey, ex + (pair[0] === 0 ? -2 : 2), ey + 1);
+        }
+      }
+    }
+  } else if (ent.type === 'jweld') {
+    // plate-grouping-stiffener — plate to flange joint weld: fillet ticks
+    // along the contact line on S-WELD.
+    const a = _dxfBlockPlace(blk, ent.u1, ent.v1);
+    const c = _dxfBlockPlace(blk, ent.u2, ent.v2);
+    _dxfLine(b, 'S-WELD', a.x, a.y, c.x, c.y);
+    const segs = Math.max(3, Math.floor(Math.hypot(c.x - a.x, c.y - a.y) / 6));
+    for (let k = 0; k <= segs; k++) {
+      const t = k / segs;
+      const ex = a.x + (c.x - a.x) * t, ey = a.y + (c.y - a.y) * t;
+      _dxfLine(b, 'S-WELD', ex, ey, ex - 1.5, ey + 3);
+    }
   } else if (ent.type === 'blockWall') {
     // Blockwork wall — outline + coursing, mirroring drawBlockWall2D so the
     // DXF coursing matches the canvas. Section strip emits a rotated strip;

@@ -140,6 +140,7 @@
     const drag       = ep ? ep.state.dragging   : null;
     const bodyDrag   = ep ? ep.state.bodyDrag   : null;
     const rotateDrag = ep ? ep.state.rotateDrag : null;
+    const edgeDrag   = ep ? ep.state.edgeDrag   : null;
     eachV2Plate(function (el) {
       if (plateViewKey(el) !== blk.viewKey) return;
       let pts = plateUV(el);
@@ -155,6 +156,16 @@
         const du = num(bodyDrag.currentDelta.u);
         const dv = num(bodyDrag.currentDelta.v);
         pts = pts.map(function (p) { return { u: p.u + du, v: p.v + dv }; });
+      }
+      // plate-edge-drag (2026-06-02) — offset the grabbed edge's endpoint(s) by
+      // the live delta (both, or only the nearest node when single is set).
+      if (edgeDrag && edgeDrag.elementId === el.id && edgeDrag.currentDelta &&
+          typeof edgeDrag.iA === 'number' && typeof edgeDrag.iB === 'number') {
+        const du = num(edgeDrag.currentDelta.u);
+        const dv = num(edgeDrag.currentDelta.v);
+        pts = pts.slice();
+        if (edgeDrag.iA >= 0 && edgeDrag.iA < pts.length) pts[edgeDrag.iA] = { u: pts[edgeDrag.iA].u + du, v: pts[edgeDrag.iA].v + dv };
+        if (edgeDrag.iB >= 0 && edgeDrag.iB < pts.length) pts[edgeDrag.iB] = { u: pts[edgeDrag.iB].u + du, v: pts[edgeDrag.iB].v + dv };
       }
       // Fix O — rotation preview (rotate origPolygon around centroid by delta).
       if (rotateDrag && rotateDrag.elementId === el.id) {
@@ -181,6 +192,15 @@
         else         ctx.lineTo(sp.x, sp.y);
       }
       ctx.closePath();
+      // plate multi-select — light accent fill on each CO-selected (secondary)
+      // plate so the user sees the whole set that will be grouped. The PRIMARY
+      // selected plate's fill + grips come from drawV2PlateSelection.
+      const _selIds = Array.isArray(window.v25SelPlateIds) ? window.v25SelPlateIds : [];
+      if (_selIds.indexOf(el.id) >= 0 && !(ep && ep.state && ep.state.selectedId === el.id)) {
+        const selCol = cs.getPropertyValue('--selected-color').trim() || '#4a90e2';
+        ctx.fillStyle = (typeof colorAlpha === 'function') ? colorAlpha(selCol, 0.14) : selCol;
+        ctx.fill();
+      }
       // Fix B + C (2026-05-23): outline only — no grey fill, no centroid
       // label. AS 1100 default for a plate is outline-only at the right
       // lineweight. Labels are user-added annotations (a separate phase).
@@ -289,6 +309,7 @@
     const drag       = ep.state.dragging;
     const bodyDrag   = ep.state.bodyDrag;
     const rotateDrag = ep.state.rotateDrag;
+    const edgeDrag   = ep.state.edgeDrag;
     if (drag && drag.elementId === el.id && typeof drag.vertexIndex === 'number' &&
         drag.currentVertex && drag.vertexIndex >= 0 && drag.vertexIndex < pts.length) {
       pts = pts.slice();
@@ -298,6 +319,14 @@
       const du = num(bodyDrag.currentDelta.u);
       const dv = num(bodyDrag.currentDelta.v);
       pts = pts.map(function (p) { return { u: p.u + du, v: p.v + dv }; });
+    }
+    if (edgeDrag && edgeDrag.elementId === el.id && edgeDrag.currentDelta &&
+        typeof edgeDrag.iA === 'number' && typeof edgeDrag.iB === 'number') {
+      const du = num(edgeDrag.currentDelta.u);
+      const dv = num(edgeDrag.currentDelta.v);
+      pts = pts.slice();
+      if (edgeDrag.iA >= 0 && edgeDrag.iA < pts.length) pts[edgeDrag.iA] = { u: pts[edgeDrag.iA].u + du, v: pts[edgeDrag.iA].v + dv };
+      if (edgeDrag.iB >= 0 && edgeDrag.iB < pts.length) pts[edgeDrag.iB] = { u: pts[edgeDrag.iB].u + du, v: pts[edgeDrag.iB].v + dv };
     }
     if (rotateDrag && rotateDrag.elementId === el.id) {
       const r = rotateDrag;
@@ -314,19 +343,45 @@
     }
     const selCol = cs.getPropertyValue('--selected-color').trim() || '#3b82f6';
     ctx.save();
-    // Dashed selection outline (overlaid on top of the solid plate outline).
+    // plate-selection-visibility (2026-06-01) — bold, unmistakable selection
+    // treatment matching the other members: a heavy solid accent outline, a
+    // translucent accent fill so the whole plate reads as "picked", and square
+    // corner grips. (Previously only a thin dashed line + tiny dots, which Dan
+    // couldn't see.) Collect the screen-space vertices once for reuse.
+    const selPx = pts.map(function (p) { return real2px(blk, p.u, p.v); });
+    // Translucent fill across the plate body.
+    if (selPx.length >= 3) {
+      ctx.beginPath();
+      for (let i = 0; i < selPx.length; i++) {
+        if (i === 0) ctx.moveTo(selPx[i].x, selPx[i].y);
+        else         ctx.lineTo(selPx[i].x, selPx[i].y);
+      }
+      ctx.closePath();
+      ctx.fillStyle = (typeof colorAlpha === 'function') ? colorAlpha(selCol, 0.14) : selCol;
+      ctx.fill();
+    }
+    // Heavy solid selection outline (on top of the plate's own outline).
     ctx.strokeStyle = selCol;
-    ctx.lineWidth = 1.25;
-    ctx.setLineDash([4, 3]);
+    ctx.lineWidth = 2.25;
+    ctx.lineJoin = 'round';
+    ctx.setLineDash([]);
     ctx.beginPath();
-    for (let i = 0; i < pts.length; i++) {
-      const sp = real2px(blk, pts[i].u, pts[i].v);
-      if (i === 0) ctx.moveTo(sp.x, sp.y);
-      else         ctx.lineTo(sp.x, sp.y);
+    for (let i = 0; i < selPx.length; i++) {
+      if (i === 0) ctx.moveTo(selPx[i].x, selPx[i].y);
+      else         ctx.lineTo(selPx[i].x, selPx[i].y);
     }
     ctx.closePath();
     ctx.stroke();
-    ctx.setLineDash([]);
+    // Square corner grips — white fill + accent border, the standard CAD
+    // "this is selected, drag a corner" affordance.
+    const GS = 6;   // grip half-size in screen px
+    for (let i = 0; i < selPx.length; i++) {
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(selPx[i].x - GS, selPx[i].y - GS, GS * 2, GS * 2);
+      ctx.strokeStyle = selCol;
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(selPx[i].x - GS, selPx[i].y - GS, GS * 2, GS * 2);
+    }
     // Rotation handle — small circle floated above the top of the bounding
     // box, connected by a thin line. Position in the SAME polygon-space as
     // `pts` so it tracks the preview during body / rotation drag.
@@ -361,6 +416,104 @@
       ctx.arc(hPx.x, hPx.y, 3, -Math.PI * 0.75, Math.PI * 0.25);
       ctx.stroke();
     }
+    ctx.restore();
+  }
+
+  /**
+   * Drag guides for a v2 plate body-move (Workstream A). Painted only while a
+   * `bodyDrag` is live, so idle frames are untouched. Two overlays:
+   *   - ORTHO GUIDE — when Shift-ortho locks one axis (`bodyDrag.orthoAxis`),
+   *     a long dotted line through the anchor on the free axis (Revit look).
+   *   - SNAP INDICATORS — for each soft face-snap in `bodyDrag.snapLines`, a
+   *     dashed line spanning the view at axis=value + a small label, reusing
+   *     drawEdgeSnapLines' visual treatment (--selected-color, DASH.SNAP).
+   * Shared contract (set by js/v2/tools/edit-plate.js):
+   *   bodyDrag.orthoAxis   : 'u' | 'v' | null
+   *   bodyDrag.anchorWorld : { u, v }
+   *   bodyDrag.currentDelta: { u, v }
+   *   bodyDrag.snapLines   : [ { axis:'u'|'v', value:Number, label:String } ] | null
+   * @param {object} blk      v1 active block
+   * @param {CSSStyleDeclaration} cs   getComputedStyle(document.body)
+   */
+  function drawV2PlateDragGuides(blk, cs) {
+    if (!blk) return;
+    if (typeof ctx === 'undefined' || typeof real2px !== 'function') return;
+    if (typeof activeBlock === 'undefined' || !activeBlock) return;
+    const ep = v2.tools && v2.tools.editPlate && v2.tools.editPlate.state;
+    const bd = ep && ep.bodyDrag;
+    if (!bd) return;
+    // Only draw on the block that holds the selected / dragged plate.
+    if (!ep.selectedId) return;
+    const el = v2.appState && v2.appState.model && v2.appState.model.elements.get(ep.selectedId);
+    if (!el || el.category !== 'plate') return;
+    if (plateViewKey(el) !== blk.viewKey) return;
+
+    const hasOrtho = (bd.orthoAxis === 'u' || bd.orthoAxis === 'v') && bd.anchorWorld;
+    const hasSnaps = Array.isArray(bd.snapLines) && bd.snapLines.length > 0;
+    if (!hasOrtho && !hasSnaps) return;
+
+    ctx.save();
+
+    // ORTHO GUIDE — subtle dotted line through the anchor on the free axis.
+    if (hasOrtho) {
+      let guideCol = cs.getPropertyValue('--accent').trim() ||
+                     cs.getPropertyValue('--text-mute').trim() || '#888888';
+      ctx.strokeStyle = (typeof colorAlpha === 'function') ? colorAlpha(guideCol, 0.6) : guideCol;
+      ctx.lineWidth = 0.6;
+      ctx.setLineDash([2, 3]);
+      ctx.beginPath();
+      if (bd.orthoAxis === 'u') {
+        // Horizontal move locked → horizontal guide through anchor.v.
+        const p1 = real2px(blk, -1000, bd.anchorWorld.v);
+        const p2 = real2px(blk,  1000, bd.anchorWorld.v);
+        ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y);
+      } else {
+        // Vertical move locked → vertical guide through anchor.u.
+        const p1 = real2px(blk, bd.anchorWorld.u,  500);
+        const p2 = real2px(blk, bd.anchorWorld.u, -500);
+        ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y);
+      }
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    // SNAP INDICATORS — dashed view-spanning lines + label, like drawEdgeSnapLines.
+    if (hasSnaps) {
+      const selCol = cs.getPropertyValue('--selected-color').trim() || '#3b82f6';
+      ctx.lineWidth = 0.5;
+      ctx.setLineDash(DASH.SNAP);
+      ctx.strokeStyle = (typeof colorAlpha === 'function') ? colorAlpha(selCol, 0.25) : selCol;
+      for (let i = 0; i < bd.snapLines.length; i++) {
+        const s = bd.snapLines[i];
+        if (!s) continue;
+        ctx.beginPath();
+        if (s.axis === 'u') {
+          const p1 = real2px(blk, s.value,  500);
+          const p2 = real2px(blk, s.value, -500);
+          ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y);
+        } else {
+          const p1 = real2px(blk, -1000, s.value);
+          const p2 = real2px(blk,  1000, s.value);
+          ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y);
+        }
+        ctx.stroke();
+      }
+      // Label the first snap (mirrors drawEdgeSnapLines).
+      const first = bd.snapLines[0];
+      if (first && first.label) {
+        const fs = (typeof sheetLen === 'function') ? Math.max(7, sheetLen(2)) : 9;
+        ctx.font = fs + 'px system-ui';
+        ctx.fillStyle = (typeof colorAlpha === 'function') ? colorAlpha(selCol, 0.7) : selCol;
+        ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
+        const p = first.axis === 'u'
+          ? real2px(blk, first.value, 0)
+          : real2px(blk, 0, first.value);
+        ctx.fillText(first.label, p.x + 6, p.y - 4);
+        ctx.textAlign = 'start'; ctx.textBaseline = 'alphabetic';
+      }
+      ctx.setLineDash([]);
+    }
+
     ctx.restore();
   }
 
@@ -713,6 +866,10 @@
       catch (e) { if (window.console && console.error) console.error('[v2.ui.liveRender] drawV2Plates threw:', e); }
       try { drawV2BoltsOnCanvas(blk, cs); }
       catch (e) { if (window.console && console.error) console.error('[v2.ui.liveRender] drawV2Bolts threw:', e); }
+      // plate-grouping-stiffener — group-flash wash, painted AFTER the plate +
+      // bolt bodies so it sits on top of both the v25 members and the plates.
+      try { if (typeof window.v25DrawGroupFlash === 'function') window.v25DrawGroupFlash(blk, cs); }
+      catch (e) { if (window.console && console.error) console.error('[v2.ui.liveRender] v25DrawGroupFlash threw:', e); }
       // Fix M (2026-05-23): vertex dots on every v2 plate (so users see
       // where to click for vertex-drag / Shift+click-delete). Painted AFTER
       // the plate outline so the dots sit on top.
@@ -722,6 +879,11 @@
       // selected plate. Painted after the dots so the handle sits on top.
       try { drawV2PlateSelection(blk, cs); }
       catch (e) { if (window.console && console.error) console.error('[v2.ui.liveRender] drawV2PlateSelection threw:', e); }
+      // Workstream A: dotted ortho guide + soft face-snap indicators during a
+      // plate body-move. Painted after the selection outline so the guides sit
+      // on top; only does work while a bodyDrag is live.
+      try { drawV2PlateDragGuides(blk, cs); }
+      catch (e) { if (window.console && console.error) console.error('[v2.ui.liveRender] drawV2PlateDragGuides threw:', e); }
       // Fix E (2026-05-23): in-progress preview for the active v2 tool
       // (currently the plate tool's rect / poly ghost). Drawn last so the
       // preview is always on top of committed entities.
@@ -811,6 +973,7 @@
     drawV2ActiveToolPreview: drawV2ActiveToolPreview,   // Fix E (2026-05-23)
     drawV2PlateVertexDots:   drawV2PlateVertexDots,     // Fix M (2026-05-23)
     drawV2PlateSelection:    drawV2PlateSelection,      // Fix O (2026-05-23)
+    drawV2PlateDragGuides:   drawV2PlateDragGuides,     // Workstream A (plate-orientation-presets)
     eachV2Plate: eachV2Plate,
     eachV2Bolt:  eachV2Bolt,
     plateUV: plateUV,

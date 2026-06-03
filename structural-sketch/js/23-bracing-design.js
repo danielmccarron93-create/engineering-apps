@@ -2197,7 +2197,10 @@ function getMaxSpacing(windClass, capacityKnPerM) {
 /**
  * Minimum distance from point p to line segment (el.x1,y1)→(el.x2,y2).
  */
-function pointToSegmentDist(p, el) {
+// Renamed from pointToSegmentDist to avoid clobbering the global 6-arg
+// pointToSegmentDist(px,py,x1,y1,x2,y2) in 06-drawing-tools.js, which
+// hitTestElement relies on for line/dimension/leader selection.
+function pointToSegmentDistToWall(p, el) {
     const dx = el.x2 - el.x1;
     const dy = el.y2 - el.y1;
     const lenSq = dx * dx + dy * dy;
@@ -2303,7 +2306,7 @@ function checkCornerBracing(walls, buildingExtent, threshold) {
     return corners.map(corner => {
         let nd = Infinity, nw = null;
         for (const el of walls) {
-            const d = pointToSegmentDist(corner, el);
+            const d = pointToSegmentDistToWall(corner, el);
             if (d < nd) { nd = d; nw = el; }
         }
         return { corner, nearestWall: nw, distance: Math.round(nd), threshold, ok: nd <= threshold };

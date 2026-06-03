@@ -55,17 +55,31 @@ function colorAlpha(cssColor, alpha) {
   const key = cssColor + '|' + alpha;
   if (_colorCache[key]) return _colorCache[key];
 
+  _colorCtx.fillStyle = '#000';        // reset so an invalid assignment can't leak a prior value
   _colorCtx.fillStyle = cssColor;
-  const res = _colorCtx.fillStyle;
+  const res = _colorCtx.fillStyle;     // canvas-normalised: '#rrggbb' or 'rgba(...)' for sRGB inputs
   let result;
   if (res.startsWith('#')) {
     const r = parseInt(res.slice(1,3),16), g = parseInt(res.slice(3,5),16), b = parseInt(res.slice(5,7),16);
     result = `rgba(${r},${g},${b},${alpha})`;
-  } else {
+  } else if (/^rgba?\(/.test(res)) {
     result = res.replace(/rgba?\(([^)]+)\)/, (_, inner) => {
       const parts = inner.split(',').map(s=>s.trim());
       return `rgba(${parts[0]},${parts[1]},${parts[2]},${alpha})`;
     });
+  } else {
+    // Modern / wide-gamut colour the canvas keeps verbatim (oklch, lab, color(),
+    // hwb, …). The old code returned these unchanged, so the alpha was silently
+    // dropped — e.g. an oklch theme accent rendered the plate fill OPAQUE. Fix:
+    // rasterise one pixel to extract sRGB, then apply the alpha.
+    try {
+      _colorCtx.clearRect(0, 0, 1, 1);
+      _colorCtx.fillRect(0, 0, 1, 1);
+      const d = _colorCtx.getImageData(0, 0, 1, 1).data;
+      result = `rgba(${d[0]},${d[1]},${d[2]},${alpha})`;
+    } catch (e) {
+      result = res;   // last resort: opaque, rather than throw
+    }
   }
   _colorCache[key] = result;
   return result;

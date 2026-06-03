@@ -19,16 +19,17 @@ function v25BuildOptionsBar() {
 }
 function v25UpdateOptionsBar() {
   const bar = v25BuildOptionsBar();
-  // Fix G + H (2026-05-23): v2 PlacePlateTool — show Thickness + Orientation
-  // chips. Thickness is greyed when Orientation is Vertical (free-draw mode
-  // — the user defines the visible face dimensions, thickness is metadata).
-  // Mode (rect vs poly) is now auto-detected from drag-vs-click, so no chip.
+  // plate-orientation-presets (2026-05-31): v2 PlacePlateTool — Thickness select
+  // + a live Orientation icon row (Elevation / flat-horizontal-cleat / vertical-
+  // cleat), mirroring the member (72b) and bolt (72c) orientation rows.
+  // Thickness is ALWAYS enabled — it is inert for the 'elevation' face-on mode
+  // (into-page metadata) but the user wants it selectable regardless. Mode
+  // (rect vs poly) is auto-detected from drag-vs-click, so no chip.
   const v2Tool = (window.v2 && v2.engine && typeof v2.engine.activeTool === 'function')
     ? v2.engine.activeTool() : null;
   if (sheetMode === '2d' && v2Tool && v2Tool.id === 'place-plate') {
     bar.style.display = 'flex';
     const ui = (v2.appState && v2.appState.ui) || {};
-    const orientation = (ui.activePlateOrientation === 'horizontal') ? 'horizontal' : 'vertical';
     const activeType  = ui.activePlateType || 'PL12';
     // Plate-flat type catalogue — single source of truth in
     // `js/v2/catalogues/families/plate-flat.js`. Read it through the v2
@@ -44,30 +45,24 @@ function v25UpdateOptionsBar() {
         return { id: 'PL' + t, thickness: t };
       });
     }
-    const thkDisabled = (orientation === 'vertical');
     const thkOptions = plateTypes.map(function (t) {
       return '<option value="' + t.id + '"' + (t.id === activeType ? ' selected' : '') +
              '>' + t.thickness + ' mm</option>';
     }).join('');
-    const help = (orientation === 'horizontal')
-      ? 'Click start · click / drag end · cursor side sets thickness direction · Esc cancels'
-      : 'Drag = rectangle · click (no drag) = polygon · Shift = free-angle in poly · Esc cancels';
+    const help = 'Elevation = drag rect / click poly · cleats = click start · click / drag end ' +
+                 '(cursor side sets thickness direction) · Shift = ortho while moving; ' +
+                 'corner-drag is ortho by default · Esc cancels';
     bar.innerHTML =
       '<strong>Plate (v2)</strong>' +
-      '<label style="display:flex;align-items:center;gap:4px"' +
-        (thkDisabled ? ' title="Thickness only applies to Horizontal cleats — Vertical plates are free-drawn"' : '') +
-        '>' +
-        '<span style="color:var(--text-mute);font-size:11px' + (thkDisabled ? ';opacity:0.5' : '') + '">Thickness</span>' +
-        '<select id="v2plate-thickness"' + (thkDisabled ? ' disabled style="opacity:0.5;cursor:not-allowed"' : '') + '>' +
+      '<label style="display:flex;align-items:center;gap:4px">' +
+        '<span style="color:var(--text-mute);font-size:11px">Thickness</span>' +
+        '<select id="v2plate-thickness">' +
           thkOptions +
         '</select>' +
       '</label>' +
       '<label style="display:flex;align-items:center;gap:4px">' +
         '<span style="color:var(--text-mute);font-size:11px">Orientation</span>' +
-        '<select id="v2plate-orientation">' +
-          '<option value="vertical"' + (orientation === 'vertical' ? ' selected' : '') + '>Vertical</option>' +
-          '<option value="horizontal"' + (orientation === 'horizontal' ? ' selected' : '') + '>Horizontal</option>' +
-        '</select>' +
+        '<span id="v25OrientSlot"></span>' +
       '</label>' +
       '<span style="color:var(--text-mute);font-size:11px">' + help + '</span>';
     const thkSel = bar.querySelector('#v2plate-thickness');
@@ -76,24 +71,12 @@ function v25UpdateOptionsBar() {
       v2.appState.ui.activePlateType = e.target.value;
       if (typeof requestRender === 'function') requestRender();
     });
-    const orSel = bar.querySelector('#v2plate-orientation');
-    if (orSel) orSel.addEventListener('change', function (e) {
-      if (!v2.appState.ui) v2.appState.ui = {};
-      v2.appState.ui.activePlateOrientation = e.target.value;
-      // Reset the in-flight tool state (anchor / poly) so switching orientation
-      // mid-placement doesn't leave half-built geometry behind.
-      if (v2.appState.tools && v2.appState.tools['place-plate']) {
-        const slot = v2.appState.tools['place-plate'];
-        slot.mode = 'rect';
-        slot.anchor = null;
-        slot.anchorPx = null;
-        slot.poly = [];
-        slot.preview = null;
-      }
-      if (typeof requestRender === 'function') requestRender();
-      if (typeof v25UpdateOptionsBar === 'function') v25UpdateOptionsBar();
-      if (typeof updateStatus === 'function') updateStatus();
-    });
+    // Swap the orientation-row placeholder for the live icon-button element
+    // (built with click handlers, so it can't live inside the innerHTML string).
+    const slot = bar.querySelector('#v25OrientSlot');
+    if (slot && typeof v25BuildPlateOrientationRow === 'function') {
+      slot.replaceWith(v25BuildPlateOrientationRow());
+    }
     return;
   }
   if (sheetMode !== '2d' || !tool || !tool.startsWith('v25-')) {
@@ -170,6 +153,22 @@ function v25UpdateOptionsBar() {
   // v1 V25 plate options (Aspect / Thk) retired by architecture-v2 Phase 2.
   // v2 plate placement options will land on the v2 inspector + size picker
   // when Phase 11+ stands up the standalone v2 BB-rail.
+  } else if (tool === 'v25-bolt') {
+    const curSize = v25State.boltSize || (typeof lastUsedSection !== 'undefined' && lastUsedSection.bolt) || 'M20';
+    const curGrade = v25State.boltGrade || '8.8';
+    html += `<strong>Bolt</strong>`;
+    html += fld('Size',
+      `<select id="v25o-bolt-size" style="width:80px">` +
+      Object.keys(BOLT_DB).map(s => `<option value="${s}"${s === curSize ? ' selected' : ''}>${s}</option>`).join('') +
+      `</select>`);
+    html += fld('Grade',
+      `<select id="v25o-bolt-grade" style="width:90px">` +
+      ['4.6', '8.8'].map(g => `<option value="${g}"${g === curGrade ? ' selected' : ''}>${g}/S</option>`).join('') +
+      `</select>`);
+    // Orientation row is a live DOM icon row (buttons carry click handlers) so
+    // it can't live in the innerHTML string — emit a placeholder and swap in the
+    // real row after bar.innerHTML is set, exactly like the member Orientation.
+    html += fld('Orientation', `<span id="v25OrientSlot"></span>`);
   } else if (tool === 'v25-leader') {
     html += `<strong>Leader</strong>`;
     html += fld('Default text', `<input id="v25o-leadertxt" value="${(v25Last.leaderText || 'CALLOUT').replace(/"/g, '&quot;')}" style="width:200px"/>`);
@@ -184,12 +183,24 @@ function v25UpdateOptionsBar() {
     html += `<strong>Text</strong>`;
     html += fld('Default text', `<input id="v25o-textdef" value="${(v25Last.textDefault || 'TEXT').replace(/"/g, '&quot;')}" style="width:200px"/>`);
     html += fld('Size (mm)', `<input id="v25o-textsz" type="number" step="0.5" value="${v25Last.textSize || 3}" style="width:60px"/>`);
-  } else if (tool === 'v25-notebox') {
+  } else if (tool === 'v25-stiffener') {
+    // plate-grouping-stiffener — full-depth web stiffener. Thickness + weld
+    // toggle; geometry (between flange inner faces, centred on a column) is
+    // resolved at click time. Defaults persist on v25Last.
+    const _stThk = (typeof v25Last !== 'undefined' && v25Last.stiffThk) || 10;
+    const _stWeld = (typeof v25Last === 'undefined' || v25Last.stiffWeld !== false);
+    html += `<strong>Stiffener</strong>`;
+    html += fld('Thickness (mm)', `<select id="v25o-stiff-thk" style="width:80px">` +
+      [6,8,10,12,16,20].map(t => `<option value="${t}"${t === _stThk ? ' selected' : ''}>${t} mm</option>`).join('') +
+      `</select>`);
+    html += fld('Weld both sides', `<input id="v25o-stiff-weld" type="checkbox"${_stWeld ? ' checked' : ''}/>`);
+    html += `<span style="color:var(--text-mute);font-size:11px">Hover a beam under a column · click to place · Shift = free X · drag an end to shorten</span>`;
+  } else if (tool === 'v25-notebox' || tool === 'v25-note') {
     html += (typeof nbOptionsBarHTML === 'function') ? nbOptionsBarHTML() : '<strong>Note</strong>';
   }
   bar.innerHTML = html + ` <span style="color:var(--text-mute);margin-left:8px;font-size:11px">Esc to cancel</span>`;
 
-  if (tool === 'v25-notebox' && typeof nbBindOptionsBar === 'function') nbBindOptionsBar(bar);
+  if ((tool === 'v25-notebox' || tool === 'v25-note') && typeof nbBindOptionsBar === 'function') nbBindOptionsBar(bar);
 
   // Swap the orientation-row placeholder for the live element (built with click
   // handlers, so it can't live inside the innerHTML string). mt is out of scope
@@ -198,6 +209,15 @@ function v25UpdateOptionsBar() {
     const slot = bar.querySelector('#v25OrientSlot');
     if (slot && typeof v25BuildOrientationRow === 'function') {
       slot.replaceWith(v25BuildOrientationRow(v25State.memberType || 'ub'));
+    }
+  }
+  // Swap the bolt orientation-row placeholder for the live element (mirrors the
+  // member Orientation slot above — the bolt row builder takes no params and
+  // reads/writes v25State.boltOrient itself).
+  if (tool === 'v25-bolt') {
+    const slot = bar.querySelector('#v25OrientSlot');
+    if (slot && typeof v25BuildBoltOrientationRow === 'function') {
+      slot.replaceWith(v25BuildBoltOrientationRow());
     }
   }
   // Swap the blockwork View placeholder for the live Section/Elevation row.
@@ -216,6 +236,8 @@ function v25UpdateOptionsBar() {
   wire('v25o-spacing', e => { v25Last.anchorSpacing = parseInt(e.target.value) || 200; });
   wire('v25o-embed', e => { v25Last.anchorEmbed = parseInt(e.target.value) || 100; });
   wire('v25o-mat', e => { v25Last.material = e.target.value; });
+  wire('v25o-stiff-thk', e => { v25Last.stiffThk = parseInt(e.target.value) || 10; });
+  wire('v25o-stiff-weld', e => { v25Last.stiffWeld = !!e.target.checked; });
   wire('v25o-block', e => { v25Last.blockThk = e.target.value; });
   wire('v25o-wallend', e => { v25Last.wallEnd = e.target.value; });
   wire('v25o-wallgrout', e => { v25Last.wallGrouted = e.target.checked; });
@@ -226,6 +248,16 @@ function v25UpdateOptionsBar() {
     if (v25State.memberType) lastUsedSection[v25State.memberType] = v25State.section;
     if (typeof populateTilePalette === 'function') populateTilePalette();
     if (typeof highlightActiveTile === 'function') highlightActiveTile();
+  });
+  wire('v25o-bolt-size', e => {
+    v25State.boltSize = e.target.value;
+    if (typeof lastUsedSection !== 'undefined') lastUsedSection.bolt = v25State.boltSize;
+    if (typeof highlightActiveTile === 'function') highlightActiveTile();
+    if (typeof requestRender === 'function') requestRender();
+  });
+  wire('v25o-bolt-grade', e => {
+    v25State.boltGrade = e.target.value;
+    if (typeof requestRender === 'function') requestRender();
   });
   // v25o-aspect / v25o-openside wires retired — orientation is now set through
   // the orientation row (v25BuildOrientationRow → v25SetOrientation), which

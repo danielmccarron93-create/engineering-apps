@@ -183,6 +183,7 @@ function _inspToolLabel(t) {
 function _inspMemberTitle(o) {
   if (o.type === 'ub' || o.type === 'uc' || o.type === 'shs') return o.section || o.type.toUpperCase();
   if (o.type === 'bolt') return o.boltSize || 'M20 Bolt';
+  if (o.type === 'bolt2') return (o.size || 'M20') + ' Bolt';
   if (o.type === 'plate') return `PL ${o.pt || 10} THK`;
   return o.type || 'Object';
 }
@@ -218,6 +219,14 @@ function _inspSheetInfoHtml() {
       <div class="insp-field"><label>Name</label><input id="tbFirmName" value="${fv('firmName')}"></div>
       <div class="insp-field"><label>Tagline</label><input id="tbFirmTagline" value="${fv('firmTagline')}"></div>
     </div>
+    <div class="insp-section">
+      <div class="insp-title">Spelling</div>
+      <div class="insp-field"><label>Spell-check notes
+        <span style="float:right;font-weight:normal;color:var(--text-mute);font-size:10px;">
+          <input type="checkbox" id="cbSpellCheck" ${(typeof spellIsEnabled === 'function' ? spellIsEnabled() : true) ? 'checked' : ''} style="vertical-align:middle;"> en-AU
+        </span></label>
+      </div>
+    </div>
   `;
 }
 
@@ -238,6 +247,22 @@ function _wireSheetInfoInputs() {
       // Update inspector header too
       const h1 = document.getElementById('inspH1');
       if (h1) h1.textContent = sheetInfo.drawingNo || 'Untitled';
+      requestRender();
+    });
+  }
+  // Spell-check toggle — a global app preference persisted to localStorage by
+  // js/80 (NOT written into the per-sheet title block / sheetInfo).
+  const cbSpell = document.getElementById('cbSpellCheck');
+  if (cbSpell) {
+    cbSpell.addEventListener('change', () => {
+      if (typeof spellSetEnabled === 'function') spellSetEnabled(cbSpell.checked);
+      // Reconcile a live note editor's squiggle overlay with the new state so
+      // toggling OFF mid-edit can't strand the textarea transparent (and ON
+      // re-attaches the squiggles immediately).
+      if (window.nbEditor && window.nbEditor.el && window.nbEditor.ent) {
+        if (typeof nbSpellDetach === 'function') nbSpellDetach();
+        if (cbSpell.checked && typeof nbSpellAttach === 'function') nbSpellAttach(window.nbEditor.el, window.nbEditor.ent);
+      }
       requestRender();
     });
   }
@@ -355,6 +380,45 @@ function _inspMemberHtml(o) {
     sizeRow = `<div class="insp-field"><label>Size</label><select id="propBoltSize">${
       Object.keys(BOLT_DB).map(b => `<option ${b === o.boltSize ? 'selected' : ''}>${b}</option>`).join('')
     }</select></div>`;
+  } else if (o.type === 'bolt2') {
+    // 2D paper-space bolt. Size + orientation + grade/cat + grip control.
+    const curSize = o.size || 'M20';
+    const orients = (typeof V25_BOLT_ORIENT !== 'undefined' && Array.isArray(V25_BOLT_ORIENT))
+      ? V25_BOLT_ORIENT
+      : [{ id: 'end', label: 'End-on' },
+         { id: 'h-nutR', label: 'Horizontal — nut right' },
+         { id: 'h-nutL', label: 'Horizontal — nut left' },
+         { id: 'v-nutB', label: 'Vertical — nut bottom' },
+         { id: 'v-nutT', label: 'Vertical — nut top' }];
+    const curOrient = o.boltOrient || 'end';
+    const curGrade = o.grade || '8.8';
+    const curCat = o.cat || 'S';
+    // Grip control: auto by default; a numeric override switches to manual.
+    const gripIsManual = (o.gripOverride != null);
+    sizeRow = `
+      <div class="insp-field"><label>Size</label><select id="propBolt2Size">${
+        Object.keys(BOLT_DB).map(b => `<option value="${b}"${b === curSize ? ' selected' : ''}>${b}</option>`).join('')
+      }</select></div>
+      <div class="insp-field"><label>Orientation</label><select id="propBolt2Orient">${
+        orients.map(or => `<option value="${or.id}"${or.id === curOrient ? ' selected' : ''}>${or.label || or.id}</option>`).join('')
+      }</select></div>
+      <div class="insp-row">
+        <div class="insp-field"><label>Grade</label><select id="propBolt2Grade">${
+          ['4.6', '8.8', '10.9'].map(g => `<option value="${g}"${g === curGrade ? ' selected' : ''}>${g}</option>`).join('')
+        }</select></div>
+        <div class="insp-field"><label>Cat</label><select id="propBolt2Cat">${
+          ['S', 'TB', 'TF'].map(c => `<option value="${c}"${c === curCat ? ' selected' : ''}>${c}</option>`).join('')
+        }</select></div>
+      </div>
+      <div class="insp-field">
+        <label>Grip
+          <span style="float:right;font-weight:normal;color:var(--text-mute);font-size:10px;">
+            <input type="checkbox" id="propBolt2GripAuto" ${gripIsManual ? '' : 'checked'} style="vertical-align:middle;"> auto
+          </span>
+        </label>
+        <input type="number" id="propBolt2GripOverride" placeholder="auto" min="1" step="1"
+          value="${gripIsManual ? o.gripOverride : ''}" ${gripIsManual ? '' : 'disabled'}>
+      </div>`;
   } else if (o.type === 'plate') {
     sizeRow = `<div class="insp-field"><label>Thickness (mm)</label><input type="number" id="propPt" value="${o.pt || 10}"></div>`;
   }
@@ -500,6 +564,53 @@ function _wireMemberInputs(o) {
   bind('propLen', el => { o.length = parseFloat(el.value) || o.length; });
   bind('propBoltSize', el => { o.boltSize = el.value; });
   bind('propPt', el => { o.pt = parseFloat(el.value) || o.pt; });
+
+  // bolt2 (2D paper-space bolt) — size / orientation / grade / cat all mutate
+  // the entity directly. Changing size while a manual grip override is set
+  // re-snaps the length to the new size's standard length.
+  bind('propBolt2Size', el => {
+    o.size = el.value;
+    if (o.gripOverride != null && typeof computeBoltLength === 'function') {
+      o.length = computeBoltLength(o.gripOverride, o.size);
+    }
+  });
+  bind('propBolt2Orient', el => { o.boltOrient = el.value; });
+  bind('propBolt2Grade', el => { o.grade = el.value; });
+  bind('propBolt2Cat', el => { o.cat = el.value; });
+
+  // Grip control: 'auto' checkbox toggles between auto-scan (delete
+  // gripOverride) and a manual numeric override. Setting the override stores
+  // ent.gripOverride; clearing the field or re-ticking auto returns to auto.
+  const gripAuto = document.getElementById('propBolt2GripAuto');
+  const gripOver = document.getElementById('propBolt2GripOverride');
+  if (gripAuto) gripAuto.addEventListener('change', () => {
+    if (gripAuto.checked) {
+      delete o.gripOverride;
+      if (gripOver) { gripOver.value = ''; gripOver.disabled = true; }
+    } else {
+      if (gripOver) {
+        gripOver.disabled = false;
+        const v = parseFloat(gripOver.value);
+        o.gripOverride = (!isNaN(v) && v > 0) ? v : 20;
+        gripOver.value = o.gripOverride;
+        if (typeof computeBoltLength === 'function') o.length = computeBoltLength(o.gripOverride, o.size);
+      }
+    }
+    requestRender();
+  });
+  if (gripOver) gripOver.addEventListener('change', () => {
+    const v = parseFloat(gripOver.value);
+    if (gripOver.value === '' || isNaN(v) || v <= 0) {
+      // Empty / invalid → revert to auto.
+      delete o.gripOverride;
+      gripOver.disabled = true;
+      if (gripAuto) gripAuto.checked = true;
+    } else {
+      o.gripOverride = v;
+      if (typeof computeBoltLength === 'function') o.length = computeBoltLength(o.gripOverride, o.size);
+    }
+    requestRender();
+  });
 
   // V25-layout-overhaul Phase 6.1 — section dropdown + Pick… launcher.
   // Both update the selected member's section property and trigger a re-render.

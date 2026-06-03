@@ -23,6 +23,97 @@ function findLinkedFootings(el) {
     return [];
 }
 
+// ── Coincident-node editing (Issue 2) ─────────────────────
+// When you grab a node shared by several members — e.g. a column with the
+// ends of the beams framing into it — they should move together. This mirrors
+// the linked-footing pattern above. Kill-switch: nodeEditSettings.coincidentDrag.
+const nodeEditSettings = { coincidentDrag: true };
+const COINCIDENT_NODE_TOL = 1; // mm — endpoints within this distance are treated as the same node
+
+/** Find the OTHER members whose node sits on (gx, gy), excluding the grabbed
+ *  node itself. Returns capture records used by the drag move/undo logic.
+ *  grabbedEndpoint: 'point' (a column) | 'p1' | 'p2' (a line/wall endpoint). */
+function findCoincidentNodes(grabEl, gx, gy, grabbedEndpoint) {
+    const out = [];
+    const selectable = (typeof isSelectableOnActiveLevel === 'function')
+        ? isSelectableOnActiveLevel
+        : function () { return true; };
+    const near = (x, y) => Math.abs(x - gx) <= COINCIDENT_NODE_TOL && Math.abs(y - gy) <= COINCIDENT_NODE_TOL;
+
+    for (const el of project.elements) {
+        if (!selectable(el)) continue; // never drag a member from another floor
+
+        if (el.type === 'column') {
+            if (el === grabEl) continue;
+            if (near(el.x, el.y)) {
+                out.push({
+                    el, kind: 'point', orig: { x: el.x, y: el.y },
+                    // a moved column drags its auto-linked footing(s) along too
+                    footings: findLinkedFootings(el).map(f => ({
+                        footing: f,
+                        orig: f.x1 !== undefined
+                            ? { x1: f.x1, y1: f.y1, x2: f.x2, y2: f.y2 }
+                            : { x: f.x, y: f.y }
+                    }))
+                });
+            }
+        } else if (el.type === 'line' || el.type === 'wall') {
+            if (!(el === grabEl && grabbedEndpoint === 'p1') && near(el.x1, el.y1)) {
+                out.push({ el, kind: 'p1', orig: { x1: el.x1, y1: el.y1, x2: el.x2, y2: el.y2 } });
+            }
+            if (!(el === grabEl && grabbedEndpoint === 'p2') && near(el.x2, el.y2)) {
+                out.push({ el, kind: 'p2', orig: { x1: el.x1, y1: el.y1, x2: el.x2, y2: el.y2 } });
+            }
+        }
+    }
+    return out;
+}
+
+/** Move a captured coincident node to absolute position (nx, ny). */
+function moveCoincidentNode(cn, nx, ny) {
+    if (cn.kind === 'point') {
+        cn.el.x = nx; cn.el.y = ny;
+        if (cn.footings) {
+            const dvx = nx - cn.orig.x, dvy = ny - cn.orig.y;
+            for (const lf of cn.footings) {
+                if (lf.orig.x1 !== undefined) {
+                    lf.footing.x1 = lf.orig.x1 + dvx; lf.footing.y1 = lf.orig.y1 + dvy;
+                    lf.footing.x2 = lf.orig.x2 + dvx; lf.footing.y2 = lf.orig.y2 + dvy;
+                } else {
+                    lf.footing.x = lf.orig.x + dvx; lf.footing.y = lf.orig.y + dvy;
+                }
+            }
+        }
+    } else if (cn.kind === 'p1') {
+        cn.el.x1 = nx; cn.el.y1 = ny;
+    } else if (cn.kind === 'p2') {
+        cn.el.x2 = nx; cn.el.y2 = ny;
+    }
+}
+
+/** Apply one side ('orig' | 'next') of a coincident-node undo snapshot. */
+function applyCoincidentSnap(list, which) {
+    for (const cs of list) {
+        const src = cs[which];
+        if (cs.kind === 'point') {
+            cs.el.x = src.x; cs.el.y = src.y;
+        } else {
+            cs.el.x1 = src.x1; cs.el.y1 = src.y1; cs.el.x2 = src.x2; cs.el.y2 = src.y2;
+        }
+        if (cs.footings) {
+            for (const fs of cs.footings) {
+                const fsrc = fs[which];
+                if (fsrc.x1 !== undefined) {
+                    fs.footing.x1 = fsrc.x1; fs.footing.y1 = fsrc.y1;
+                    fs.footing.x2 = fsrc.x2; fs.footing.y2 = fsrc.y2;
+                } else {
+                    fs.footing.x = fsrc.x; fs.footing.y = fsrc.y;
+                }
+            }
+        }
+    }
+}
+
 function setActiveTool(tool) {
     // === STATE CLEARING (ALL TOOLS) ===
 
@@ -2067,6 +2158,24 @@ container.addEventListener('mousedown', (e) => {
         } else {
             dragState._linkedFootings = null;
         }
+
+        // Coincident-node capture (Issue 2): grabbing a node shared by a
+        // column and the beam ends framing into it moves them all together.
+        dragState._coincidentNodes = null;
+        if (nodeEditSettings.coincidentDrag) {
+            let gx, gy, grabbedEndpoint = null;
+            if (hit.type === 'column') {
+                gx = hit.x; gy = hit.y; grabbedEndpoint = 'point';
+            } else if ((hit.type === 'line' || hit.type === 'wall') && dragState.nodeIndex === 0) {
+                gx = hit.x1; gy = hit.y1; grabbedEndpoint = 'p1';
+            } else if ((hit.type === 'line' || hit.type === 'wall') && dragState.nodeIndex === 1) {
+                gx = hit.x2; gy = hit.y2; grabbedEndpoint = 'p2';
+            }
+            if (grabbedEndpoint) {
+                const coincident = findCoincidentNodes(hit, gx, gy, grabbedEndpoint);
+                if (coincident.length) dragState._coincidentNodes = coincident;
+            }
+        }
     }
 
     engine.requestRender();
@@ -2139,6 +2248,18 @@ window.addEventListener('mousemove', (e) => {
         }
     }
 
+    // Coincident-node movement (Issue 2): keep every member sharing the
+    // grabbed node locked to its final (snapped) position.
+    if (dragState._coincidentNodes) {
+        let nx, ny;
+        if (el.type === 'column') { nx = el.x; ny = el.y; }
+        else if (dragState.nodeIndex === 0) { nx = el.x1; ny = el.y1; }
+        else if (dragState.nodeIndex === 1) { nx = el.x2; ny = el.y2; }
+        if (nx !== undefined) {
+            for (const cn of dragState._coincidentNodes) moveCoincidentNode(cn, nx, ny);
+        }
+    }
+
     engine.requestRender();
 });
 
@@ -2165,32 +2286,54 @@ window.addEventListener('mouseup', (e) => {
         })
         : [];
 
+    // Snapshot coincident-node positions for undo (Issue 2)
+    const coincidentSnap = (dragState._coincidentNodes || []).map(cn => {
+        const snap = { el: cn.el, kind: cn.kind, orig: cn.orig };
+        snap.next = cn.kind === 'point'
+            ? { x: cn.el.x, y: cn.el.y }
+            : { x1: cn.el.x1, y1: cn.el.y1, x2: cn.el.x2, y2: cn.el.y2 };
+        if (cn.footings) {
+            snap.footings = cn.footings.map(lf => ({
+                footing: lf.footing,
+                orig: lf.orig,
+                next: lf.orig.x1 !== undefined
+                    ? { x1: lf.footing.x1, y1: lf.footing.y1, x2: lf.footing.x2, y2: lf.footing.y2 }
+                    : { x: lf.footing.x, y: lf.footing.y }
+            }));
+        }
+        return snap;
+    });
+
     if (moved) {
         if (isLineType) {
             const nx1 = el.x1, ny1 = el.y1, nx2 = el.x2, ny2 = el.y2;
             const desc = dragState.nodeIndex >= 0 ? 'Move node' : 'Move element';
             history.undoStack.push({
-                description: desc + (linkedSnap.length ? ' + linked footing' : ''),
+                description: desc + (linkedSnap.length ? ' + linked footing' : '') + (coincidentSnap.length ? ' + node' : ''),
                 execute() {
                     el.x1 = nx1; el.y1 = ny1; el.x2 = nx2; el.y2 = ny2;
                     for (const ls of linkedSnap) Object.assign(ls.footing, ls.newCoords);
+                    applyCoincidentSnap(coincidentSnap, 'next');
                 },
                 undo() {
                     el.x1 = orig.x1; el.y1 = orig.y1; el.x2 = orig.x2; el.y2 = orig.y2;
                     for (const ls of linkedSnap) Object.assign(ls.footing, ls.origCoords);
+                    applyCoincidentSnap(coincidentSnap, 'orig');
                 }
             });
         } else if (!(el.type === 'polyline' || el.type === 'cloud')) {
             const nx = el.x, ny = el.y;
             history.undoStack.push({
-                description: 'Move element' + (linkedSnap.length ? ' + linked footing' : ''),
+                description: 'Move element' + (linkedSnap.length ? ' + linked footing' : '') + (coincidentSnap.length ? ' + node' : ''),
                 execute() {
                     el.x = nx; el.y = ny;
                     for (const ls of linkedSnap) Object.assign(ls.footing, ls.newCoords);
+                    applyCoincidentSnap(coincidentSnap, 'next');
                 },
                 undo() {
                     el.x = orig.x; el.y = orig.y;
                     for (const ls of linkedSnap) Object.assign(ls.footing, ls.origCoords);
+                    applyCoincidentSnap(coincidentSnap, 'orig');
                 }
             });
         }
@@ -2200,6 +2343,7 @@ window.addEventListener('mouseup', (e) => {
     dragState.dragging = false;
     dragState.el = null;
     dragState._linkedFootings = null;
+    dragState._coincidentNodes = null;
     container.style.cursor = '';
     engine.requestRender();
 });

@@ -250,6 +250,68 @@ function addEnt2D(ent) {
   redoStack = [];
 }
 
+// Restore a v25 entity-move snapshot (the {ents, plates} shape captured in
+// js/39-events.js). Used by both the undo() (before) and redo() (after)
+// 'v25Move' branches. v25 entities are restored by Object.assign onto the SAME
+// live object so identity is preserved (selection / group hooks keep working);
+// the stored snapshot is never mutated. v2 plate polygons are restored on the
+// v2 model element so the plate mirror / bolt-grip stays correct. Reach the v2
+// namespace via window.v2.
+//
+// `other` is the OPPOSITE snapshot of the same v25Move action (after when
+// restoring before, and vice-versa). It is needed because a grouped move can
+// CHANGE the entity SET, not just entity fields: when a flange joint is
+// re-welded/-bolted at the drop point (js/72g-v25-joint.js applyJoint), the old
+// weld/bolt entities are spliced out and fresh ones created with NEW ids. So
+// before/after hold the joint child entities under DIFFERENT ids. To make the
+// move reversible we reconcile the set:
+//   - any id present in `other` but not in `target` was created by the move →
+//     remove it from the view;
+//   - any id present in `target` but missing from the live view was deleted by
+//     the move → re-create it (full clone);
+//   - ids in both get Object.assign'd (the common position-only case).
+// Without `other` (single-entity / no-joint moves) this collapses to the plain
+// field-restore behaviour.
+function v25RestoreMoveSnapshot(view, target, other) {
+  if (!target) return;
+  if (view && typeof entities2D !== 'undefined' && entities2D && Array.isArray(entities2D[view])) {
+    const arr = entities2D[view];
+    const targetIds = new Set((target.ents || []).map(e => e.id));
+    // Remove entities the move ADDED (in `other`, not in `target`).
+    if (other && Array.isArray(other.ents)) {
+      const stale = other.ents.filter(e => !targetIds.has(e.id)).map(e => e.id);
+      if (stale.length) {
+        const drop = new Set(stale);
+        entities2D[view] = arr.filter(e => !(e && drop.has(e.id)));
+      }
+    }
+    const live = entities2D[view];
+    (target.ents || []).forEach(stored => {
+      const cur = live.find(e => e && e.id === stored.id);
+      if (cur) Object.assign(cur, JSON.parse(JSON.stringify(stored)));
+      else live.push(JSON.parse(JSON.stringify(stored)));   // re-create one the move deleted
+    });
+  }
+  const model = window.v2 && v2.appState && v2.appState.model;
+  if (model && model.elements && typeof model.elements.get === 'function') {
+    (target.plates || []).forEach(p => {
+      const el = model.elements.get(p.id);
+      if (el && el.geometry) {
+        el.geometry = Object.assign({}, el.geometry, { polygon: JSON.parse(JSON.stringify(p.polygon)) });
+        // Restore the flange-joint metadata captured alongside the polygon (key
+        // added in js/39-events.js v25SnapshotMoveTargets) so undo doesn't leave
+        // a stale joint pointing at a beam the plate no longer meets. Only act
+        // when the snapshot carries the key (older snapshots won't).
+        if (Object.prototype.hasOwnProperty.call(p, 'flange')) {
+          if (!el.params) el.params = {};
+          if (p.flange) el.params.flange = JSON.parse(JSON.stringify(p.flange));
+          else delete el.params.flange;
+        }
+      }
+    });
+  }
+}
+
 function undo() {
   if (!undoStack.length) return;
   const a = undoStack.pop();
@@ -266,6 +328,14 @@ function undo() {
     const v = a.ent.view;
     entities2D[v] = entities2D[v].filter(e => e.id !== a.ent.id);
   }
+  else if (a.act === 'v25Move') {
+    // 2D-mode v25 entity move (member/hatch/blockwork/leader/noteBox, plus any
+    // grouped mates incl. v2 plates). moveObj only restores objects3D, so a
+    // 2D-entity move needs its own act. undo() restores the BEFORE snapshot;
+    // a.after lets it drop any joint weld/bolt the move created. Captured in
+    // js/39-events.js at v25Drag release.
+    v25RestoreMoveSnapshot(a.view, a.before, a.after);
+  }
   else if (a.act === 'connection') {
     // Atomic connection undo: remove every object + 2D entity created by the
     // connection builder in one step.
@@ -276,6 +346,17 @@ function undo() {
       for (const vk of Object.keys(entities2D)) {
         entities2D[vk] = entities2D[vk].filter(e => !entIds.has(e.id));
       }
+    }
+  }
+  else if (a.act === 'v2tx') {
+    // 2D-mode plates are v2-authoritative — their place/edit/delete live on the
+    // v2 transactional undo stack. The {act:'v2tx'} marker (pushed by
+    // js/v2/engine/v1-bridge.js whenever a v2 transaction is applied) keeps v1
+    // and v2 edits on one chronological timeline, so Ctrl+Z unwinds them
+    // together in LIFO order. Route this pop to the v2 stack's undo.
+    if (window.v2 && v2.engine && v2.engine.undoStack &&
+        typeof v2.engine.undoStack.undo === 'function') {
+      v2.engine.undoStack.undo();
     }
   }
   selected3D = [];
@@ -297,12 +378,25 @@ function redo() {
     });
   }
   else if (a.act === 'addEnt2D') entities2D[a.ent.view].push(JSON.parse(JSON.stringify(a.ent)));
+  else if (a.act === 'v25Move') {
+    // Mirror of undo()'s v25Move branch — redo() re-applies the AFTER snapshot;
+    // a.before lets it drop any pre-move joint weld/bolt the redo supersedes.
+    v25RestoreMoveSnapshot(a.view, a.after, a.before);
+  }
   else if (a.act === 'connection') {
     // Atomic connection redo: re-insert every object + entity the builder made.
     for (const snap of (a.objSnaps || [])) objects3D.push(JSON.parse(JSON.stringify(snap)));
     for (const snap of (a.entSnaps || [])) {
       const v = snap.view;
       if (entities2D[v]) entities2D[v].push(JSON.parse(JSON.stringify(snap)));
+    }
+  }
+  else if (a.act === 'v2tx') {
+    // Mirror of undo()'s v2tx branch — replay the v2 transaction via the v2
+    // stack's redo so Ctrl+Y re-applies a plate place / edit / delete.
+    if (window.v2 && v2.engine && v2.engine.undoStack &&
+        typeof v2.engine.undoStack.redo === 'function') {
+      v2.engine.undoStack.redo();
     }
   }
   selected3D = [];

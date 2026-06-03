@@ -5,6 +5,33 @@
        ============================================================ */
     @import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Serif:wght@400;500;600&display=swap");
 
+    /* ============================================================
+       ROUTED GOTHIC — bundled drafting face (NOT a CDN font)
+       Darren Embry, SIL Open Font License v1.1 (see /fonts/OFL.txt).
+       Traced from a Leroy lettering stencil — the genuine drafting-
+       template lineage. Used by the 2D-mode noteBox 'Routed Gothic'
+       lettering styles (js/97 NB_STYLES). Three cuts, each shipped as
+       a single normal/normal face under its own family name so the
+       canvas drawer can select it by family alone:
+         Regular · Wide (extended) · Half-Italic (gentle lean).
+       Files live in /fonts; url() is relative to THIS stylesheet (css/).
+       ============================================================ */
+    @font-face {
+      font-family: "Routed Gothic";
+      src: url("../fonts/routed-gothic.ttf") format("truetype");
+      font-weight: normal; font-style: normal; font-display: swap;
+    }
+    @font-face {
+      font-family: "Routed Gothic Wide";
+      src: url("../fonts/routed-gothic-wide.ttf") format("truetype");
+      font-weight: normal; font-style: normal; font-display: swap;
+    }
+    @font-face {
+      font-family: "Routed Gothic Half Italic";
+      src: url("../fonts/routed-gothic-half-italic.ttf") format("truetype");
+      font-weight: normal; font-style: normal; font-display: swap;
+    }
+
     * { box-sizing: border-box; margin: 0; padding: 0; }
 
     /* ============================================================
@@ -1592,3 +1619,105 @@
       border-color: var(--accent-brd, var(--accent));
       box-shadow: 0 0 0 2px var(--focus-ring);
     }
+
+    /* ============================================================
+       SPELL-CHECK (note text) — js/80 engine + js/81 UI.
+       Live red-squiggle overlay, right-click fix menu, sweep panel.
+       ============================================================ */
+    /* Backdrop mirrored exactly behind #nbEditorTA. Its text is transparent;
+       only the wavy underline under a flagged word is painted, showing through
+       the (transparent) textarea beneath the live glyphs. */
+    .sp-backdrop {
+      position: absolute;
+      margin: 0;
+      z-index: 59;                 /* directly behind the textarea (z-index 60) */
+      overflow: hidden;
+      pointer-events: none;
+      color: transparent;
+      background: transparent;
+      white-space: pre-wrap;
+      word-break: normal;
+      overflow-wrap: break-word;
+      -webkit-user-select: none;
+      user-select: none;
+    }
+    .sp-bad {
+      color: transparent;
+      text-decoration: underline;
+      text-decoration-style: wavy;
+      text-decoration-color: #e23b2e;
+      text-decoration-skip-ink: none;
+      -webkit-text-decoration: underline wavy #e23b2e;
+      text-underline-offset: 2px;
+    }
+
+    /* Right-click fix menu (mirrors the .menu idiom). */
+    .sp-menu {
+      position: fixed;
+      z-index: 2200;
+      min-width: 180px; max-width: 280px;
+      padding: 4px;
+      background: var(--surface-2, var(--surface, #fff));
+      border: 1px solid var(--border, #ccc);
+      border-radius: 8px;
+      box-shadow: var(--shadow-pop, 0 8px 24px rgba(0,0,0,0.25));
+      font-size: 12px;
+      color: var(--text, #222);
+    }
+    .sp-menu-item {
+      padding: 5px 10px;
+      border-radius: 5px;
+      cursor: pointer;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .sp-menu-item:hover { background: var(--accent-bg, rgba(0,0,0,0.06)); color: var(--accent-press, var(--accent, #06c)); }
+    .sp-menu-item.sp-strong { font-weight: 600; }
+    .sp-menu-item.sp-disabled { color: var(--text-subtle, #999); cursor: default; }
+    .sp-menu-item.sp-disabled:hover { background: transparent; color: var(--text-subtle, #999); }
+    .sp-menu-sep { height: 1px; background: var(--border, #ccc); margin: 4px 2px; }
+
+    /* Document-sweep results panel (right side). */
+    .sp-panel {
+      position: fixed;
+      top: 64px; right: 14px;
+      width: 320px; max-height: 72vh;
+      display: flex; flex-direction: column;
+      z-index: 1400;
+      background: var(--surface, #fff);
+      border: 1px solid var(--border, #ccc);
+      border-radius: 10px;
+      box-shadow: var(--shadow-pop, 0 10px 30px rgba(0,0,0,0.3));
+      font-size: 12px; color: var(--text, #222);
+      overflow: hidden;
+    }
+    .sp-panel-head {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 9px 12px;
+      border-bottom: 1px solid var(--border, #ccc);
+      background: var(--surface-3, var(--surface-2, var(--surface)));
+    }
+    .sp-panel-title { font-weight: 600; }
+    .sp-panel-x {
+      border: none; background: transparent; cursor: pointer;
+      font-size: 16px; line-height: 1; color: var(--text-mute, #777); padding: 0 2px;
+    }
+    .sp-panel-x:hover { color: var(--text, #222); }
+    .sp-panel-body { overflow-y: auto; padding: 6px; }
+    .sp-panel-empty { padding: 18px 10px; text-align: center; color: var(--text-mute, #777); }
+    .sp-hit {
+      padding: 8px; border-radius: 7px; margin-bottom: 6px;
+      background: var(--surface-2, var(--surface)); border: 1px solid var(--border, #ddd);
+    }
+    .sp-hit-top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+    .sp-hit-word { font-weight: 600; color: #e23b2e; }
+    .sp-hit-meta { font-size: 10px; color: var(--text-subtle, #999); white-space: nowrap; }
+    .sp-hit-ctx { margin: 3px 0 6px; color: var(--text-mute, #666); font-family: var(--font-mono, ui-monospace, monospace); font-size: 11px; }
+    .sp-hit-acts { display: flex; flex-wrap: wrap; gap: 4px; }
+    .sp-btn {
+      padding: 3px 8px; border-radius: 5px; cursor: pointer; font-size: 11px;
+      border: 1px solid var(--border-2, var(--border, #ccc));
+      background: var(--surface-3, var(--surface)); color: var(--text, #222);
+    }
+    .sp-btn:hover { border-color: var(--accent, #06c); }
+    .sp-btn-fix { background: var(--accent-bg, rgba(0,0,0,0.05)); border-color: var(--accent-brd, var(--accent)); color: var(--accent-press, var(--accent)); font-weight: 600; }
+    .sp-btn-mute { color: var(--text-mute, #777); }

@@ -1238,6 +1238,22 @@ function v25Plate2Faces(ent) {
 //
 // For each entity pair we keep ONLY the largest-overlap interface (matches
 // the 3D pipeline's de-dup). Output is consumed by drawV25AutoWelds().
+//
+// plate-grouping-stiffener follow-up — true when a plate2 mirror's underlying v2
+// plate has a registered flange joint to `memberEnt`. That joint owns the
+// interface's connection explicitly (none/weld-via-jweld/bolt), so the always-on
+// geometric auto-weld must NOT also hatch it. Member-scoped so a grouped plate's
+// OTHER contacts (e.g. the plate↔column cap weld) still auto-weld normally.
+function v25PlateJointSuppressesWeld(plateEnt, memberEnt) {
+  if (!plateEnt || plateEnt.type !== 'plate2' || !plateEnt._v2Id) return false;
+  const model = (window.v2 && v2.appState && v2.appState.model) || null;
+  if (!model || !(model.elements instanceof Map)) return false;
+  const el = model.elements.get(plateEnt._v2Id);
+  const fj = el && el.params && el.params.flange;
+  if (!fj) return false;
+  if (memberEnt && memberEnt.id != null && fj.memberId != null && memberEnt.id !== fj.memberId) return false;
+  return true;   // joint governs this interface — defer to its mode, no auto-hatch
+}
 function computeV25WeldInterfaces(viewKey) {
   const out = [];
   if (!viewKey) return out;
@@ -1283,6 +1299,14 @@ function computeV25WeldInterfaces(viewKey) {
       if (overlap < minOverlap) continue;
       const idA = fA._ent.id, idB = fB._ent.id;
       const key = 'v25-' + (idA < idB ? `${idA}-${idB}` : `${idB}-${idA}`);
+      // plate-grouping-stiffener follow-up — a plate↔member contact that belongs
+      // to a registered flange joint is governed by that joint's explicit mode
+      // (none = nothing, weld = jweld ticks, bolt = bolts), so skip the always-on
+      // geometric auto-weld hatch here. Without this, snapGroupToFlange's sub-2mm
+      // plate↔flange contact welded a grouped base-plate to the UB by default.
+      const _pJ = fA._ent.type === 'plate2' ? fA._ent : (fB._ent.type === 'plate2' ? fB._ent : null);
+      const _mJ = fA._ent.type === 'mem2'   ? fA._ent : (fB._ent.type === 'mem2'   ? fB._ent : null);
+      if (_pJ && _mJ && v25PlateJointSuppressesWeld(_pJ, _mJ)) continue;
       const seg = {
         u1: fA.u1 + aUx * tMin, v1: fA.v1 + aUy * tMin,
         u2: fA.u1 + aUx * tMax, v2: fA.v1 + aUy * tMax,

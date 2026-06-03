@@ -55,9 +55,17 @@
       // Fix G (2026-05-23): default thickness is PL12 (12 mm) — matches AS/NZS
       // 3678 typical detailing minimum for Bligh Tanner connection work.
       ui.activePlateType   = ui.activePlateType   || 'PL12';
-      // Fix H (2026-05-23): default orientation is 'vertical' (free-draw face).
-      ui.activePlateOrientation = (ui.activePlateOrientation === 'horizontal')
-        ? 'horizontal' : 'vertical';
+      // plate-orientation-presets (2026-05-31): orientation is one of
+      // 'elevation' | 'h-cleat' | 'v-cleat'. Keep a valid current value, map the
+      // legacy 'vertical'->'elevation' / 'horizontal'->'h-cleat', else default
+      // 'elevation' (free-draw face-on plate).
+      ui.activePlateOrientation =
+        (ui.activePlateOrientation === 'elevation' ||
+         ui.activePlateOrientation === 'h-cleat' ||
+         ui.activePlateOrientation === 'v-cleat')   ? ui.activePlateOrientation
+        : (ui.activePlateOrientation === 'horizontal') ? 'h-cleat'
+        : (ui.activePlateOrientation === 'vertical')   ? 'elevation'
+        : 'elevation';
       // Mirror activePlate* into the generic active* slots so the catalogue
       // lookups in place-plate-tool see the same defaults.
       ui.activeFamily = ui.activePlateFamily;

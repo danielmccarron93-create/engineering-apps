@@ -181,6 +181,9 @@
         { id: 'v25-notebox', kind: 'tool', label: 'Note',
           icon: 'icon-note',
           onClick: () => { if (typeof v25SetTool === 'function') v25SetTool('v25-notebox'); } },
+        { id: 'v25-note', kind: 'tool', label: 'Text',
+          icon: 'icon-text',
+          onClick: () => { if (typeof v25SetTool === 'function') v25SetTool('v25-note'); } },
         { id: 'v25-leader', kind: 'tool', label: 'Leader',
           icon: 'icon-note', onClick: () => v25SetTool('v25-leader') },
         { id: 'd-text', kind: 'tool', label: 'Text',
@@ -227,21 +230,12 @@
         { id: 'd-bolt', kind: 'tool', label: 'Bolts',
           sub: 'BOLT', icon: 'icon-bolt',
           onClick: () => {
-            // 2D mode + useV2For.bolts flag ON → v2 PlaceBoltTool via the
-            // v2 BB-rail activator. See js/v2/ui/palette-bb-rail.js.
-            //   Architecture-v2 Phase 3 (2026-05-23): v2 bolt support is
-            //   built alongside v1; the flag defaults OFF so the running app
-            //   is byte-identical to today until Dan flips it.
-            // Any other mode (3D OR flag-off) → legacy selectMemberByBolt.
-            if (sheetMode === '2d' && window.v2 && v2.featureFlags
-                && typeof v2.featureFlags.get === 'function'
-                && v2.featureFlags.get('bolts')
-                && v2.ui && v2.ui.paletteBBRail
-                && typeof v2.ui.paletteBBRail.activateBolt === 'function') {
-              v2.ui.paletteBBRail.activateBolt({
-                size:  lastUsedSection.bolt || 'M20',
-                grade: '8.8',
-              });
+            // 2D mode → v1 V25 bolt entity (bolt2) via v25PickAndSetBolt
+            //   (js/72c-v25-bolt.js). Arms the 'v25-bolt' tool, sets size from
+            //   the last-used bolt, and refreshes the options bar + tile state.
+            // Any other mode (3D) → legacy selectMemberByBolt.
+            if (sheetMode === '2d' && typeof v25PickAndSetBolt === 'function') {
+              v25PickAndSetBolt(lastUsedSection.bolt || 'M20');
             } else {
               selectMemberByBolt(lastUsedSection.bolt || 'M20');
             }
@@ -263,6 +257,7 @@
               setTool('draw-plate');
             }
           } },
+        { id: 'd-stiff', kind: 'tool', label: 'Stiffener', sub: 'STIFF', icon: 'icon-stiffener', onClick: () => { if (sheetMode === '2d' && typeof v25SetTool === 'function') { v25SetTool('v25-stiffener'); if (typeof setStatus === 'function') setStatus('Stiffener: hover a beam under a column, click to place (Shift = free)'); } } },
         { id: 'd-blk-wall', kind: 'member', label: 'Block wall',
           sub: ((typeof v25Last !== 'undefined' && v25Last.blockThk) || '190') + ' BLK',
           icon: 'icon-block-sec',
