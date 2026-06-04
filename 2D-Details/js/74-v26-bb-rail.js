@@ -240,6 +240,18 @@
               selectMemberByBolt(lastUsedSection.bolt || 'M20');
             }
           } },
+        { id: 'd-screw', kind: 'tool', label: 'Screw',
+          sub: 'HBS', icon: 'icon-screw',
+          onClick: () => {
+            // 2D mode → V25 HBS timber-screw fixing (screw entity) via
+            //   v25PickAndSetScrew (js/72i-v25-screw.js). 3D-mode screw is a
+            //   planned follow-on, so other modes just hint.
+            if (sheetMode === '2d' && typeof v25PickAndSetScrew === 'function') {
+              v25PickAndSetScrew(lastUsedSection.screw || 'HBSPL8120');
+            } else if (typeof setStatus === 'function') {
+              setStatus('HBS screw: switch to 2D paper-space mode to place (3D coming soon)');
+            }
+          } },
         { id: 'd-bolt-group', kind: 'tool', label: 'Bolt grp',
           sub: 'BOLT GRP', icon: 'icon-bolt-group', onClick: openBoltDialog },
         { id: 'plate', kind: 'tool', label: 'Plate',

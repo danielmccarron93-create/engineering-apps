@@ -19,6 +19,7 @@
 // ---- Weld override storage ----
 // Key = "min(idA,idB)-max(idA,idB)", value = { enabled, weldType, weldSize, showSymbol }
 let weldOverrides = {};
+const WELD_HATCH_DEFAULTS = { tickLen: 1.8, spacing: 0.7, lineThk: LW.MW };
 
 function weldKey(idA, idB) {
   return idA < idB ? `${idA}-${idB}` : `${idB}-${idA}`;
@@ -182,6 +183,9 @@ function computeWeldInterfaces() {
         enabled: override.enabled !== undefined ? override.enabled : true,
         weldType: override.weldType || 'fillet',
         weldSize: override.weldSize || autoSize,
+        tickLen: override.tickLen,
+        lineThk: override.lineThk,
+        hatchSpacing: override.hatchSpacing,
       });
     }
   }
@@ -316,49 +320,45 @@ function projectWeldToView(ifc, viewKey) {
 
 // ---- Draw weld hatching for a single interface line ----
 // Draws 45° diagonal tick marks along the interface, on the hatchSide.
-function drawWeldHatch(blk, seg, weldSize, cs) {
+function drawWeldHatch(blk, seg, ifc, cs) {
   const pm = ppm();
-  const col = cs.getPropertyValue('--entity-color').trim();
-  ctx.strokeStyle = colorAlpha(col, 0.85);
-  // Medium-weight overlay (LW.MW = 0.50mm) — reads clearly as weld annotation
-  // without competing with visible-edge linework.
-  ctx.lineWidth = Math.max(0.3, LW.MW * pm);
+  const col = cs.getPropertyValue("--entity-color").trim();
+  const d = WELD_HATCH_DEFAULTS;
+  const tickLenMM = (ifc && ifc.tickLen) || d.tickLen;
+  const spacingMM = (ifc && ifc.hatchSpacing) || d.spacing;
+  const lineThkMM = (ifc && ifc.lineThk) || d.lineThk;
+  const highlight = !!(ifc && ifc.key && ifc.key === weldPopupActiveKey);
+  if (highlight) {
+    ctx.strokeStyle = "#f59e42";
+    ctx.shadowColor = "rgba(245,140,40,0.6)";
+    ctx.shadowBlur = 6;
+  } else {
+    ctx.strokeStyle = colorAlpha(col, 0.85);
+  }
+  ctx.lineWidth = Math.max(0.3, lineThkMM * pm * (highlight ? 1.3 : 1));
   ctx.setLineDash(DASH.SOLID);
-  ctx.lineCap = 'round';
-
-  // Segment direction and length
+  ctx.lineCap = "round";
   const du = seg.u2 - seg.u1, dv = seg.v2 - seg.v1;
   const segLen = Math.hypot(du, dv);
-  if (segLen < 0.5) return;
-
-  // Normalised direction along segment; perpendicular points INTO hatch side.
+  if (segLen < 0.5) { ctx.shadowBlur = 0; return; }
   const ux = du / segLen, uy = dv / segLen;
   const nx = -uy * seg.hatchSide, ny = ux * seg.hatchSide;
-
-  // Tighter spacing and a tick that extends BOTH sides of the interface so the
-  // hatching reads as a continuous "zig-zag" chevron pattern across the joint
-  // (drafter convention — fillet weld symbols rendered on both connected faces).
-  const spacing = 0.9 * drawingScale; // ~0.9mm on sheet (was 1.2)
-  const tickHalf = 1.1 * drawingScale; // ~1.1mm half-length → 2.2mm total tick
+  const spacing = spacingMM * drawingScale;
+  const tickHalf = (tickLenMM / 2) * drawingScale;
   const nTicks = Math.max(2, Math.floor(segLen / spacing));
   const actualSpacing = segLen / nTicks;
-
   for (let i = 0; i <= nTicks; i++) {
     const t = i * actualSpacing;
     const baseU = seg.u1 + ux * t;
     const baseV = seg.v1 + uy * t;
-    // 45° chevron: extend from hatch-side deep, across the interface line,
-    // and a short way into the opposite side so the marks visibly straddle
-    // the joint (≈2.2mm tick total at 45°).
     const aU = baseU - (ux * 0.5 + nx * 0.5) * tickHalf;
     const aV = baseV - (uy * 0.5 + ny * 0.5) * tickHalf;
     const bU = baseU + (ux * 0.5 + nx * 0.5) * tickHalf;
     const bV = baseV + (uy * 0.5 + ny * 0.5) * tickHalf;
-
     rLine(blk, aU, aV, bU, bV);
   }
-
-  ctx.lineCap = 'butt';
+  ctx.lineCap = "butt";
+  ctx.shadowBlur = 0;
 }
 
 // ---- Draw all auto-welds for one view block ----
@@ -368,7 +368,7 @@ function drawAutoWelds(blk, cs) {
     if (!ifc.enabled) continue;
     const seg = projectWeldToView(ifc, blk.viewKey);
     if (!seg) continue;
-    drawWeldHatch(blk, seg, ifc.weldSize, cs);
+    drawWeldHatch(blk, seg, ifc, cs);
   }
 }
 
@@ -396,6 +396,7 @@ function hitTestWeld(blk, px, py) {
 
 // ---- Inline weld properties popup ----
 let weldPopup = null;
+let weldPopupActiveKey = null;
 
 function showWeldPopup(ifc, px, py) {
   closeWeldPopup();
@@ -404,11 +405,18 @@ function showWeldPopup(ifc, px, py) {
   const enabled = override.enabled !== undefined ? override.enabled : true;
   const wType = override.weldType || 'fillet';
   const wSize = override.weldSize || ifc.weldSize;
+  weldPopupActiveKey = ifc.key;
+  const wTickLen = override.tickLen || WELD_HATCH_DEFAULTS.tickLen;
+  const wLineThk = override.lineThk || WELD_HATCH_DEFAULTS.lineThk;
+  const wSpacing = override.hatchSpacing || WELD_HATCH_DEFAULTS.spacing;
 
   const div = document.createElement('div');
   div.id = 'weldPopup';
+  const POP_W = 210, POP_H = 360;
+  const popLeft = Math.min(px + 12, window.innerWidth - POP_W - 8);
+  const popTop = Math.min(Math.max(8, py - 10), window.innerHeight - POP_H - 8);
   div.style.cssText = `
-    position: fixed; left: ${px + 12}px; top: ${py - 10}px;
+    position: fixed; left: ${popLeft}px; top: ${popTop}px;
     background: var(--bg, #1e1e2e); border: 1px solid var(--brd, #444);
     border-radius: 6px; padding: 10px 14px; z-index: 999;
     font: 12px system-ui; color: var(--entity-color, #ccc);
@@ -436,6 +444,18 @@ function showWeldPopup(ifc, px, py) {
         ${[4,5,6,8,10,12].map(s => `<option value="${s}" ${s === wSize ? 'selected' : ''}>${s} mm</option>`).join('')}
       </select>
     </div>
+    <div style="margin-bottom:6px;">
+      <label style="font-size:11px;opacity:0.7;">Tick length (mm)</label>
+      <input type="number" id="wpTickLen" min="0.5" max="6" step="0.1" value="${wTickLen}" style="width:100%;box-sizing:border-box;background:var(--bg,#1e1e2e);color:inherit;border:1px solid var(--brd,#444);border-radius:3px;padding:2px;">
+    </div>
+    <div style="margin-bottom:6px;">
+      <label style="font-size:11px;opacity:0.7;">Line thickness (mm)</label>
+      <input type="number" id="wpLineThk" min="0.1" max="2" step="0.05" value="${wLineThk}" style="width:100%;box-sizing:border-box;background:var(--bg,#1e1e2e);color:inherit;border:1px solid var(--brd,#444);border-radius:3px;padding:2px;">
+    </div>
+    <div style="margin-bottom:6px;">
+      <label style="font-size:11px;opacity:0.7;">Spacing (mm)</label>
+      <input type="number" id="wpSpacing" min="0.3" max="5" step="0.1" value="${wSpacing}" style="width:100%;box-sizing:border-box;background:var(--bg,#1e1e2e);color:inherit;border:1px solid var(--brd,#444);border-radius:3px;padding:2px;">
+    </div>
     <div style="font-size:10px;opacity:0.5;margin-bottom:4px;">
       ${ifc.objA.type.toUpperCase()}${ifc.objA.section ? ' ' + ifc.objA.section : ''} ↔
       ${ifc.objB.type.toUpperCase()}${ifc.objB.section ? ' ' + ifc.objB.section : ''}
@@ -447,11 +467,21 @@ function showWeldPopup(ifc, px, py) {
   weldPopup = div;
 
   // Event handlers
+  // Read a numeric field and clamp to [lo,hi]; empty/invalid → undefined so
+  // drawWeldHatch falls back to WELD_HATCH_DEFAULTS. Clamping makes the input
+  // min/max real (a typed-in 50 can't produce an oversized hatch).
+  const wNum = (id, lo, hi) => {
+    const v = parseFloat(document.getElementById(id).value);
+    return isFinite(v) ? Math.min(hi, Math.max(lo, v)) : undefined;
+  };
   const apply = () => {
     weldOverrides[key] = {
       enabled: document.getElementById('wpEnabled').checked,
       weldType: document.getElementById('wpType').value,
       weldSize: parseInt(document.getElementById('wpSize').value),
+      tickLen: wNum('wpTickLen', 0.5, 6),
+      lineThk: wNum('wpLineThk', 0.1, 2),
+      hatchSpacing: wNum('wpSpacing', 0.3, 5),
     };
     invalidateWeldCache();
     requestRender();
@@ -459,6 +489,9 @@ function showWeldPopup(ifc, px, py) {
   div.querySelector('#wpEnabled').addEventListener('change', apply);
   div.querySelector('#wpType').addEventListener('change', apply);
   div.querySelector('#wpSize').addEventListener('change', apply);
+  div.querySelector("#wpTickLen").addEventListener("input", apply);
+  div.querySelector("#wpLineThk").addEventListener("input", apply);
+  div.querySelector("#wpSpacing").addEventListener("input", apply);
   div.querySelector('#wpClose').addEventListener('click', closeWeldPopup);
 
   // --- Add AS 1101.3 symbol handler ---
@@ -495,6 +528,8 @@ function showWeldPopup(ifc, px, py) {
   setTimeout(() => {
     document.addEventListener('mousedown', _weldPopupOutsideClick);
   }, 50);
+
+  requestRender();
 }
 
 function _weldPopupOutsideClick(e) {
@@ -504,6 +539,8 @@ function _weldPopupOutsideClick(e) {
 function closeWeldPopup() {
   if (weldPopup) { weldPopup.remove(); weldPopup = null; }
   document.removeEventListener('mousedown', _weldPopupOutsideClick);
+  weldPopupActiveKey = null;
+  requestRender();
 }
 
 // Show the AS 1101.3 weld dialog and invoke `onConfirm` with the collected

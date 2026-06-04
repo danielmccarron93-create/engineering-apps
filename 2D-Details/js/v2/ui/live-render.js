@@ -157,15 +157,11 @@
         const dv = num(bodyDrag.currentDelta.v);
         pts = pts.map(function (p) { return { u: p.u + du, v: p.v + dv }; });
       }
-      // plate-edge-drag (2026-06-02) — offset the grabbed edge's endpoint(s) by
-      // the live delta (both, or only the nearest node when single is set).
-      if (edgeDrag && edgeDrag.elementId === el.id && edgeDrag.currentDelta &&
-          typeof edgeDrag.iA === 'number' && typeof edgeDrag.iB === 'number') {
-        const du = num(edgeDrag.currentDelta.u);
-        const dv = num(edgeDrag.currentDelta.v);
+      // plate corner-resize — preview the recomputed corner(s) (edgeDrag.cur is
+      // the list of {i,x,y} vertices to set, written each pointer-move).
+      if (edgeDrag && edgeDrag.elementId === el.id && Array.isArray(edgeDrag.cur)) {
         pts = pts.slice();
-        if (edgeDrag.iA >= 0 && edgeDrag.iA < pts.length) pts[edgeDrag.iA] = { u: pts[edgeDrag.iA].u + du, v: pts[edgeDrag.iA].v + dv };
-        if (edgeDrag.iB >= 0 && edgeDrag.iB < pts.length) pts[edgeDrag.iB] = { u: pts[edgeDrag.iB].u + du, v: pts[edgeDrag.iB].v + dv };
+        edgeDrag.cur.forEach(function (vtx) { if (vtx.i >= 0 && vtx.i < pts.length) pts[vtx.i] = { u: vtx.x, v: vtx.y }; });
       }
       // Fix O — rotation preview (rotate origPolygon around centroid by delta).
       if (rotateDrag && rotateDrag.elementId === el.id) {
@@ -204,7 +200,32 @@
       // Fix B + C (2026-05-23): outline only — no grey fill, no centroid
       // label. AS 1100 default for a plate is outline-only at the right
       // lineweight. Labels are user-added annotations (a separate phase).
-      ctx.stroke();
+      // V25 depth order (72h) — if this plate sits BEHIND a member pushed in
+      // front of it, dash the covered span of each outline edge (AS 1100
+      // hidden line). Empty occluder set ⇒ plain stroke, unchanged.
+      var _pz = (el.params && typeof el.params.z === 'number') ? el.params.z : 0;
+      var _occ = (typeof v25DepthOccludersFor === 'function')
+        ? v25DepthOccludersFor(blk.viewKey, el.id, _pz, pts) : null;
+      if (_occ && _occ.length && typeof v25DepthClipWorldSeg === 'function') {
+        var hidCol = cs.getPropertyValue('--hid-color').trim() || col;
+        var zoom = (typeof viewport !== 'undefined' && viewport && typeof viewport.zoom === 'number') ? viewport.zoom : 1;
+        var hidDashPx = [3 * zoom, 2 * zoom];
+        var occLW = Math.max(1, cutLW * 0.6), solidLW = Math.max(1, cutLW);
+        for (var ei = 0; ei < pts.length; ei++) {
+          var pA = pts[ei], pB = pts[(ei + 1) % pts.length];
+          var segs = v25DepthClipWorldSeg(pA.u, pA.v, pB.u, pB.v, _occ);
+          for (var sj = 0; sj < segs.length; sj++) {
+            var sg = segs[sj];
+            var qa = real2px(blk, sg.u1, sg.v1), qb = real2px(blk, sg.u2, sg.v2);
+            if (sg.occluded) { ctx.strokeStyle = hidCol; ctx.lineWidth = occLW; ctx.setLineDash(hidDashPx); }
+            else { ctx.strokeStyle = col; ctx.lineWidth = solidLW; ctx.setLineDash([]); }
+            ctx.beginPath(); ctx.moveTo(qa.x, qa.y); ctx.lineTo(qb.x, qb.y); ctx.stroke();
+          }
+        }
+        ctx.setLineDash([]);
+      } else {
+        ctx.stroke();
+      }
       ctx.restore();
     });
   }
@@ -320,13 +341,9 @@
       const dv = num(bodyDrag.currentDelta.v);
       pts = pts.map(function (p) { return { u: p.u + du, v: p.v + dv }; });
     }
-    if (edgeDrag && edgeDrag.elementId === el.id && edgeDrag.currentDelta &&
-        typeof edgeDrag.iA === 'number' && typeof edgeDrag.iB === 'number') {
-      const du = num(edgeDrag.currentDelta.u);
-      const dv = num(edgeDrag.currentDelta.v);
+    if (edgeDrag && edgeDrag.elementId === el.id && Array.isArray(edgeDrag.cur)) {
       pts = pts.slice();
-      if (edgeDrag.iA >= 0 && edgeDrag.iA < pts.length) pts[edgeDrag.iA] = { u: pts[edgeDrag.iA].u + du, v: pts[edgeDrag.iA].v + dv };
-      if (edgeDrag.iB >= 0 && edgeDrag.iB < pts.length) pts[edgeDrag.iB] = { u: pts[edgeDrag.iB].u + du, v: pts[edgeDrag.iB].v + dv };
+      edgeDrag.cur.forEach(function (vtx) { if (vtx.i >= 0 && vtx.i < pts.length) pts[vtx.i] = { u: vtx.x, v: vtx.y }; });
     }
     if (rotateDrag && rotateDrag.elementId === el.id) {
       const r = rotateDrag;

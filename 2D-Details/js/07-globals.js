@@ -72,6 +72,14 @@ let cycleHits = [];    // all objects under cursor (for Tab cycling)
 let cycleIndex = 0;    // current index in cycleHits
 let cycleLastPx = null; // cursor position when cycle started
 
+// ---- 2D CLICK-AGAIN CYCLE (noteBox-over-member pick) ----
+// Repeat-clicking the same spot in 2D select walks the hit-stack underneath the
+// top pick (Bluebeam/AutoCAD "click again to get the thing behind"). Distinct
+// from the 3D Tab-cycle above (cycleHits/…) which writes selected3D.
+let v25CycleIds = [];      // ordered entity ids under the last click (stack order)
+let v25CycleIndex = 0;     // which stack entry is currently selected
+let v25CycleLastPx = null; // {x,y} canvas px of the last cycle click
+
 // ---- BOLT GROUP STATE ----
 let boltGroupConfig = null; // { boltSize, rows, cols, gauge, pitch }
 
@@ -91,6 +99,24 @@ let dimType = 'horizontal'; // 'horizontal', 'vertical', 'aligned', 'angular'
 // Mouse state
 let isPanning = false, panLast = null;
 let dragMoving = false, dragStart = null, dragSnapshots = null;
+
+// ---- MODIFIER-DRAG DUPLICATE (Bluebeam-style copy-drag) ----
+// Hold the duplicate modifier and body-drag any item to drop an exact copy; the
+// original stays put and the COPY follows the cursor. Modifier = Alt on every
+// platform, plus Ctrl on Windows/Linux only — on macOS Ctrl+click is the system
+// right-click (it drives the Group/Joint context menu in js/39-events.js), so
+// Ctrl is deliberately left alone there. isDupDragModifier() is the single
+// source of truth, read by both the v1 event tree (js/39-events.js) and the v2
+// plate tool (js/v2/tools/edit-plate.js, via window).
+const IS_MAC = /Mac|iPhone|iPad/.test((typeof navigator !== 'undefined' && navigator.platform) || '');
+function isDupDragModifier(e) { return !!(e && (e.altKey || (e.ctrlKey && !IS_MAC))); }
+if (typeof window !== 'undefined') window.isDupDragModifier = isDupDragModifier;
+// 3D-object pipeline cross-event state — set at mousedown, consumed on the first
+// mousemove. (The v25 and v2-plate pipelines stash the equivalent flag on their
+// per-drag object instead, so they need no module-level global.)
+let dragDupPending = false;   // modifier+body seen at 3D mousedown, awaiting first move
+let dragDupObjIds = null;     // ids of the 3D clones the current copy-drag added (for the mouseup undo)
+
 let selBoxStart = null;
 // Which finaliser the mouseup branch should run for the marquee that
 // `selBoxStart` started: '3d' = filter objects3D + getObj2DBounds, '2d' = filter

@@ -126,6 +126,7 @@ const v25Last = {
 // the body so CSS can hide the Model/Draw/Annotate switcher.
 function applySheetMode(mode, silent) {
   sheetMode = (mode === '2d') ? '2d' : '3d';
+  v25CycleIds = []; v25CycleIndex = 0; v25CycleLastPx = null;   // reset 2D pick cycle on mode switch
   // Mirror onto the active sheet record
   const s = project.sheets && project.sheets[project.activeSheetIdx];
   if (s) s.mode = sheetMode;

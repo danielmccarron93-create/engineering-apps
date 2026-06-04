@@ -44,7 +44,7 @@
     selectedId:  null,   // Fix O (2026-05-23) — currently-selected plate id
     bodyDrag:    null,   // Fix O / plate-orientation-presets — { elementId, origPolygon, anchorWorld:{u,v}, currentDelta:{u,v}, orthoAxis:'u'|'v'|null, snapLines:[{axis,value,label}]|null }
     rotateDrag:  null,   // Fix O — { elementId, origPolygon, centroid:{x,y}, anchorAngle, currentAngle }
-    edgeDrag:    null,   // plate corner→END-edge reshape — { elementId, iA, iB, origVA:{x,y}, origVB:{x,y}, anchorWorld:{u,v}, currentDelta:{u,v}(projected), normal:{x,y} }. Moves BOTH corners of the short edge, constrained to the long axis (normal) → widen/narrow.
+    edgeDrag:    null,   // plate corner-resize — corner mode {elementId,mode:'corner',viI,nAI,nBI,O,eu,ev,origVi,anchorWorld,cur} or vertex fallback {…,mode:'vertex',viI,origVi,…}. Grabbed corner follows the cursor, opposite fixed, stays rectangular (resizes both dims). cur = [{i,x,y}] vertices to set (written each move).
   };
 
   /** Fix O (2026-05-23) — handle is rendered 30 screen-pixels above the
@@ -55,6 +55,25 @@
   const ROTATE_SNAP_DEG     = 15;
 
   function num(n, dflt) { return (typeof n === 'number' && isFinite(n)) ? n : (dflt === undefined ? 0 : dflt); }
+
+  /** Corner-resize math (plate corner drag). Given the edgeDrag state `ed` and a
+   *  drag delta (du,dv), return the polygon vertices to set: for a 'corner' drag
+   *  the grabbed corner follows the cursor while the opposite corner (O) stays
+   *  fixed and the two neighbours track along the plate's edge axes (eu,ev) — so
+   *  the plate resizes in BOTH width and height yet stays rectangular. For the
+   *  'vertex' fallback (non-quad) it just moves the grabbed vertex. */
+  function plateResizeCorners(ed, du, dv) {
+    const cx = ed.origVi.x + du, cy = ed.origVi.y + dv;
+    if (ed.mode !== 'corner') return [{ i: ed.viI, x: cx, y: cy }];
+    const ocx = cx - ed.O.x, ocy = cy - ed.O.y;
+    const a = ocx * ed.eu.x + ocy * ed.eu.y;   // extent along edge axis eu
+    const b = ocx * ed.ev.x + ocy * ed.ev.y;   // extent along edge axis ev
+    return [
+      { i: ed.viI, x: ed.O.x + a * ed.eu.x + b * ed.ev.x, y: ed.O.y + a * ed.eu.y + b * ed.ev.y },
+      { i: ed.nAI, x: ed.O.x + a * ed.eu.x,                y: ed.O.y + a * ed.eu.y },
+      { i: ed.nBI, x: ed.O.x + b * ed.ev.x,                y: ed.O.y + b * ed.ev.y },
+    ];
+  }
 
   /** Read Shift state — prefer v1's global if present, fall back to event. */
   function shiftIsHeld(event) {
@@ -392,6 +411,35 @@
     return v2.engine.undoStack.applyTransaction(tx);
   }
 
+  /** Bluebeam copy-drag: place an independent copy of a plate element at the
+   *  same polygon and return the new id (or null). The copy carries no group
+   *  (it is a fresh standalone plate). The placeElement transaction records its
+   *  own undo entry; the subsequent body-move commit is a second entry, so a
+   *  copy-drag is two Ctrl+Z to fully undo (noted in the planning folder). */
+  function duplicatePlateElement(srcId) {
+    const model = v2.appState && v2.appState.model;
+    if (!model || !model.elements || typeof model.elements.get !== 'function') return null;
+    const src = model.elements.get(srcId);
+    if (!src || !src.geometry || !Array.isArray(src.geometry.polygon)) return null;
+    if (!v2.transactions || typeof v2.transactions.placeElement !== 'function') return null;
+    const params = Object.assign({}, src.params || {});
+    delete params.groupId;   // a copy is an independent plate, not part of the source's group
+    const polygon = src.geometry.polygon.map(function (p) { return { x: num(p.x), y: num(p.y) }; });
+    const geometry = (v2.model && typeof v2.model.region === 'function')
+      ? v2.model.region({ viewId: src.geometry.viewId, polygon: polygon })
+      : { kind: 'region', viewId: src.geometry.viewId, polygon: polygon };
+    const tx = v2.transactions.placeElement({
+      category:   src.category,
+      family:     src.family,
+      type:       src.type,
+      geometry:   geometry,
+      materialId: src.materialId,
+      params:     params,
+    });
+    apply(tx);
+    return (tx && tx.data && tx.data.element && tx.data.element.id) || null;
+  }
+
   /* ---- POINTER HANDLERS (called from event-dispatch when no v2 tool active) -------- */
 
   function onPointerDown(event, ctx) {
@@ -420,70 +468,80 @@
         // plate-grouping-stiffener — if this plate is grouped, snapshot the
         // mates so they rotate rigidly about the plate centroid with it.
         if (typeof window.v25GroupOnPlateRotateBegin === 'function') window.v25GroupOnPlateRotateBegin(rHit.elementId, centroid);
+        if (typeof window.v25GroupOnPlateMoveUndoBegin === 'function') window.v25GroupOnPlateMoveUndoBegin(rHit.elementId);
         if (ctx.requestRender) ctx.requestRender();
       }
       return true;
     }
 
-    // Priority 2: CORNER (vertex) hit. plate-edge-drag (2026-06-02, reworked):
-    //   plain drag  → move the END (short) edge this corner belongs to, so the
-    //                 plate gets wider / narrower. BOTH corners of that short
-    //                 edge move together, constrained to the plate's long axis
-    //                 (perpendicular to the end edge) so it stays rectangular.
-    //   Shift+click → delete the vertex (refuse below 3).
+    // Priority 2: Shift+click → MULTI-SELECT toggle (for grouping several plates,
+    // matching how v25 members Shift-add). A Shift click anywhere ON a plate
+    // (corner / edge / body) adds it to — or removes it from — the co-selection
+    // set; it never drags. This replaces the old Shift+corner=delete /
+    // Shift+edge=insert vertex edits, which collided with multi-select on thin
+    // plates (a Shift click on a thin plate always lands within edge tolerance).
+    if (shift) {
+      const sHit = hitTestVertex(blk, cursor.u, cursor.v) ||
+                   hitTestEdge(blk, cursor.u, cursor.v) ||
+                   hitTestBody(blk, cursor.u, cursor.v);
+      if (sHit && sHit.elementId != null) {
+        if (!Array.isArray(window.v25SelPlateIds)) window.v25SelPlateIds = [];
+        const _i = window.v25SelPlateIds.indexOf(sHit.elementId);
+        if (_i >= 0) window.v25SelPlateIds.splice(_i, 1);   // toggle off
+        else window.v25SelPlateIds.push(sHit.elementId);    // toggle on
+        state.selectedId = sHit.elementId;
+        if (ctx.requestRender) ctx.requestRender();
+        return true;
+      }
+      // Shift but no plate hit → let v1 handle it (Shift-adding a v25 member);
+      // do NOT clear the plate co-selection.
+      return false;
+    }
+
+    // ---- from here everything is a PLAIN (no-Shift) grab ----
+
+    // Priority 3: CORNER (vertex) grab → RESIZE the rectangle from this corner,
+    // so the plate gets taller AND/OR wider. The grabbed corner follows the
+    // cursor, the diagonally-opposite corner stays fixed, and the two adjacent
+    // corners track so the plate stays rectangular in its own edge axes (works
+    // for rotated plates too). Non-quad polygons fall back to moving the single
+    // grabbed vertex.
     const vHit = hitTestVertex(blk, cursor.u, cursor.v);
     if (vHit) {
       const el = v2.appState.model.elements.get(vHit.elementId);
-      if (!el || !el.geometry || !Array.isArray(el.geometry.polygon)) return false;
+      if (!el || !el.geometry || !Array.isArray(el.geometry.polygon) || el.geometry.polygon.length < 3) return false;
       const poly = el.geometry.polygon;
-      if (shift) {
-        if (poly.length <= 3) return true;   // claim the click so v1 doesn't react
-        const next = poly.filter(function (_, i) { return i !== vHit.vertexIndex; });
-        apply(buildPolygonEdit(vHit.elementId, next));
-        return true;
-      }
-      if (poly.length < 2) return false;
       const n = poly.length;
       const vi = vHit.vertexIndex;
-      const prev = (vi - 1 + n) % n, nxt = (vi + 1) % n;
-      const dPrev = Math.hypot(num(poly[vi].x) - num(poly[prev].x), num(poly[vi].y) - num(poly[prev].y));
-      const dNext = Math.hypot(num(poly[vi].x) - num(poly[nxt].x), num(poly[vi].y) - num(poly[nxt].y));
-      const partner = (dPrev <= dNext) ? prev : nxt;   // the shorter (END) edge
-      const ex = num(poly[partner].x) - num(poly[vi].x), ey = num(poly[partner].y) - num(poly[vi].y);
-      const elen = Math.hypot(ex, ey) || 1;
-      // unit normal to the end edge = the plate's long axis = the width direction
-      const nx = -ey / elen, ny = ex / elen;
       state.selectedId = vHit.elementId;
-      state.edgeDrag = {
-        elementId:    vHit.elementId,
-        iA:           vi,
-        iB:           partner,
-        origVA:       { x: num(poly[vi].x), y: num(poly[vi].y) },
-        origVB:       { x: num(poly[partner].x), y: num(poly[partner].y) },
-        anchorWorld:  { u: cursor.u, v: cursor.v },
-        currentDelta: { u: 0, v: 0 },
-        normal:       { x: nx, y: ny },     // drag is projected onto this (long axis)
-      };
+      window.v25SelPlateIds = [vHit.elementId];
+      if (n === 4) {
+        const oppI = (vi + 2) % 4, nAI = (vi + 1) % 4, nBI = (vi + 3) % 4;
+        const O = { x: num(poly[oppI].x), y: num(poly[oppI].y) };
+        const eux = num(poly[nAI].x) - O.x, euy = num(poly[nAI].y) - O.y;
+        const evx = num(poly[nBI].x) - O.x, evy = num(poly[nBI].y) - O.y;
+        const eul = Math.hypot(eux, euy) || 1, evl = Math.hypot(evx, evy) || 1;
+        state.edgeDrag = {
+          elementId:   vHit.elementId, mode: 'corner',
+          viI: vi, nAI: nAI, nBI: nBI,
+          O: O, eu: { x: eux / eul, y: euy / eul }, ev: { x: evx / evl, y: evy / evl },
+          origVi: { x: num(poly[vi].x), y: num(poly[vi].y) },
+          anchorWorld: { u: cursor.u, v: cursor.v }, cur: null,
+        };
+      } else {
+        state.edgeDrag = {
+          elementId: vHit.elementId, mode: 'vertex', viI: vi,
+          origVi: { x: num(poly[vi].x), y: num(poly[vi].y) },
+          anchorWorld: { u: cursor.u, v: cursor.v }, cur: null,
+        };
+      }
       if (ctx.requestRender) ctx.requestRender();
       return true;
     }
 
-    // Priority 3: Shift+edge → insert vertex (Fix M behaviour).
-    if (shift) {
-      const eHit = hitTestEdge(blk, cursor.u, cursor.v);
-      if (eHit) {
-        const el = v2.appState.model.elements.get(eHit.elementId);
-        if (!el || !el.geometry || !Array.isArray(el.geometry.polygon)) return false;
-        const next = el.geometry.polygon.slice();
-        next.splice(eHit.edgeIndex + 1, 0, { x: eHit.point.x, y: eHit.point.y });
-        apply(buildPolygonEdit(eHit.elementId, next));
-        return true;
-      }
-    }
-
     // Priority 4: body OR a (non-corner) edge → MOVE the whole plate. A click on
     // a long top/bottom edge, or anywhere inside the outline, just selects and
-    // moves the plate as one. (Corner grabs were already claimed at priority 2.)
+    // moves the plate as one. (Corner grabs were claimed at priority 3.)
     let bHit = hitTestBody(blk, cursor.u, cursor.v);
     if (!bHit) {
       const eHit = hitTestEdge(blk, cursor.u, cursor.v);
@@ -492,12 +550,14 @@
     if (bHit) {
       const el = v2.appState.model.elements.get(bHit.elementId);
       if (!el || !el.geometry || !Array.isArray(el.geometry.polygon)) return false;
+      // Bluebeam copy-drag: Alt (or Ctrl on Windows) + body-drag duplicates the
+      // plate. The actual clone is deferred to the first pointer movement (see
+      // onPointerMove dupPending) so a modifier-click that never moves makes no
+      // copy. A copy is a fresh independent plate (no group), so the group hooks
+      // are skipped — we must not snapshot the ORIGINAL's mates for dragging.
+      const _dup = (typeof window.isDupDragModifier === 'function' && window.isDupDragModifier(event));
       state.selectedId = bHit.elementId;
-      // plate multi-select — Shift accumulates the co-selection set so several
-      // plates can be grouped at once; a plain click resets it to just this one.
-      if (!Array.isArray(window.v25SelPlateIds)) window.v25SelPlateIds = [];
-      if (shift) { if (window.v25SelPlateIds.indexOf(bHit.elementId) < 0) window.v25SelPlateIds.push(bHit.elementId); }
-      else { window.v25SelPlateIds = [bHit.elementId]; }
+      window.v25SelPlateIds = [bHit.elementId];   // plain click → single selection
       state.bodyDrag = {
         elementId:    bHit.elementId,
         origPolygon:  el.geometry.polygon.slice(),
@@ -505,23 +565,23 @@
         currentDelta: { u: 0, v: 0 },
         orthoAxis:    null,
         snapLines:    null,
+        dupPending:   _dup,
       };
-      // plate-grouping-stiffener — selecting a grouped plate selects the whole
+      // plate-grouping-stiffener — clicking a grouped plate selects the whole
       // group; snapshot the v25 mates so they translate with this plate's drag.
-      if (typeof window.v25GroupOnPlateSelected === 'function') window.v25GroupOnPlateSelected(bHit.elementId);
-      if (typeof window.v25GroupOnPlateDragBegin === 'function') window.v25GroupOnPlateDragBegin(bHit.elementId);
+      // (Skipped while duplicating — the copy is a fresh independent plate.)
+      if (!_dup) {
+        if (typeof window.v25GroupOnPlateSelected === 'function') window.v25GroupOnPlateSelected(bHit.elementId);
+        if (typeof window.v25GroupOnPlateDragBegin === 'function') window.v25GroupOnPlateDragBegin(bHit.elementId);
+        if (typeof window.v25GroupOnPlateMoveUndoBegin === 'function') window.v25GroupOnPlateMoveUndoBegin(bHit.elementId);
+      }
       if (ctx.requestRender) ctx.requestRender();
       return true;
     }
 
-    // Fix O — empty click: deselect, then fall through to v1.
-    // plate-grouping-stiffener — but NOT while Shift is held: the user is
-    // Shift-adding a v25 member (e.g. the column) to a cross-system selection,
-    // so the plate(s) must stay selected for the subsequent Group.
-    if (!shift) {
-      if (state.selectedId) { state.selectedId = null; if (ctx.requestRender) ctx.requestRender(); }
-      window.v25SelPlateIds = [];   // a plain click clears the plate co-selection
-    }
+    // Empty (plain) click: deselect + clear the plate co-selection, fall to v1.
+    if (state.selectedId) { state.selectedId = null; if (ctx.requestRender) ctx.requestRender(); }
+    window.v25SelPlateIds = [];
     return false;
   }
 
@@ -536,15 +596,12 @@
       render2D();   // plate-orientation-presets — 2D-only render mid-drag
       return true;
     }
-    // plate corner→END-edge reshape — move both corners of the short edge by the
-    // cursor delta PROJECTED onto the long axis (normal), so the plate widens /
-    // narrows without skewing. 2D-only render mid-drag.
+    // plate corner-resize — recompute the moving corners from the cursor delta
+    // (grabbed corner follows cursor, opposite fixed, stays rectangular).
     if (state.edgeDrag) {
       if (!cursor) return true;
       const ed = state.edgeDrag;
-      let du = cursor.u - ed.anchorWorld.u, dv = cursor.v - ed.anchorWorld.v;
-      if (ed.normal) { const pr = du * ed.normal.x + dv * ed.normal.y; du = pr * ed.normal.x; dv = pr * ed.normal.y; }
-      ed.currentDelta = { u: du, v: dv };
+      ed.cur = plateResizeCorners(ed, cursor.u - ed.anchorWorld.u, cursor.v - ed.anchorWorld.v);
       render2D();
       return true;
     }
@@ -555,6 +612,21 @@
     // isn't re-rendered every mouse-move.
     if (state.bodyDrag) {
       if (!cursor) return true;
+      // Bluebeam copy-drag: the first real movement clones the plate and drags
+      // the COPY (the original stays put). placeElement mints a fresh standalone
+      // element; we re-point bodyDrag at it so live-render previews the copy.
+      if (state.bodyDrag.dupPending) {
+        const movedEnough = Math.hypot(cursor.u - state.bodyDrag.anchorWorld.u,
+                                       cursor.v - state.bodyDrag.anchorWorld.v) >= 0.5;
+        if (!movedEnough) return true;   // wait for real movement; don't preview-move the original
+        state.bodyDrag.dupPending = false;
+        const cloneId = duplicatePlateElement(state.bodyDrag.elementId);
+        if (cloneId) {
+          state.bodyDrag.elementId = cloneId;
+          state.selectedId = cloneId;
+          window.v25SelPlateIds = [cloneId];
+        }
+      }
       let du = cursor.u - state.bodyDrag.anchorWorld.u;
       let dv = cursor.v - state.bodyDrag.anchorWorld.v;
       if (shiftIsHeld(event)) {
@@ -615,9 +687,8 @@
       if (ctx && ctx.requestRender) ctx.requestRender();
       return true;
     }
-    // plate corner→END-edge reshape commit. Dragged ≥0.5 mm (along the long
-    // axis) → translate BOTH corners of the short edge; a sub-threshold release
-    // → just select (no undo entry), mirroring the vertex/body convention.
+    // plate corner-resize commit. Dragged ≥0.5 mm → set the recomputed corner(s);
+    // a sub-threshold release → just select (no undo entry).
     if (state.edgeDrag) {
       const ed = state.edgeDrag;
       state.edgeDrag = null;
@@ -627,12 +698,12 @@
         if (ctx && ctx.requestRender) ctx.requestRender();
         return true;
       }
-      let du = cursor.u - ed.anchorWorld.u, dv = cursor.v - ed.anchorWorld.v;
-      if (ed.normal) { const pr = du * ed.normal.x + dv * ed.normal.y; du = pr * ed.normal.x; dv = pr * ed.normal.y; }
+      const du = cursor.u - ed.anchorWorld.u, dv = cursor.v - ed.anchorWorld.v;
       if (Math.hypot(du, dv) >= 0.5) {
         const next = el.geometry.polygon.slice();
-        if (ed.iA >= 0 && ed.iA < next.length) next[ed.iA] = { x: ed.origVA.x + du, y: ed.origVA.y + dv };
-        if (ed.iB >= 0 && ed.iB < next.length) next[ed.iB] = { x: ed.origVB.x + du, y: ed.origVB.y + dv };
+        plateResizeCorners(ed, du, dv).forEach(function (vtx) {
+          if (vtx.i >= 0 && vtx.i < next.length) next[vtx.i] = { x: vtx.x, y: vtx.y };
+        });
         apply(buildPolygonEdit(ed.elementId, next));
       }
       if (ctx && ctx.requestRender) ctx.requestRender();
@@ -657,17 +728,33 @@
         du = snap.du; dv = snap.dv;
       }
       state.bodyDrag = null;
+      // plate-grouping-stiffener — a GROUPED plate's move joins the v25Move group
+      // undo (js/72f): direct-mutate the dragged plate (NO v2 transaction) so the
+      // whole assembly reverts on one Ctrl+Z. A non-grouped plate keeps the
+      // v2-authoritative transaction path, byte-identical to before.
+      var _pel = v2.appState && v2.appState.model && v2.appState.model.elements.get(b.elementId);
+      var _gid = _pel && _pel.params && _pel.params.groupId;
       if (Math.hypot(du, dv) >= 0.5) {
-        apply(buildPolygonEdit(b.elementId, translatePolygon(b.origPolygon, du, dv)));
+        if (_gid) {
+          if (_pel && _pel.geometry) _pel.geometry = Object.assign({}, _pel.geometry, { polygon: translatePolygon(b.origPolygon, du, dv) });
+        } else {
+          apply(buildPolygonEdit(b.elementId, translatePolygon(b.origPolygon, du, dv)));
+        }
       }
       // plate-grouping-stiffener — commit the grouped v25 mates to the same
       // final delta (they were moved directly during the drag preview).
       if (typeof window.v25GroupOnPlateDragEnd === 'function') window.v25GroupOnPlateDragEnd(b.elementId, du, dv);
       // plate-grouping-stiffener — if the dropped plate is in a group, snap the
       // assembly flush to a beam flange and register the (default-bare) joint.
-      var _pel = v2.appState && v2.appState.model && v2.appState.model.elements.get(b.elementId);
-      var _gid = _pel && _pel.params && _pel.params.groupId;
+      // Capture the v1 undo depth FIRST so the single v25Move can strip the
+      // {act:'addEnt2D'} markers the joint-snap pushes.
+      var _undoDepth = (typeof undoStack !== 'undefined' && Array.isArray(undoStack)) ? undoStack.length : 0;
       if (_gid && typeof window.v25JointSnapGroupToFlange === 'function') window.v25JointSnapGroupToFlange(_gid);
+      // Record the whole grouped move as ONE v25Move undo (no-op if not grouped).
+      if (typeof window.v25GroupOnPlateMoveUndoCommit === 'function') window.v25GroupOnPlateMoveUndoCommit(b.elementId, _undoDepth);
+      // The grouped dragged plate was direct-mutated (no transaction emit), so
+      // refresh the mirror/render explicitly (matches translateMates in js/72f).
+      if (_gid && window.v2 && v2.engine && v2.engine.dirtyBus && typeof v2.engine.dirtyBus.emit === 'function') v2.engine.dirtyBus.emit('model-changed');
       if (ctx && ctx.requestRender) ctx.requestRender();
       return true;
     }
@@ -683,12 +770,29 @@
         angle = r.anchorAngle + Math.round(d / SNAP_RAD) * SNAP_RAD;
       }
       const deltaRad = angle - r.anchorAngle;
+      // plate-grouping-stiffener — a GROUPED plate's rotate joins the v25Move
+      // group undo: direct-mutate the dragged plate (NO v2 transaction) so the
+      // whole assembly reverts on one Ctrl+Z. Non-grouped keeps the v2 path.
+      var _rel = v2.appState && v2.appState.model && v2.appState.model.elements.get(r.elementId);
+      var _rgid = _rel && _rel.params && _rel.params.groupId;
       if (Math.abs(deltaRad) >= 0.002) {  // ~0.1°
-        apply(buildPolygonEdit(r.elementId, rotatePolygon(r.origPolygon, r.centroid, deltaRad)));
+        if (_rgid) {
+          if (_rel && _rel.geometry) _rel.geometry = Object.assign({}, _rel.geometry, { polygon: rotatePolygon(r.origPolygon, r.centroid, deltaRad) });
+        } else {
+          apply(buildPolygonEdit(r.elementId, rotatePolygon(r.origPolygon, r.centroid, deltaRad)));
+        }
       }
       // plate-grouping-stiffener — settle the grouped mates at the same final
       // rotation (they were rotated live during the preview).
       if (typeof window.v25GroupOnPlateRotateEnd === 'function') window.v25GroupOnPlateRotateEnd(r.elementId, deltaRad);
+      // Record the whole grouped rotate as ONE v25Move undo. No joint-snap on the
+      // rotate path → pass the current depth so the addEnt2D strip is a no-op.
+      if (typeof window.v25GroupOnPlateMoveUndoCommit === 'function') {
+        var _rd = (typeof undoStack !== 'undefined' && Array.isArray(undoStack)) ? undoStack.length : 0;
+        window.v25GroupOnPlateMoveUndoCommit(r.elementId, _rd);
+      }
+      // Grouped dragged plate was direct-mutated (no transaction emit) — refresh.
+      if (_rgid && window.v2 && v2.engine && v2.engine.dirtyBus && typeof v2.engine.dirtyBus.emit === 'function') v2.engine.dirtyBus.emit('model-changed');
       if (ctx && ctx.requestRender) ctx.requestRender();
       return true;
     }
@@ -705,6 +809,8 @@
         // pose so a cancelled rotate / move doesn't desync the group.
         if (state.rotateDrag && typeof window.v25GroupOnPlateRotateCancel === 'function') window.v25GroupOnPlateRotateCancel();
         if (state.bodyDrag && typeof window.v25GroupOnPlateDragCancel === 'function') window.v25GroupOnPlateDragCancel();
+        // Drop any stashed grouped-move undo snapshot (cancelled → no undo entry).
+        if (typeof window.v25GroupOnPlateMoveUndoBegin === 'function') window.v25GroupOnPlateMoveUndoBegin(null);
         state.dragging = null; state.bodyDrag = null; state.rotateDrag = null; state.edgeDrag = null;
         if (ctx && ctx.requestRender) ctx.requestRender();
         return true;
@@ -746,7 +852,7 @@
    */
   function selectInRect(blk, rect, crossing, additive) {
     if (!blk || !rect) return null;
-    let hitId = null;
+    const ids = [];
     eachV2Plate(function (el) {
       if (plateViewKey(el) !== blk.viewKey) return;
       const bb = polyBBox(el.geometry && el.geometry.polygon);
@@ -754,11 +860,21 @@
       const inside = crossing
         ? (bb.L <= rect.R && bb.R >= rect.L && bb.B <= rect.T && bb.T >= rect.B)
         : (bb.L >= rect.L && bb.R <= rect.R && bb.B >= rect.B && bb.T <= rect.T);
-      if (inside) hitId = el.id;   // keep last (topmost) on overlap
+      if (inside) ids.push(el.id);
     });
-    if (hitId) state.selectedId = hitId;
-    else if (!additive) state.selectedId = null;
-    return hitId;
+    // plate multi-select — a marquee selects EVERY plate it covers (not just the
+    // topmost), so several plates can be boxed and grouped in one go. Mirrors the
+    // v25 member marquee: Shift (additive) adds to the set, plain replaces it.
+    if (!Array.isArray(window.v25SelPlateIds)) window.v25SelPlateIds = [];
+    if (ids.length) {
+      if (additive) ids.forEach(function (id) { if (window.v25SelPlateIds.indexOf(id) < 0) window.v25SelPlateIds.push(id); });
+      else window.v25SelPlateIds = ids.slice();
+      state.selectedId = ids[ids.length - 1];   // primary = topmost
+    } else if (!additive) {
+      state.selectedId = null;
+      window.v25SelPlateIds = [];
+    }
+    return ids.length ? ids[ids.length - 1] : null;
   }
 
   v2.tools.editPlate = {

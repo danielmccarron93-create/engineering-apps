@@ -31,6 +31,7 @@ const NB = {
   AUTO_MAXLINE_MM: 55,    // auto-size: don't make lines longer than this before wrapping
   AUTO_MINW_MM: 26,       // auto-size: minimum content width
   AUTO_ASPECT: 6.0,       // auto-size target width:height ratio for multi-line blocks
+  EDIT_W_MM: 70,          // comfortable mid-large width while typing (re-flows to fit on commit)
   MINW_MM: 12,            // hard minimum content width when manually resized
   SHOULDER_MM: 6,         // default auto-dogleg orthogonal shoulder length (paper-mm)
   PLACEHOLDER_W_MM: 36,   // empty/preview box content width (~4 words; box is 2 lines tall)
@@ -280,13 +281,14 @@ function nbAttachPoint(ent, tip) {
 // target lies most beyond (v is up). Used to anchor leaders orthogonally.
 function nbFacingEdge(ent, target) {
   const r = nbBoxRectReal(ent);
-  const cu = (r.uL + r.uR) / 2, cv = (r.vT + r.vB) / 2;
-  const hw = (r.uR - r.uL) / 2, hh = (r.vT - r.vB) / 2;
-  const du = target.u - cu, dv = target.v - cv;
-  if (hw <= 0 && hh <= 0) return 'bottom';
-  // Bigger normalised reach wins. (v up: below centre → bottom.)
-  if (Math.abs(dv) * hw >= Math.abs(du) * hh) return dv < 0 ? 'bottom' : 'top';
-  return du < 0 ? 'left' : 'right';
+  const cv = (r.vT + r.vB) / 2;
+  if (r.uR <= r.uL && r.vT <= r.vB) return 'bottom';
+  // Prefer the LEFT / RIGHT edges (a leader leaves the side it faces). Use the
+  // TOP / BOTTOM edge only when the target sits within the box's horizontal span
+  // (i.e. directly above / below it).
+  if (target.u < r.uL) return 'left';
+  if (target.u > r.uR) return 'right';
+  return (target.v < cv) ? 'bottom' : 'top';
 }
 
 // nbEdgeAnchor(ent, edge, target) → {u,v}: the orthogonal foot of `target` on the
@@ -313,12 +315,13 @@ function nbEdgeAnchor(ent, edge, target) {
 // stays centred + fixed-length as the box auto-sizes while you type.
 function nbAutoShoulderForRect(rect, tip, ds) {
   const cu = (rect.uL + rect.uR) / 2, cv = (rect.vT + rect.vB) / 2;
-  const hw = (rect.uR - rect.uL) / 2, hh = (rect.vT - rect.vB) / 2;
-  const du = tip.u - cu, dv = tip.v - cv;
   let edge, mid, nu, nv;
-  if (hw <= 0 && hh <= 0) edge = 'bottom';
-  else if (Math.abs(dv) * hw >= Math.abs(du) * hh) edge = (dv < 0) ? 'bottom' : 'top';
-  else edge = (du < 0) ? 'left' : 'right';
+  // Prefer LEFT / RIGHT edges (exit from the edge midpoint); use TOP / BOTTOM
+  // only when the tip is within the box's horizontal span (directly above/below).
+  if (rect.uR <= rect.uL && rect.vT <= rect.vB) edge = 'bottom';
+  else if (tip.u < rect.uL) edge = 'left';
+  else if (tip.u > rect.uR) edge = 'right';
+  else edge = (tip.v < cv) ? 'bottom' : 'top';
   if (edge === 'bottom')      { mid = { u: cu, v: rect.vB }; nu = 0;  nv = -1; }
   else if (edge === 'top')    { mid = { u: cu, v: rect.vT }; nu = 0;  nv = 1;  }
   else if (edge === 'left')   { mid = { u: rect.uL, v: cv }; nu = -1; nv = 0;  }
@@ -329,12 +332,45 @@ function nbAutoShoulderForRect(rect, tip, ds) {
 }
 function nbAutoShoulder(ent, tip) { return nbAutoShoulderForRect(nbBoxRectReal(ent), tip, _nbDs()); }
 
+// nbOrthoAnchorForRect(rect, tip) → {u,v}: anchor on the box edge for a STRAIGHT
+// ORTHOGONAL leader to `tip`. Picks horizontal vs vertical by the closest
+// direction (box centre → tip) and returns the point on the near edge aligned to
+// the tip on that axis (clamped to the edge), so anchor→tip is a clean H / V line
+// when the tip lies within that edge's span.
+function nbOrthoAnchorForRect(rect, tip) {
+  const cu = (rect.uL + rect.uR) / 2, cv = (rect.vT + rect.vB) / 2;
+  const du = tip.u - cu, dv = tip.v - cv;
+  if (Math.abs(du) >= Math.abs(dv)) {
+    // horizontal — exit the near LEFT / RIGHT edge at the tip's v
+    return { u: (du < 0) ? rect.uL : rect.uR, v: Math.max(rect.vB, Math.min(rect.vT, tip.v)) };
+  }
+  // vertical — exit the near TOP / BOTTOM edge at the tip's u
+  return { u: Math.max(rect.uL, Math.min(rect.uR, tip.u)), v: (dv < 0) ? rect.vB : rect.vT };
+}
+
+// nbSnapBoxOrthoToTip(ent, tip) — shift the box (ent.u / ent.v) so its centre
+// aligns with `tip` on whichever axis is closest, making the straight leader a
+// clean horizontal / vertical line. Used for Shift snapping (placement + drag).
+function nbSnapBoxOrthoToTip(ent, tip) {
+  const r = nbBoxRectReal(ent);
+  const cu = (r.uL + r.uR) / 2, cv = (r.vT + r.vB) / 2;
+  const du = tip.u - cu, dv = tip.v - cv;
+  if (Math.abs(du) >= Math.abs(dv)) ent.v += (tip.v - cv);   // align centre v → horizontal leader
+  else ent.u += (tip.u - cu);                                // align centre u → vertical leader
+}
+
 // nbLeaderPoints(ent, arrow) → ordered real-world points [anchor, ...elbows, tip].
 // Default (no manual elbows): an auto-dogleg [edge-midpoint, short shoulder, tip].
 // With manual elbows: anchor is the orthogonal foot of the first elbow on the
 // facing box edge, then the stored elbow nodes, then the tip.
 function nbLeaderPoints(ent, arrow) {
   const tip = { u: arrow.u, v: arrow.v };
+  // Straight leader (set by Shift+drag of the box): one direct segment from the
+  // facing-edge midpoint to the tip — no dogleg knee.
+  if (arrow.straight) {
+    const anchor = nbOrthoAnchorForRect(nbBoxRectReal(ent), tip);
+    return [anchor, tip];
+  }
   const elbows = (arrow.elbows && arrow.elbows.length) ? arrow.elbows : null;
   if (!elbows) {
     const sh = nbAutoShoulder(ent, tip);
@@ -550,11 +586,11 @@ function nbHandles(ent) {
   const uR = ent.u + lay.boxW * ds;
   const vT = ent.v;
   const vB = ent.v - lay.boxH * ds;
-  const vMid = (vT + vB) / 2;
   const out = [
     { key: 'move', u: uL, v: vT },
-    { key: 'w-w',  u: uL, v: vMid },
-    { key: 'w-e',  u: uR, v: vMid },
+    // Corner resize grips (adjust width; height re-fits the text). Bottom corners.
+    { key: 'sw', u: uL, v: vB },
+    { key: 'se', u: uR, v: vB },
   ];
   const arrows = ent.arrows || [];
   for (let i = 0; i < arrows.length; i++) {
@@ -564,8 +600,9 @@ function nbHandles(ent) {
       for (let j = 0; j < els.length; j++) {
         out.push({ key: 'elbow:' + i + ':' + j, u: els[j].u, v: els[j].v, shape: 'circle' });
       }
-    } else {
-      // default auto-dogleg: expose its shoulder node as a draggable grip.
+    } else if (!arrows[i].straight) {
+      // default auto-dogleg: expose its shoulder node as a draggable grip
+      // (a straight leader has no knee, so no shoulder grip).
       const sh = nbAutoShoulder(ent, { u: arrows[i].u, v: arrows[i].v });
       out.push({ key: 'auto:' + i, u: sh.node.u, v: sh.node.v, shape: 'circle' });
     }
@@ -577,10 +614,37 @@ function nbHandles(ent) {
 // autoSize and re-flow text; the left grip keeps the right edge fixed.
 function nbMove(ent, handle, du, dv) {
   if (handle === 'body' || handle === 'move') {
-    // Move ONLY the box origin. Arrow tips + manual elbows stay fixed so the
-    // arrowhead keeps pointing at its target while the box is dragged away; the
-    // auto-dogleg leader re-routes from the box edge to the fixed tip on render.
+    // Move the box. The arrow TIP stays fixed (keeps pointing at its target) and
+    // the leader re-routes to it. A manual knee (elbow) SLIDES with the box so the
+    // dogleg keeps its shape. Hold Shift → a clean ORTHOGONAL straight leader: the
+    // box snaps so its centre aligns with the tip on the closest axis (H or V).
     ent.u += du; ent.v += dv;
+    const sh = (typeof shiftHeld !== 'undefined' && shiftHeld);
+    (ent.arrows || []).forEach(a => {
+      if (sh) {
+        a.straight = true;
+        if (a.elbows) a.elbows = [];                                   // straight → no knees
+      } else {
+        a.straight = false;
+        (a.elbows || []).forEach(e => { e.u += du; e.v += dv; });      // knee slides with box
+      }
+      // tip (a.u / a.v) stays fixed
+    });
+    if (sh && ent.arrows && ent.arrows.length) nbSnapBoxOrthoToTip(ent, ent.arrows[0]);
+  } else if (handle === 'se' || handle === 'sw') {
+    // Corner resize → adjust width (height re-fits the text). 'se' grows to the
+    // right; 'sw' keeps the right edge fixed and grows to the left.
+    ent.autoSize = false;
+    const ds = _nbDs();
+    const w0 = (ent.boxW || nbLayout(ent).boxW);
+    if (handle === 'se') {
+      ent.boxW = Math.max(NB.MINW_MM, w0 + du / ds);
+    } else {
+      const rightReal = ent.u + w0 * ds;
+      const nw = Math.max(NB.MINW_MM, w0 - du / ds);
+      ent.boxW = nw;
+      ent.u = rightReal - nw * ds;
+    }
   } else if (handle === 'w-e') {
     // du is a real-world delta; box width is paper-mm → divide by drawingScale.
     ent.autoSize = false;

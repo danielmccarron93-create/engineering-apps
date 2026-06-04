@@ -11,6 +11,7 @@ function v25DrawEnt(blk, ent, cs) {
   if (ent.type === 'blockWall') { drawBlockWall2D(blk, ent, cs); return true; }
   if (ent.type === 'anchor') { drawAnchor2D(blk, ent, cs); return true; }
   if (ent.type === 'bolt2' && typeof drawBolt2D === 'function') { drawBolt2D(blk, ent, cs); return true; }
+  if (ent.type === 'screw' && typeof drawScrew2D === 'function') { drawScrew2D(blk, ent, cs); return true; }
   if (ent.type === 'reoBar') { drawReoBar2D(blk, ent, cs); return true; }
   if (ent.type === 'mesh') { drawMesh2D(blk, ent, cs); return true; }
   if (ent.type === 'leader2') { drawLeader2D(blk, ent, cs); return true; }
@@ -147,6 +148,7 @@ function v25SetTool(t) {
   platePts = []; plateBlock = null; plateDimInput = ''; plateDimActive = false;
   boltGroupConfig = null; weldStep = 0; weldP1 = null;
   cycleHits = []; cycleIndex = 0;
+  v25CycleIds = []; v25CycleIndex = 0; v25CycleLastPx = null;
   v25State = { polyPts: [], dragStart: null, boltOrient: lastBoltOrient, boltSize: lastBoltSize, boltGrade: lastBoltGrade, boltCat: lastBoltCat };
   // Clear any half-finished leader placement so switching tools never leaves a
   // dangling first-click (noteBox leader head) behind.
@@ -532,6 +534,24 @@ function v25TryHandleClick(blk, cu, cv, e) {
     return true;
   }
 
+  if (tool === 'v25-screw') {
+    // Single-click drops an HBS timber screw. Spec / orientation come from
+    // v25State (set by v25PickAndSetScrew + the options-bar orientation row in
+    // 72i-v25-screw.js). The glyph self-orients via ent.screwOrient; section
+    // orientations snap the head to a detected plate/member outside face at
+    // draw time (v25ScrewBearingFace), so the placed u,v is just the click.
+    const ent = v25Add('screw', {
+      screwSpec: v25State.screwSpec
+        || (typeof lastUsedSection !== 'undefined' && lastUsedSection.screw) || 'HBSPL8120',
+      screwOrient: v25State.screwOrient
+        || (typeof lastUsedOrientation !== 'undefined' && lastUsedOrientation.screw) || 'v-headT',
+      u: cu, v: cv, rot: 0,
+    });
+    v25Selected = [ent.id];
+    if (typeof v25UpdateInspector === 'function') v25UpdateInspector();
+    return true;
+  }
+
   if (tool === 'v25-bar') {
     // Polyline bar: each click adds a vertex; Enter or right-click finishes
     v25State.polyPts.push({ u: cu, v: cv });
@@ -670,6 +690,20 @@ function v25DrawPreview(blk, cs) {
     };
     ctx.save();
     drawBolt2D(blk, _gb, cs);
+    ctx.restore();
+  }
+  // Screw ghost — faded preview of the HBS screw in the chosen orientation under
+  // the (snapped) cursor, so the engineer sees head side + direction before the
+  // click (mirrors the bolt ghost above). (72i-v25-screw.js)
+  if (tool === 'v25-screw' && typeof drawScrew2D === 'function') {
+    const _gs = {
+      type: 'screw',
+      screwSpec: (typeof v25State !== 'undefined' && v25State.screwSpec) || 'HBSPL8120',
+      screwOrient: (typeof v25State !== 'undefined' && v25State.screwOrient) || 'v-headT',
+      u: cu, v: cv, rot: 0, opacity: 0.45, _preview: true,
+    };
+    ctx.save();
+    drawScrew2D(blk, _gs, cs);
     ctx.restore();
   }
   const col = cs.getPropertyValue('--selected-color').trim();
@@ -858,6 +892,7 @@ function v25ActiveTileId() {
   if (tool === 'v25-bar') return 'v25-bar-' + v25Last.reoBar;
   if (tool === 'v25-bar-dot') return 'v25-bar-dot';
   if (tool === 'v25-mesh') return 'v25-mesh-' + (v25Last.mesh.replace('SL', '').replace('RL', ''));
+  if (tool === 'v25-screw') return 'd-screw';
   if (tool === 'v25-leader') return 'v25-leader';
   if (tool === 'v25-text') return 'v25-text';
   if (tool === 'v25-notebox') return 'v25-notebox';

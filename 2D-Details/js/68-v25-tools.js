@@ -502,6 +502,22 @@ function drawMem2D(blk, ent, cs) {
   const cutLW = Math.max(1, LW.CUT * pm);
   const hidLW = Math.max(0.25, LW.HID * pm);
   const clLW = Math.max(0.25, LW.CL * pm);
+  // Hidden-line dashes (RHS/SHS inner walls, UB hidden web, PFC flange roots)
+  // are an AS 1100 drafting convention sized on the PRINTED sheet, so the dash
+  // pattern scales with the sheet (sheet-mm × screen-px-per-sheet-mm =
+  // viewport.zoom). The shared DASH.HIDDEN constant is fixed screen-px — it
+  // stays ~5px regardless of zoom, so at a normal detail zoom the wall lines
+  // collapse into a faint, near-solid dotted texture that's hard to see.
+  // Scaling by viewport.zoom keeps them crisp and proportionate at any zoom AND
+  // exports true-to-paper (the vector-PDF path runs with viewport.zoom == 1 in
+  // sheet-mm space, so these px values land directly as sheet-mm). Centrelines
+  // keep the shared fixed-px DASH.CL: a fixed sheet-mm chain-dot goes coarse on
+  // the short centrelines of a cross-section, where fixed-px still reads well.
+  // NOTE: the SHS/RHS/CHS *elevation* inner-wall WIDTH is no longer set from
+  // hidLW — it comes from the per-member MEM2_HID_LW / MEM2_HID_LW_PX ramp
+  // (hollowHidLW, in the hollow-section branch below). The dash PATTERN
+  // (hidDashPx) is still shared across all hidden lines (UB web, PFC, hollow).
+  const hidDashPx = [3, 2].map(v => v * viewport.zoom); // hidden line — 3mm dash / 2mm gap on the sheet
   ctx.strokeStyle = col; ctx.fillStyle = col;
   ctx.setLineDash([]);
   const aspect = ent.aspect || 'elev';
@@ -518,8 +534,35 @@ function drawMem2D(blk, ent, cs) {
     const wv = ent.v + lu * sinR + lv * cosR;
     return real2px(blk, wu, wv);
   };
-  // Helper to stroke a local-frame polyline.
+  // V25 depth order (72h) — silhouettes of any member pushed in FRONT of this
+  // one. Empty unless the user assigned a front/back depth, so the common case
+  // is byte-for-byte unchanged.
+  const _occPolys = (typeof v25DepthOccludersFor === 'function' &&
+                     typeof v25Mem2WorldOutline === 'function')
+    ? v25DepthOccludersFor(blk.viewKey, ent.id, (typeof ent.z === 'number' ? ent.z : 0),
+        v25Mem2WorldOutline(ent).map(p => ({ u: p[0], v: p[1] })))
+    : null;
+  // Helper to stroke a local-frame polyline. When this member sits behind one
+  // or more others, SOLID (visible) edges are split into solid + AS 1100 hidden
+  // (dashed) sub-segments wherever a front member covers them; hidden/centreline
+  // strokes (which set a non-empty dash before calling) pass straight through.
   const strokeLine = (x1, y1, x2, y2) => {
+    if (_occPolys && _occPolys.length && ctx.getLineDash().length === 0 &&
+        typeof v25DepthClipWorldSeg === 'function') {
+      const wu1 = ent.u + x1 * cosR - y1 * sinR, wv1 = ent.v + x1 * sinR + y1 * cosR;
+      const wu2 = ent.u + x2 * cosR - y2 * sinR, wv2 = ent.v + x2 * sinR + y2 * cosR;
+      const segs = v25DepthClipWorldSeg(wu1, wv1, wu2, wv2, _occPolys);
+      const sStyle = ctx.strokeStyle, sLW = ctx.lineWidth, occLW = Math.max(hidLW, sLW * 0.6);
+      for (let si = 0; si < segs.length; si++) {
+        const s = segs[si];
+        const a = real2px(blk, s.u1, s.v1), b = real2px(blk, s.u2, s.v2);
+        if (s.occluded) { ctx.strokeStyle = hidCol; ctx.lineWidth = occLW; ctx.setLineDash(hidDashPx); }
+        else { ctx.strokeStyle = sStyle; ctx.lineWidth = sLW; ctx.setLineDash([]); }
+        ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+      }
+      ctx.strokeStyle = sStyle; ctx.lineWidth = sLW; ctx.setLineDash([]);
+      return;
+    }
     const a = project(x1, y1), b = project(x2, y2);
     ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
   };
@@ -621,7 +664,7 @@ function drawMem2D(blk, ent, cs) {
       else if (trims && trims.b) strokeLine(xB(T), T, xB(B), B);
       else drawEndCap(len, T, B, ent.endB || 'normal', +1);
       // Hidden web — two dashed lines at ±tw/2 sitting behind the flange.
-      ctx.strokeStyle = hidCol; ctx.lineWidth = hidLW; ctx.setLineDash(DASH.HIDDEN);
+      ctx.strokeStyle = hidCol; ctx.lineWidth = hidLW; ctx.setLineDash(hidDashPx);
       strokeLine(xA(htw), htw, xB(htw), htw);
       strokeLine(xA(-htw), -htw, xB(-htw), -htw);
       ctx.setLineDash([]); ctx.strokeStyle = col;
@@ -787,7 +830,7 @@ function drawMem2D(blk, ent, cs) {
       strokeLine(xA(B), B, xB(B), B);   // bottom flange tip (outer — always solid)
       // Flange-root lines: solid when the open face points away; AS 1100 hidden
       // (dashed) when the open face points toward the viewer (toes-toward).
-      if (toesToward) { ctx.strokeStyle = hidCol; ctx.lineWidth = hidLW; ctx.setLineDash(DASH.HIDDEN); }
+      if (toesToward) { ctx.strokeStyle = hidCol; ctx.lineWidth = hidLW; ctx.setLineDash(hidDashPx); }
       strokeLine(xA(ftBot), ftBot, xB(ftBot), ftBot);  // top flange root
       strokeLine(xA(fbTop), fbTop, xB(fbTop), fbTop);  // bottom flange root
       if (toesToward) { ctx.setLineDash([]); ctx.lineWidth = cutLW; ctx.strokeStyle = col; }
@@ -908,7 +951,22 @@ function drawMem2D(blk, ent, cs) {
         drawEndCap(len, hB, -hB, ent.endB || 'normal', +1);
       }
       // Inner walls (hidden lines) — also slope to follow the outer cut.
-      ctx.strokeStyle = hidCol; ctx.lineWidth = hidLW; ctx.setLineDash(DASH.HIDDEN);
+      // Per-member weight via ent.hidLwLevel (inspector "Wall line" stepper),
+      // defaulting to MEM2_HID_LW_DEFAULT. Screen px (MEM2_HID_LW_PX) is kept
+      // decoupled from export mm (MEM2_HID_LW) — same idiom as the mat/lineSet
+      // edge stepper — so the dashes stay clearly visible on screen at any zoom
+      // yet print true-to-paper. The old shared hidLW (LW.HID * pm) collapsed to
+      // the ~0.25 px floor at detail zoom, which is why they were near-invisible.
+      const _hidLvl = (typeof ent.hidLwLevel === 'number')
+        ? Math.max(0, Math.min(MEM2_HID_LW.length - 1, ent.hidLwLevel))
+        : MEM2_HID_LW_DEFAULT;
+      const _hidMM = MEM2_HID_LW[_hidLvl];
+      const hollowHidLW = (typeof pdfExportMode !== 'undefined' && pdfExportMode)
+        ? _hidMM
+        : Math.max(MEM2_HID_LW_PX[_hidLvl], _hidMM * pm);
+      // Drawn in the member's own colour (col), not the grey --hid-color, so the
+      // hollow wall reads as a crisp black hidden line.
+      ctx.strokeStyle = col; ctx.lineWidth = hollowHidLW; ctx.setLineDash(hidDashPx);
       strokeLine(xA( hI),  hI,  xB( hI),  hI);
       strokeLine(xA(-hI), -hI, xB(-hI), -hI);
       ctx.setLineDash([]); ctx.strokeStyle = col;
@@ -1336,6 +1394,9 @@ function computeV25WeldInterfaces(viewKey) {
         weldType: override.weldType || 'fillet',
         weldSize: override.weldSize || autoSize,
         enabled: override.enabled !== undefined ? override.enabled : true,
+        tickLen: override.tickLen,
+        lineThk: override.lineThk,
+        hatchSpacing: override.hatchSpacing,
       };
       if (!bestPerKey[key] || overlap > bestPerKey[key]._overlap) {
         bestPerKey[key] = candidate;
@@ -1353,7 +1414,7 @@ function drawV25AutoWelds(blk, cs) {
   const interfaces = computeV25WeldInterfaces(blk.viewKey);
   for (const ifc of interfaces) {
     if (!ifc.enabled) continue;
-    drawWeldHatch(blk, ifc.seg, ifc.weldSize, cs);
+    drawWeldHatch(blk, ifc.seg, ifc, cs);
   }
 }
 

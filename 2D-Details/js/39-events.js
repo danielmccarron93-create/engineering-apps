@@ -241,11 +241,47 @@ function initEvents() {
         if (!v25Selected.includes(nearestSel.ent.id)) v25Selected = [nearestSel.ent.id];
         v25Drag = { ent: nearestSel.ent, handle: nearestSel.handle, lastU: cu, lastV: cv };
         v25Drag.undoBefore = v25SnapshotMoveTargets(nearestSel.ent);
+        // Click-again cycle (arm): when this repeat click at the same spot (raw
+        // canvas px) grabbed a handle of the entity we're currently cycled to,
+        // and a multi-entity cycle is active, a pure CLICK (no drag past the dead
+        // zone) should select the one behind — while a press-DRAG still edits the
+        // handle (e.g. re-aim a noteBox arrow tip). Driven off the cycle state set
+        // by the hit branch (not a re-derived stack, which snap could shift).
+        // Resolved at mouseup via v25Drag.cycleArmed.
+        if (Array.isArray(v25CycleIds) && v25CycleIds.length > 1 && v25CycleLastPx &&
+            nearestSel.ent.id === v25CycleIds[v25CycleIndex] &&
+            Math.hypot(px - v25CycleLastPx.x, py - v25CycleLastPx.y) <= 4) {
+          v25Drag.cycleArmed = true;
+          v25Drag.downPx = { x: px, y: py };
+        }
         if (typeof v25UpdateInspector === 'function') v25UpdateInspector();
         requestRender();
         return;
       }
-      const hit = v25HitTest(activeBlock, cu, cv);
+      // Build the full ordered hit-stack (arrowhead-priority first, then
+      // z-order) so repeat-clicking the same spot walks underneath the top pick.
+      const _stack = (typeof v25HitTestStack === 'function')
+        ? v25HitTestStack(activeBlock, cu, cv)
+        : (function () { const h = v25HitTest(activeBlock, cu, cv); return h ? [h] : []; })();
+      let hit = _stack.length ? _stack[0] : null;
+      if (hit && !e.shiftKey) {
+        // Click-again cycling: a non-shift click within 4px of the last one (raw
+        // canvas px — immune to grid/object snap), on the same stack, advances to
+        // the entity underneath (wraps). Lets the noteBox arrowhead win first,
+        // then the member behind it on the next click.
+        const ids = _stack.map(en => en.id);
+        const sameSpot = v25CycleLastPx &&
+          Math.hypot(px - v25CycleLastPx.x, py - v25CycleLastPx.y) <= 4;
+        const sameStack = sameSpot && v25CycleIds.length === ids.length &&
+          ids.every((id, i) => id === v25CycleIds[i]);
+        if (sameStack && _stack.length > 1) {
+          v25CycleIndex = (v25CycleIndex + 1) % _stack.length;
+        } else {
+          v25CycleIds = ids; v25CycleIndex = 0;
+        }
+        v25CycleLastPx = { x: px, y: py };
+        hit = _stack[v25CycleIndex];
+      }
       if (hit) {
         v25Selected = e.shiftKey ? Array.from(new Set([...(v25Selected||[]), hit.id])) : [hit.id];
         // plate-grouping-stiffener — clicking any grouped member selects the
@@ -254,6 +290,14 @@ function initEvents() {
         const handle = (typeof v25HitHandle === 'function') ? v25HitHandle(activeBlock, hit, cu, cv) : 'body';
         v25Drag = { ent: hit, handle, lastU: cu, lastV: cv };
         v25Drag.undoBefore = v25SnapshotMoveTargets(hit);
+        // Bluebeam copy-drag: Alt (or Ctrl on Windows) + body-drag duplicates.
+        // The clone is deferred to the first mouse movement (see the mousemove
+        // dupPending branch) so a modifier-click that never moves leaves no
+        // stacked copy. Only body drags duplicate — grip / rotate / vertex
+        // handles keep their normal editing behaviour.
+        if (handle === 'body' && typeof isDupDragModifier === 'function' && isDupDragModifier(e)) {
+          v25Drag.dupPending = true;
+        }
         if (typeof v25UpdateInspector === 'function') v25UpdateInspector();
         requestRender();
         return;
@@ -278,6 +322,7 @@ function initEvents() {
         }
         if (!nearSel) {
           v25Selected = [];
+          v25CycleLastPx = null;   // clicking empty space ends any pick cycle
           const root = document.getElementById('inspectorRoot');
           if (root && sheetMode === '2d') root.innerHTML = '';
           // Start V25 marquee (Bluebeam/AutoCAD-style). Mouseup branch in this
@@ -977,6 +1022,11 @@ function initEvents() {
           dragMoving = true;
           dragStart = { u: real.u, v: real.v };
           dragSnapshots = selected3D.map(o => JSON.parse(JSON.stringify(o)));
+          // Bluebeam copy-drag: Alt (or Ctrl on Windows) starts a duplicate. The
+          // clone is created on the first mousemove (see dragDupPending), so a
+          // modifier-click that never moves leaves no stacked copy.
+          dragDupPending = (typeof isDupDragModifier === 'function' && isDupDragModifier(e));
+          dragDupObjIds = null;
           snapOffsetU = 0; snapOffsetV = 0; snappedAxisU = false; snappedAxisV = false;
         }
       } else {
@@ -1074,10 +1124,38 @@ function initEvents() {
     // V25 — drag selected v25 entity (or its handle)
     if (sheetMode === '2d' && v25Drag && activeBlock) {
       v25Hover = null; // hide hover affordance during drag
+      // Click-again cycle dead zone: while armed and within 4px of the press,
+      // suppress the handle edit (click vs drag still undecided). Past 4px it's a
+      // real drag — disarm so the handle (e.g. a noteBox arrow tip) moves normally.
+      if (v25Drag.cycleArmed) {
+        if (v25Drag.downPx && Math.hypot(px - v25Drag.downPx.x, py - v25Drag.downPx.y) < 4) return;
+        v25Drag.cycleArmed = false;
+      }
       const real = px2real(activeBlock, px, py);
       // Snap to grid for clean placement
       const u = snapOn ? Math.round(real.u / gridSize) * gridSize : real.u;
       const v = snapOn ? Math.round(real.v / gridSize) * gridSize : real.v;
+      // Bluebeam copy-drag: on the FIRST real movement of a modifier+body drag,
+      // clone the selection in place and switch the drag onto the COPY — the
+      // originals never move. v25CloneEntsInPlace mints fresh entity ids (and
+      // fresh group ids for grouped sets); dupAdded drives the one-step 'v25Add'
+      // undo recorded on mouseup.
+      if (v25Drag.dupPending && (u !== v25Drag.lastU || v !== v25Drag.lastV)) {
+        v25Drag.dupPending = false;
+        const _srcId = v25Drag.ent && v25Drag.ent.id;
+        const _list = (v25Selected && v25Selected.length) ? v25Selected.slice()
+                     : (_srcId != null ? [_srcId] : []);
+        const _pairs = (typeof v25CloneEntsInPlace === 'function') ? v25CloneEntsInPlace(_list) : [];
+        if (_pairs.length) {
+          const _arr = entities2D[activeBlock.viewKey] || [];
+          const _newIds = _pairs.map(p => p.newId);
+          const _match = _pairs.find(p => p.oldId === _srcId);
+          const _clone = _arr.find(en => en && en.id === (_match ? _match.newId : _newIds[0]));
+          if (_clone) v25Drag.ent = _clone;
+          v25Selected = _newIds;
+          v25Drag.dupAdded = { view: activeBlock.viewKey, ids: _newIds.slice() };
+        }
+      }
       const du = u - v25Drag.lastU, dv = v - v25Drag.lastV;
       if (du !== 0 || dv !== 0) {
         v25Move(v25Drag.ent, du, dv, v25Drag.handle);
@@ -1130,6 +1208,22 @@ function initEvents() {
     }
 
     if (dragMoving && dragStart && activeBlock) {
+      // Bluebeam copy-drag: on the first movement, clone the selected objects in
+      // place and drag the COPIES (originals stay put). Pushed to objects3D
+      // directly (not addObj) so the whole copy is ONE 'objAddMany' undo recorded
+      // on mouseup, rather than one undo entry per object.
+      if (dragDupPending) {
+        dragDupPending = false;
+        const _clones = selected3D.map(o => { const c = JSON.parse(JSON.stringify(o)); c.id = objIdN++; return c; });
+        if (_clones.length) {
+          _clones.forEach(c => objects3D.push(c));
+          selected3D = _clones;
+          dragSnapshots = null;                 // a dup is recorded as an add, not a move
+          dragDupObjIds = _clones.map(c => c.id);
+          if (typeof v3dMarkDirty === 'function') v3dMarkDirty();
+          if (typeof invalidateWeldCache === 'function') invalidateWeldCache();
+        }
+      }
       const real = px2real(activeBlock, px, py);
       const du = real.u - dragStart.u, dv = real.v - dragStart.v;
       const vk = activeBlock.viewKey;
@@ -1193,6 +1287,14 @@ function initEvents() {
       // weld / bolt / none menu (priority over the inspector-open dblclick).
       if (typeof v25JointTryMenu === 'function' &&
           v25JointTryMenu(activeBlock, real.u, real.v, e.clientX, e.clientY)) return;
+      // Weld / SHS-joint popups are owned by the dedicated (second) dblclick
+      // listener. Bail out here when the double-click lands on an auto-weld
+      // hatch or an SHS joint node so the member end-cap dropdown / Settings
+      // panel never opens on top of the weld popup.
+      if ((typeof v25HitTestWeld === 'function' && v25HitTestWeld(activeBlock, px, py)) ||
+          (typeof hitTestJointV25 === 'function' && hitTestJointV25(activeBlock, px, py))) {
+        return;
+      }
       const hit = (typeof v25HitTest === 'function') ? v25HitTest(activeBlock, real.u, real.v) : null;
       // Premium note (noteBox): double-click opens the inline text editor. Uses
       // the same block-local coords as the other 2D click paths (real.u/real.v).
@@ -1219,6 +1321,15 @@ function initEvents() {
           e.preventDefault();
           return;
         }
+      }
+      // Stiffener: double-click opens its properties popup (thickness / weld /
+      // steel-hatch toggle) rather than the generic Settings tab.
+      if (hit && hit.type === 'stiff2' && typeof v25OpenStiffPopup === 'function') {
+        v25Selected = [hit.id];
+        if (typeof v25UpdateInspector === 'function') v25UpdateInspector();
+        v25OpenStiffPopup(hit, e.clientX, e.clientY);
+        e.preventDefault();
+        return;
       }
       // Double-click any v25 entity → select it and open the Settings tab so
       // the user sees every property (size, length, angle, colours, opacity).
@@ -1315,6 +1426,44 @@ function initEvents() {
     }
     // V25 — release v25 entity drag
     if (v25Drag) {
+      // Click-again cycle: a handle grab that never left the dead zone is a CLICK
+      // on the already-cycled entity → advance the selection to the one behind it.
+      if (v25Drag.cycleArmed && Array.isArray(v25CycleIds) && v25CycleIds.length > 1) {
+        v25Drag = null;
+        v25CycleIndex = (v25CycleIndex + 1) % v25CycleIds.length;
+        const _nextId = v25CycleIds[v25CycleIndex];
+        const _next = (entities2D[activeBlock.viewKey] || []).find(en => en && en.id === _nextId);
+        if (_next) {
+          v25Selected = [_nextId];
+          if (typeof v25ExpandGroupSelection === 'function') v25ExpandGroupSelection();
+          if (typeof v25UpdateInspector === 'function') v25UpdateInspector();
+        }
+        v25CycleLastPx = { x: px, y: py };   // keep the spot fresh for further cycling
+        requestRender();
+        return;
+      }
+      // Bluebeam copy-drag: if this drag duplicated, the gesture ADDED clones and
+      // dragged them to the drop point. Record ONE atomic 'v25Add' undo so a
+      // single Ctrl+Z removes the whole copy, and skip the flange re-joint /
+      // v25Move bookkeeping below (a fresh copy is placed as-dropped).
+      if (v25Drag.dupAdded) {
+        const _dup = v25Drag.dupAdded;
+        v25Drag = null;
+        const _arr = entities2D[_dup.view] || [];
+        const _ents = _dup.ids.map(id => _arr.find(e => e && e.id === id))
+                              .filter(Boolean).map(e => JSON.parse(JSON.stringify(e)));
+        if (_ents.length) {
+          undoStack.push({ act: 'v25Add', view: _dup.view, ents: _ents });
+          if (undoStack.length > 100) undoStack.shift();
+          redoStack = [];
+        }
+        activeEdgeSnaps = [];
+        if (typeof v25ResetSnapState === 'function') v25ResetSnapState();
+        canvas.style.cursor = 'default';
+        if (typeof v25UpdateInspector === 'function') v25UpdateInspector();
+        requestRender();
+        return;
+      }
       // plate-grouping-stiffener — on dropping a grouped assembly, snap its
       // end-plate flush to a beam flange and register the (default-bare) joint.
       const _grpDrag = (v25Drag.handle === 'body' && v25Drag.ent && v25Drag.ent.groupId) ? v25Drag.ent.groupId : null;
@@ -1410,7 +1559,18 @@ function initEvents() {
     }
 
     if (dragMoving) {
-      if (dragSnapshots) {
+      if (dragDupObjIds) {
+        // Bluebeam copy-drag: record the duplicated objects as ONE atomic add at
+        // their drop position so a single Ctrl+Z removes the whole copy.
+        const _ids = new Set(dragDupObjIds);
+        const _objs = objects3D.filter(o => o && _ids.has(o.id)).map(o => JSON.parse(JSON.stringify(o)));
+        if (_objs.length) {
+          undoStack.push({ act: 'objAddMany', objs: _objs });
+          if (undoStack.length > 100) undoStack.shift();
+          redoStack = [];
+        }
+        dragDupObjIds = null;
+      } else if (dragSnapshots) {
         const after = selected3D.map(o => JSON.parse(JSON.stringify(o)));
         undoStack.push({ act: 'moveObj', before: dragSnapshots, after });
         if (undoStack.length > 100) undoStack.shift();
@@ -1664,6 +1824,28 @@ function initEvents() {
       const _real = px2real(activeBlock, e.clientX - _r.left, e.clientY - _r.top);
       if (typeof v25JointTryMenu === 'function' && _real &&
           v25JointTryMenu(activeBlock, _real.u, _real.v, e.clientX, e.clientY)) return;
+      // member-depth-order (72h) — right-click selects the member/plate under
+      // the cursor (unless already selected) so Front/Back acts on what was
+      // clicked, then the group/depth menu opens on that selection.
+      if (_real) {
+        const _pHit = (window.v2 && v2.tools && v2.tools.editPlate &&
+                       typeof v2.tools.editPlate.hitTestBody === 'function')
+          ? v2.tools.editPlate.hitTestBody(activeBlock, _real.u, _real.v) : null;
+        if (_pHit && _pHit.elementId) {
+          const _cur = Array.isArray(window.v25SelPlateIds) ? window.v25SelPlateIds : [];
+          if (_cur.indexOf(_pHit.elementId) < 0) {
+            window.v25SelPlateIds = [_pHit.elementId];
+            if (typeof v25Selected !== 'undefined') v25Selected = [];
+          }
+        } else if (typeof v25HitTest === 'function') {
+          const _eHit = v25HitTest(activeBlock, _real.u, _real.v);
+          if (_eHit && typeof v25Selected !== 'undefined' && v25Selected.indexOf(_eHit.id) < 0) {
+            v25Selected = [_eHit.id];
+            window.v25SelPlateIds = [];
+          }
+        }
+        if (typeof requestRender === 'function') requestRender();
+      }
       if (typeof v25ShowGroupContextMenu === 'function') v25ShowGroupContextMenu(e.clientX, e.clientY);
     }
   });

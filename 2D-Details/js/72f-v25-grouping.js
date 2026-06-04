@@ -308,6 +308,89 @@
     if (typeof requestRender === 'function') requestRender();
   }
 
+  /* ---- grouped-plate-drag UNDO (plate-driven group move / rotate) ---- */
+  // The MEMBER-driven group move records ONE {act:'v25Move'} undo covering the
+  // whole group (js/39-events.js at v25Drag release). The PLATE-driven path used
+  // to commit only the dragged plate's v2 transaction, leaving the v25 mates +
+  // sibling plates with no undo record — so Ctrl+Z reverted just the grabbed
+  // plate. These helpers give the plate-driven path the SAME single-entry group
+  // undo: snapshot the whole group at drag-begin, then at commit push one
+  // v25Move. The dragged plate is direct-mutated by edit-plate (no v2 tx when
+  // grouped), so it rides in the snapshot exactly like its mates — and
+  // v25RestoreMoveSnapshot (js/05-state.js) already restores grouped plate
+  // polygons by that same direct mutation.
+
+  // Whole-group snapshot in the shape v25RestoreMoveSnapshot consumes. Keyed by
+  // gid (the plate path has no v25 entity whose .groupId we could read).
+  function snapshotGroup(gid) {
+    var out = { ents: [], plates: [] };
+    if (!gid) return out;
+    var m = membersOf(gid);
+    m.ents.forEach(function (e) { if (e) out.ents.push(JSON.parse(JSON.stringify(e))); });
+    m.plates.forEach(function (el) {
+      if (el && el.geometry && Array.isArray(el.geometry.polygon)) {
+        out.plates.push({
+          id: el.id,
+          polygon: JSON.parse(JSON.stringify(el.geometry.polygon)),
+          flange: (el.params && el.params.flange) ? JSON.parse(JSON.stringify(el.params.flange)) : null,
+        });
+      }
+    });
+    return out;
+  }
+
+  var groupMoveUndoBefore = null, groupMoveUndoGid = null;
+
+  // Plate drag / rotate BEGIN. Stash the before-snapshot if the dragged plate is
+  // grouped; clear state otherwise. Call with a null plateId to abort a stash
+  // (Escape, or a sub-threshold release).
+  function plateGroupMoveUndoBegin(plateId) {
+    groupMoveUndoBefore = null; groupMoveUndoGid = null;
+    if (!plateId) return;
+    var model = window.v2 && v2.appState && v2.appState.model;
+    if (!model || !(model.elements instanceof Map)) return;
+    var el = model.elements.get(plateId);
+    var gid = plateGroupId(el);
+    if (!gid) return;
+    groupMoveUndoGid = gid;
+    groupMoveUndoBefore = snapshotGroup(gid);
+  }
+
+  // Plate drag / rotate COMMIT — call AFTER the dragged plate is direct-mutated
+  // and AFTER any flange joint-snap. Pushes ONE {act:'v25Move'} covering the
+  // whole group. undoDepthBeforeJointSnap = undoStack.length captured just
+  // before v25JointSnapGroupToFlange, so we can strip the {act:'addEnt2D'}
+  // markers the joint-snap pushed (mirrors js/39-events.js:1419-1425).
+  function plateGroupMoveUndoCommit(plateId, undoDepthBeforeJointSnap) {
+    if (!groupMoveUndoBefore || !groupMoveUndoGid) { groupMoveUndoBefore = null; groupMoveUndoGid = null; return false; }
+    // Copy-drag safety: if the committed element's group differs from what we
+    // stashed (the drag became a fresh standalone clone), abandon the stash.
+    var model = window.v2 && v2.appState && v2.appState.model;
+    var liveEl = (model && model.elements && typeof model.elements.get === 'function') ? model.elements.get(plateId) : null;
+    var liveGid = (liveEl && liveEl.params) ? liveEl.params.groupId : null;
+    if (liveGid !== groupMoveUndoGid) { groupMoveUndoBefore = null; groupMoveUndoGid = null; return false; }
+    var gid = groupMoveUndoGid;
+    var before = groupMoveUndoBefore;
+    groupMoveUndoBefore = null; groupMoveUndoGid = null;
+    // Strip {act:'addEnt2D'} the joint-snap pushed so the joint delta is owned
+    // solely by the single v25Move (matches the member path).
+    if (typeof undoStack !== 'undefined' && Array.isArray(undoStack) &&
+        typeof undoDepthBeforeJointSnap === 'number' && undoStack.length > undoDepthBeforeJointSnap) {
+      for (var i = undoStack.length - 1; i >= undoDepthBeforeJointSnap; i--) {
+        if (undoStack[i] && undoStack[i].act === 'addEnt2D') undoStack.splice(i, 1);
+      }
+    }
+    var after = snapshotGroup(gid);
+    var view = (typeof activeBlock !== 'undefined' && activeBlock && activeBlock.viewKey) || null;
+    if (view && typeof v25MoveSnapshotsDiffer === 'function' && v25MoveSnapshotsDiffer(before, after) &&
+        typeof undoStack !== 'undefined' && Array.isArray(undoStack)) {
+      undoStack.push({ act: 'v25Move', view: view, before: before, after: after });
+      if (undoStack.length > 100) undoStack.shift();
+      if (typeof redoStack !== 'undefined' && Array.isArray(redoStack)) redoStack.length = 0;
+    }
+    return true;
+  }
+
   /* ---- right-click context menu ------------------------------------- */
 
   var menuEl = null;
@@ -320,6 +403,9 @@
     var count = ents.length + plates.length;
     var anyGrouped = ents.some(function (e) { return !!e.groupId; }) || plates.some(function (el) { return !!plateGroupId(el); });
     var items = [];
+    // member-depth-order (72h) — Bring to Front / Send to Back etc. for the
+    // selected member(s)/plate(s). Empty when nothing depth-capable is selected.
+    if (typeof v25DepthMenuItems === 'function') items = items.concat(v25DepthMenuItems());
     if (count >= 2 && !anyGrouped) items.push({ label: 'Group  (Ctrl+G)', fn: group });
     if (anyGrouped) items.push({ label: 'Ungroup  (Ctrl+Shift+G)', fn: ungroup });
     if (!items.length) return false;   // nothing useful → let browser do nothing
@@ -630,6 +716,7 @@
 
   /* ---- exports ------------------------------------------------------ */
   window.v25Group               = group;
+  window.v25NewGroupId          = genGroupId;   // canonical fresh group-id mint (drag-duplicate reuses it)
   window.v25Ungroup             = ungroup;
   window.v25ExpandGroupSelection = expandV25Selection;
   window.v25GroupOnV25Move      = onV25Move;
@@ -637,6 +724,8 @@
   window.v25GroupOnPlateDragBegin = plateDragBegin;
   window.v25GroupOnPlateDragMove  = plateDragMove;
   window.v25GroupOnPlateDragEnd   = plateDragEnd;
+  window.v25GroupOnPlateMoveUndoBegin  = plateGroupMoveUndoBegin;
+  window.v25GroupOnPlateMoveUndoCommit = plateGroupMoveUndoCommit;
   window.v25GroupMembersOf      = membersOf;
   window.v25ShowGroupContextMenu = showContextMenu;
   window.v25TranslateGroupMates = translateMates;

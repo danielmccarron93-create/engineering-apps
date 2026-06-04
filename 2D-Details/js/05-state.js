@@ -328,6 +328,18 @@ function undo() {
     const v = a.ent.view;
     entities2D[v] = entities2D[v].filter(e => e.id !== a.ent.id);
   }
+  else if (a.act === 'v25Add') {
+    // Bluebeam copy-drag (and the inspector Duplicate button): undo removes
+    // every clone the gesture added, in one step. redo() re-adds them.
+    const ids = new Set((a.ents || []).map(e => e && e.id));
+    if (Array.isArray(entities2D[a.view])) entities2D[a.view] = entities2D[a.view].filter(e => !(e && ids.has(e.id)));
+    if (Array.isArray(v25Selected)) v25Selected = v25Selected.filter(id => !ids.has(id));
+  }
+  else if (a.act === 'objAddMany') {
+    // 3D-mode copy-drag: undo removes every duplicated object in one step.
+    const ids = new Set((a.objs || []).map(o => o && o.id));
+    objects3D = objects3D.filter(o => !(o && ids.has(o.id)));
+  }
   else if (a.act === 'v25Move') {
     // 2D-mode v25 entity move (member/hatch/blockwork/leader/noteBox, plus any
     // grouped mates incl. v2 plates). moveObj only restores objects3D, so a
@@ -378,6 +390,12 @@ function redo() {
     });
   }
   else if (a.act === 'addEnt2D') entities2D[a.ent.view].push(JSON.parse(JSON.stringify(a.ent)));
+  else if (a.act === 'v25Add') {
+    if (Array.isArray(entities2D[a.view])) (a.ents || []).forEach(e => entities2D[a.view].push(JSON.parse(JSON.stringify(e))));
+  }
+  else if (a.act === 'objAddMany') {
+    (a.objs || []).forEach(o => objects3D.push(JSON.parse(JSON.stringify(o))));
+  }
   else if (a.act === 'v25Move') {
     // Mirror of undo()'s v25Move branch — redo() re-applies the AFTER snapshot;
     // a.before lets it drop any pre-move joint weld/bolt the redo supersedes.

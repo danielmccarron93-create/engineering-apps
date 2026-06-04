@@ -383,9 +383,9 @@
   /* ---- rendering: 'jweld' fillet ticks ------------------------------ */
   function drawJWeld2D(blk, ent, cs) {
     if (!ent || ent.view !== blk.viewKey) return;
-    var context = (typeof window.ctx !== 'undefined' && window.ctx) ? window.ctx : null;
+    var context = (typeof ctx !== 'undefined' && ctx) ? ctx : null;
     if (!context) return;
-    var ppm = (typeof window.ppm === 'function') ? window.ppm() : ppmm();
+    var ppm = ppmm();
     var color = (cs && typeof cs.getPropertyValue === 'function')
       ? (cs.getPropertyValue('--entity-color').trim() || '#222') : '#222';
     var p0 = real2px(blk, num(ent.u1), num(ent.v1));
@@ -398,7 +398,7 @@
     var tickPx = 3 * ppm; if (!isFinite(tickPx) || tickPx < 4) tickPx = 4;
     context.save();
     context.strokeStyle = color;
-    context.lineWidth = Math.max(1, (typeof LW !== 'undefined' ? LW.thin : 0.18) * ppm);
+    context.lineWidth = Math.max(1, (typeof LW !== 'undefined' ? LW.DIM : 0.40) * ppm);
     var d = 0, guard = 0;
     while (d <= len && guard < 2000) {
       var bx = p0.x + ux * d, by = p0.y + uy * d;

@@ -196,6 +196,46 @@
       <!-- Bolt centreline (dashed) -->
       <line x1="10" y1="1.5" x2="10" y2="18.5" stroke-dasharray="2 1.5" stroke-width="0.55" opacity="0.6"/>
     </symbol>
+    <!-- ===== HBS timber-screw icons (tile + orientation row, 72i-v25-screw.js) ===== -->
+    <!-- Tile: side-on screw — head block + threaded shank tapering to a point -->
+    <symbol id="icon-screw" viewBox="0 0 20 20">
+      <path d="M2.5 6.5 L6 6.5 L6 13.5 L2.5 13.5 Z" stroke-width="0.9"/>
+      <path d="M6 8 L16 9.2 L18.5 10 L16 10.8 L6 12 Z" stroke-width="0.85"/>
+      <path d="M8.5 8.1 V11.9 M11 8.4 V11.6 M13.5 8.8 V11.2" stroke-width="0.55" opacity="0.7"/>
+    </symbol>
+    <!-- Screw end-on (plan / head-on): head circle + Torx star -->
+    <symbol id="icon-orient-screw-end" viewBox="0 0 20 20">
+      <circle cx="10" cy="10" r="6.5"/>
+      <path d="M10 4.5 V15.5 M4.8 7 L15.2 13 M4.8 13 L15.2 7" stroke-width="0.85" opacity="0.85"/>
+    </symbol>
+    <!-- Screw horizontal section, head left: head block L, threaded shank tapering to a point R -->
+    <symbol id="icon-orient-screw-h-headl" viewBox="0 0 20 20">
+      <path d="M2.5 6 L6 6 L6 14 L2.5 14 Z" stroke-width="0.85"/>
+      <path d="M6 8 L16 9.2 L18 10 L16 10.8 L6 12 Z" stroke-width="0.8"/>
+      <path d="M8.5 8.1 V11.9 M11 8.4 V11.6 M13.5 8.8 V11.2" stroke-width="0.5" opacity="0.7"/>
+      <line x1="1.5" y1="10" x2="18.5" y2="10" stroke-dasharray="2 1.5" stroke-width="0.5" opacity="0.55"/>
+    </symbol>
+    <!-- Screw horizontal section, head right: head block R, point L -->
+    <symbol id="icon-orient-screw-h-headr" viewBox="0 0 20 20">
+      <path d="M14 6 L17.5 6 L17.5 14 L14 14 Z" stroke-width="0.85"/>
+      <path d="M14 8 L4 9.2 L2 10 L4 10.8 L14 12 Z" stroke-width="0.8"/>
+      <path d="M11.5 8.1 V11.9 M9 8.4 V11.6 M6.5 8.8 V11.2" stroke-width="0.5" opacity="0.7"/>
+      <line x1="1.5" y1="10" x2="18.5" y2="10" stroke-dasharray="2 1.5" stroke-width="0.5" opacity="0.55"/>
+    </symbol>
+    <!-- Screw vertical section, head top: head block T, point B -->
+    <symbol id="icon-orient-screw-v-headt" viewBox="0 0 20 20">
+      <path d="M6 2.5 L14 2.5 L14 6 L6 6 Z" stroke-width="0.85"/>
+      <path d="M8 6 L9.2 16 L10 18 L10.8 16 L12 6 Z" stroke-width="0.8"/>
+      <path d="M8.1 8.5 H11.9 M8.4 11 H11.6 M8.8 13.5 H11.2" stroke-width="0.5" opacity="0.7"/>
+      <line x1="10" y1="1.5" x2="10" y2="18.5" stroke-dasharray="2 1.5" stroke-width="0.5" opacity="0.55"/>
+    </symbol>
+    <!-- Screw vertical section, head bottom: head block B, point T -->
+    <symbol id="icon-orient-screw-v-headb" viewBox="0 0 20 20">
+      <path d="M6 14 L14 14 L14 17.5 L6 17.5 Z" stroke-width="0.85"/>
+      <path d="M8 14 L9.2 4 L10 2 L10.8 4 L12 14 Z" stroke-width="0.8"/>
+      <path d="M8.1 11.5 H11.9 M8.4 9 H11.6 M8.8 6.5 H11.2" stroke-width="0.5" opacity="0.7"/>
+      <line x1="10" y1="1.5" x2="10" y2="18.5" stroke-dasharray="2 1.5" stroke-width="0.5" opacity="0.55"/>
+    </symbol>
     <symbol id="icon-orient-i-sec-h" viewBox="0 0 20 20">
       <!-- web horizontal = "H" -->
       <path d="M3.8 5 V15 M16.2 5 V15 M3.8 10 H16.2"/>
@@ -1485,6 +1525,8 @@
 <script src="js/72e-v25-stiffener.js"></script>
 <script src="js/72f-v25-grouping.js"></script>
 <script src="js/72g-v25-joint.js"></script>
+<script src="js/72h-v25-depth-order.js"></script>
+<script src="js/72i-v25-screw.js"></script>
 <script src="js/73-init.js"></script>
 <script src="js/74-v26-bb-rail.js"></script>
 <script src="js/96-stroke-font.js"></script>

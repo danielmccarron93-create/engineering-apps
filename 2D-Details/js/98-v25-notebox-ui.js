@@ -14,7 +14,8 @@
 // geometry / render / DXF live in js/97; the single-stroke font in js/96. Every
 // cross-file call is typeof-guarded so load order can't break it.
 //
-// nbPlace  — {blk,u,v} first click (box top-left) during two-click placement.
+// nbPlace  — {blk,tipU,tipV} first click (the ARROW HEAD) during head-first
+//            two-click leader-note placement; the second click sets the box.
 // nbEditor — inline text-editor overlay state {ent, el, blk, raf}.
 // Both are top-level globals declared in js/07-globals.js; this file reaches
 // them through `window.*` so it works whether or not that declaration has run.
@@ -163,6 +164,12 @@ function nbToolClick(blk, cu, cv, e) {
   if (ent) {
     if (typeof v25Selected !== 'undefined') v25Selected = [ent.id];
     nbOpenEditor(ent);                 // immediately edit, focus the textarea
+    // Shift held while placing → orthogonal straight leader: mark the arrow(s)
+    // straight and snap the box so the leader is a clean horizontal / vertical line.
+    if (typeof shiftHeld !== 'undefined' && shiftHeld && ent.arrows && ent.arrows.length) {
+      ent.arrows.forEach(function (ar) { ar.straight = true; });
+      if (typeof nbSnapBoxOrthoToTip === 'function') nbSnapBoxOrthoToTip(ent, ent.arrows[0]);
+    }
   }
   if (typeof requestRender === 'function') requestRender();
   return true;
@@ -291,11 +298,23 @@ function nbToolPreview(blk, cs) {
   // AFTER the first click — head pinned; ghost box tracks the cursor, dashed
   // dogleg leader previews from the box edge back to the fixed head.
   if (!cur) { return; }
-  ghostBox(real2px(blk, cur.u, cur.v));
   const head = { u: place.tipU, v: place.tipV };
-  const rect = { uL: cur.u, uR: cur.u + boxW * ds, vT: cur.v, vB: cur.v - boxH * ds };
+  let rect = { uL: cur.u, uR: cur.u + boxW * ds, vT: cur.v, vB: cur.v - boxH * ds };
+  const ortho = (typeof shiftHeld !== 'undefined' && shiftHeld);
+  if (ortho) {
+    // Shift → snap the ghost box so the leader is a clean orthogonal (H/V) line:
+    // align the box centre with the head on whichever axis is closest.
+    const ccu = (rect.uL + rect.uR) / 2, ccv = (rect.vT + rect.vB) / 2;
+    const du = head.u - ccu, dv = head.v - ccv;
+    const sdu = (Math.abs(du) >= Math.abs(dv)) ? 0 : du;
+    const sdv = (Math.abs(du) >= Math.abs(dv)) ? dv : 0;
+    rect = { uL: rect.uL + sdu, uR: rect.uR + sdu, vT: rect.vT + sdv, vB: rect.vB + sdv };
+  }
+  ghostBox(real2px(blk, rect.uL, rect.vT));
   let pts;
-  if (typeof nbAutoShoulderForRect === 'function') {
+  if (ortho && typeof nbOrthoAnchorForRect === 'function') {
+    pts = [nbOrthoAnchorForRect(rect, head), head];
+  } else if (typeof nbAutoShoulderForRect === 'function') {
     const sh = nbAutoShoulderForRect(rect, head, ds);
     pts = [sh.mid, sh.node, head];
   } else {
@@ -327,6 +346,52 @@ function nbSelectShiftClick(blk, cu, cv) {
   }
   // 4) empty space → add a new arrow from the box to the click.
   if (typeof nbAddArrow === 'function') nbAddArrow(ent, cu, cv);
+  if (typeof requestRender === 'function') requestRender();
+  return true;
+}
+
+// ------------------------------------------------------------------
+// Plain text box (v25-note) — nbTextToolClick / nbTextToolCommit
+// ------------------------------------------------------------------
+// The PLAIN text-box tool ('v25-note', keyboard t) creates a noteBox with no
+// arrow. Single-click drops an auto-sized box; press-drag fixes the box WIDTH.
+// The mousedown only RECORDS a press-drag start (mirrors v25-hatch); the mouseup
+// in js/39 calls nbTextToolCommit to decide click-vs-drag and build the entity.
+
+// v25-note mousedown — record the press-drag start; the commit happens on mouseup.
+function nbTextToolClick(blk, cu, cv, e) {
+  if (typeof v25State === 'object' && v25State) {
+    v25State.noteDownPx = { x: (e && e.clientX) || 0, y: (e && e.clientY) || 0 };
+    v25State.noteDownWorld = { u: cu, v: cv, blk: blk };
+  }
+  if (typeof requestRender === 'function') requestRender();
+  return true;
+}
+
+// v25-note mouseup — create the plain text box (auto-sized for a click, or with
+// a fixed width for a press-drag) then open the inline editor.
+function nbTextToolCommit(blk, down, up, isDrag) {
+  if (!down) return false;
+  const props = Object.assign(nbDefaultProps(), { text: '', arrows: [] });
+  if (isDrag && up) {
+    const ds = (typeof drawingScale !== 'undefined' && drawingScale) ? drawingScale : 10;
+    const leftU = Math.min(down.u, up.u);
+    const topV = Math.max(down.v, up.v);
+    const wPaper = Math.abs(up.u - down.u) / ds;
+    props.u = leftU;
+    props.v = topV;
+    props.autoSize = false;
+    props.boxW = Math.max((typeof NB === 'object' && NB && NB.MINW_MM) || 12, wPaper);
+  } else {
+    props.u = down.u;
+    props.v = down.v;
+    props.autoSize = true;
+  }
+  const ent = (typeof v25Add === 'function') ? v25Add('noteBox', props) : null;
+  if (ent) {
+    if (typeof v25Selected !== 'undefined') v25Selected = [ent.id];
+    nbOpenEditor(ent);
+  }
   if (typeof requestRender === 'function') requestRender();
   return true;
 }
@@ -461,6 +526,14 @@ function nbOpenEditor(ent) {
   const el = _nbEnsureTextarea();
   el.value = ent.text || '';
   ent._editing = true;
+  // Editing UX: type into a comfortable mid-large box so words don't wrap one at
+  // a time; re-flow to a tidy proportion on commit (see nbCloseEditor). Only
+  // override an auto-sized note so a manually drag-sized / resized note keeps it.
+  if (ent.autoSize !== false) {
+    ent._reflowOnCommit = true;
+    ent.autoSize = false;
+    ent.boxW = Math.max(ent.boxW || 0, (typeof NB === 'object' && NB && NB.EDIT_W_MM) || 70);
+  }
   window.nbEditor = { ent: ent, el: el, blk: blk, raf: 0 };
 
   // Spell-check: attach the live red-squiggle overlay (guarded; no-op if js/81
@@ -530,6 +603,16 @@ function nbCloseEditor(commit) {
 
   if (commit && ent && el) ent.text = el.value;
   if (ent) delete ent._editing;
+  // Re-flow an auto-sized note now its text is final, so the box hugs the content
+  // and minimises whitespace. A manually-resized note (no _reflowOnCommit) keeps
+  // the width the user set.
+  if (ent && ent._reflowOnCommit) { ent.autoSize = true; delete ent._reflowOnCommit; }
+  // Keep a straight (orthogonal) leader clean after the box re-flows to its final
+  // size: re-snap the box so its centre stays aligned with the head.
+  if (commit && ent && ent.arrows && ent.arrows.length && typeof nbSnapBoxOrthoToTip === 'function') {
+    const fs = ent.arrows.find(function (ar) { return ar && ar.straight; });
+    if (fs) nbSnapBoxOrthoToTip(ent, fs);
+  }
 
   // Stop the position loop + outside-click listener.
   if (ed.raf) { try { window.cancelAnimationFrame(ed.raf); } catch (_e) { /* */ } }

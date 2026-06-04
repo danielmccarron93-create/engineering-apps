@@ -169,6 +169,29 @@ function v25UpdateOptionsBar() {
     // it can't live in the innerHTML string — emit a placeholder and swap in the
     // real row after bar.innerHTML is set, exactly like the member Orientation.
     html += fld('Orientation', `<span id="v25OrientSlot"></span>`);
+  } else if (tool === 'v25-screw') {
+    // HBS timber screw — Size (grouped by Ø, from the verified 02c catalogue) +
+    // the live orientation row (swapped in below, like the bolt). (72i-v25-screw.js)
+    const HBS = (typeof HBS_PLATE_SCREWS === 'object' && HBS_PLATE_SCREWS) ? HBS_PLATE_SCREWS : {};
+    const grp = (typeof HBS_LENGTHS_BY_D === 'object' && HBS_LENGTHS_BY_D) ? HBS_LENGTHS_BY_D : {};
+    const curSpec = v25State.screwSpec
+      || (typeof lastUsedSection !== 'undefined' && lastUsedSection.screw) || 'HBSPL8120';
+    const opt = (id) => {
+      const s = HBS[id];
+      const lab = s ? ('Ø' + s.d + ' × ' + s.L) : id;
+      return `<option value="${id}"${id === curSpec ? ' selected' : ''}>${lab}</option>`;
+    };
+    let sizeOpts = '';
+    [8, 10, 12].forEach(dia => {
+      const ids = grp[dia] || [];
+      if (!ids.length) return;
+      sizeOpts += `<optgroup label="Ø${dia} (${(HBS[ids[0]] || {}).bit || 'TX'})">` +
+        ids.map(opt).join('') + `</optgroup>`;
+    });
+    if (!sizeOpts) sizeOpts = Object.keys(HBS).map(opt).join('');
+    html += `<strong>Screw</strong>`;
+    html += fld('Size', `<select id="v25o-screw-size" style="width:120px">${sizeOpts}</select>`);
+    html += fld('Orientation', `<span id="v25OrientSlot"></span>`);
   } else if (tool === 'v25-leader') {
     html += `<strong>Leader</strong>`;
     html += fld('Default text', `<input id="v25o-leadertxt" value="${(v25Last.leaderText || 'CALLOUT').replace(/"/g, '&quot;')}" style="width:200px"/>`);
@@ -188,12 +211,14 @@ function v25UpdateOptionsBar() {
     // toggle; geometry (between flange inner faces, centred on a column) is
     // resolved at click time. Defaults persist on v25Last.
     const _stThk = (typeof v25Last !== 'undefined' && v25Last.stiffThk) || 10;
-    const _stWeld = (typeof v25Last === 'undefined' || v25Last.stiffWeld !== false);
+    const _stWeld = (typeof v25Last !== 'undefined' && v25Last.stiffWeld === true);
+    const _stHatch = (typeof v25Last !== 'undefined' && v25Last.stiffHatch === true);
     html += `<strong>Stiffener</strong>`;
     html += fld('Thickness (mm)', `<select id="v25o-stiff-thk" style="width:80px">` +
       [6,8,10,12,16,20].map(t => `<option value="${t}"${t === _stThk ? ' selected' : ''}>${t} mm</option>`).join('') +
       `</select>`);
     html += fld('Weld both sides', `<input id="v25o-stiff-weld" type="checkbox"${_stWeld ? ' checked' : ''}/>`);
+    html += fld('Steel hatch', `<input id="v25o-stiff-hatch" type="checkbox"${_stHatch ? ' checked' : ''}/>`);
     html += `<span style="color:var(--text-mute);font-size:11px">Hover a beam under a column · click to place · Shift = free X · drag an end to shorten</span>`;
   } else if (tool === 'v25-notebox' || tool === 'v25-note') {
     html += (typeof nbOptionsBarHTML === 'function') ? nbOptionsBarHTML() : '<strong>Note</strong>';
@@ -220,6 +245,14 @@ function v25UpdateOptionsBar() {
       slot.replaceWith(v25BuildBoltOrientationRow());
     }
   }
+  // Swap the screw orientation-row placeholder for the live element (the row
+  // builder reads/writes v25State.screwOrient itself). (72i-v25-screw.js)
+  if (tool === 'v25-screw') {
+    const slot = bar.querySelector('#v25OrientSlot');
+    if (slot && typeof v25BuildScrewOrientationRow === 'function') {
+      slot.replaceWith(v25BuildScrewOrientationRow());
+    }
+  }
   // Swap the blockwork View placeholder for the live Section/Elevation row.
   if (tool === 'v25-wall' || tool === 'v25-wall-sec') {
     const slot = bar.querySelector('#v25WallModeSlot');
@@ -238,6 +271,7 @@ function v25UpdateOptionsBar() {
   wire('v25o-mat', e => { v25Last.material = e.target.value; });
   wire('v25o-stiff-thk', e => { v25Last.stiffThk = parseInt(e.target.value) || 10; });
   wire('v25o-stiff-weld', e => { v25Last.stiffWeld = !!e.target.checked; });
+  wire('v25o-stiff-hatch', e => { v25Last.stiffHatch = !!e.target.checked; });
   wire('v25o-block', e => { v25Last.blockThk = e.target.value; });
   wire('v25o-wallend', e => { v25Last.wallEnd = e.target.value; });
   wire('v25o-wallgrout', e => { v25Last.wallGrouted = e.target.checked; });
@@ -257,6 +291,12 @@ function v25UpdateOptionsBar() {
   });
   wire('v25o-bolt-grade', e => {
     v25State.boltGrade = e.target.value;
+    if (typeof requestRender === 'function') requestRender();
+  });
+  wire('v25o-screw-size', e => {
+    v25State.screwSpec = e.target.value;
+    if (typeof lastUsedSection !== 'undefined') lastUsedSection.screw = v25State.screwSpec;
+    if (typeof highlightActiveTile === 'function') highlightActiveTile();
     if (typeof requestRender === 'function') requestRender();
   });
   // v25o-aspect / v25o-openside wires retired — orientation is now set through

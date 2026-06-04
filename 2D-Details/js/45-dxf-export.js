@@ -558,6 +558,65 @@ function _dxfEmit2DEntity(b, blk, ent) {
         lineDxf(cx, headOuter + dirHead * 4, cx, threadTip - dirHead * 4);
       }
     }
+  } else if (ent.type === 'screw') {
+    // 2D-mode HBS timber screw (V25). Mirrors drawScrew2D's to-scale side profile
+    // so the DXF matches the canvas: head (pan + collar + taper), shank, threaded
+    // sawtooth, pointed tip, dashed centreline. End-on → head + clearance + shank
+    // circles + Torx cross. All on the S-BOLT (fasteners) layer.
+    const S = (typeof getScrewSpec === 'function' && getScrewSpec(ent.screwSpec))
+            || (typeof HBS_PLATE_SCREWS === 'object' && HBS_PLATE_SCREWS[ent.screwSpec])
+            || { d: 10, d2: 6.6, dS: 7.2, dK: 16.5, t1: 16.5, tK: 5.0, L: 120, b: 95, dV_steel: 13 };
+    const place = (u, v) => { const p = _dxfBlockPlace(blk, u, v); return [p.x, p.y]; };
+    const polyDxf = (pts, closed) => _dxfPolyline(b, 'S-BOLT', pts, closed);
+    const lineDxf = (u1, v1, u2, v2) => { const a = place(u1, v1), c = place(u2, v2); _dxfLine(b, 'S-BOLT', a[0], a[1], c[0], c[1]); };
+    const orient = ent.screwOrient || 'end';
+
+    if (orient === 'end') {
+      const ctr = _dxfBlockPlace(blk, ent.u, ent.v);
+      _dxfCircle(b, 'S-BOLT', ctr.x, ctr.y, (S.dK || 16.5) / 2);
+      if (S.dV_steel && Math.abs(S.dV_steel - (S.dK || 16.5)) > 0.5) _dxfCircle(b, 'S-BOLT', ctr.x, ctr.y, S.dV_steel / 2);
+      _dxfCircle(b, 'S-BOLT', ctr.x, ctr.y, (S.d || 10) / 2);
+      const r = (S.dK || 16.5) / 2 * 0.45, c45 = Math.SQRT1_2;
+      lineDxf(ent.u - r * c45, ent.v - r * c45, ent.u + r * c45, ent.v + r * c45);
+      lineDxf(ent.u - r * c45, ent.v + r * c45, ent.u + r * c45, ent.v - r * c45);
+    } else {
+      const horiz = (orient === 'h-headL' || orient === 'h-headR');
+      const axisIsU = horiz;
+      const trans = axisIsU ? ent.v : ent.u;
+      const bodyDir = (orient === 'h-headL' || orient === 'v-headB') ? 1 : -1;
+      const bearing = (typeof v25ScrewBearingFace === 'function') ? v25ScrewBearingFace(blk, ent) : null;
+      const junction = (bearing != null) ? bearing : (axisIsU ? ent.u : ent.v);
+      const d = S.d || 10, d2 = S.d2 || d * 0.74, dS = S.dS || d * 0.79, dK = S.dK || d * 1.85;
+      const t1 = S.t1 || d * 1.6, tK = S.tK || d * 0.55, L = S.L || d * 12, bThr = S.b || L * 0.78;
+      const dKh = dK / 2, dSh = dS / 2, d2h = d2 / 2, dh = d / 2;
+      const capLen = Math.min(t1 * 0.5, Math.max(tK, dK * 0.30));
+      const sThread = Math.max(t1, L - bThr);
+      const tipLen = Math.min((L - sThread) * 0.6 + 0.001, Math.max(d * 1.2, 4));
+      const sTipStart = Math.max(sThread, L - tipLen);
+      const axisAt = (s) => junction + bodyDir * (s - t1);
+      const P = axisIsU ? (s, t) => place(axisAt(s), trans + t)
+                        : (s, t) => place(trans + t, axisAt(s));
+      // Body (shank + thread core + pointed tip)
+      polyDxf([P(t1, dSh), P(sThread, dSh), P(sTipStart, d2h), P(L, 0), P(sTipStart, -d2h), P(sThread, -dSh), P(t1, -dSh)], true);
+      // Head (pan + collar + under-head taper)
+      polyDxf([P(0, dKh), P(capLen, dKh), P(t1, dSh), P(t1, -dSh), P(capLen, -dKh), P(0, -dKh)], true);
+      // Thread sawtooth (alternating crest/root transverse lines)
+      {
+        const p = Math.max(1.2, d * 0.42), spanT = sTipStart - sThread;
+        if (spanT > 0.5) {
+          const n = Math.max(1, Math.floor(spanT / p));
+          for (let i = 0; i <= n; i++) {
+            const s = sThread + spanT * i / n, hv = (i % 2 === 0) ? d2h : dh, a = axisAt(s);
+            if (axisIsU) lineDxf(a, trans - hv, a, trans + hv);
+            else lineDxf(trans - hv, a, trans + hv, a);
+          }
+        }
+      }
+      // Centreline
+      const a0 = axisAt(0), aL = axisAt(L);
+      if (axisIsU) lineDxf(Math.min(a0, aL) - 4, trans, Math.max(a0, aL) + 4, trans);
+      else lineDxf(trans, Math.min(a0, aL) - 4, trans, Math.max(a0, aL) + 4);
+    }
   } else if (ent.type === 'stiff2') {
     // plate-grouping-stiffener — web stiffener plate: outline rectangle (two
     // endpoints + thickness) + weld ticks per long edge on S-WELD.
@@ -665,7 +724,61 @@ function _dxfEmit2DEntity(b, blk, ent) {
     }
   } else if (ent.type === 'noteBox') {
     if (typeof nbDxfEmit === 'function') nbDxfEmit(b, blk, ent);
+  } else if (ent.type === 'mem2') {
+    // member-depth-order (72h) — 2D members were previously absent from DXF.
+    // Emit the outer outline on S-BEAM; the span behind any member pushed in
+    // front of it goes on S-HIDDEN (HIDDEN linetype).
+    if (typeof v25Mem2WorldOutline === 'function') {
+      const oc = v25Mem2WorldOutline(ent);
+      if (oc && oc.length >= 2) {
+        const selfPoly = oc.map(p => ({ u: p[0], v: p[1] }));
+        const occ = (typeof v25DepthOccludersFor === 'function')
+          ? v25DepthOccludersFor(blk.viewKey, ent.id, (typeof ent.z === 'number' ? ent.z : 0), selfPoly) : [];
+        for (let i = 0; i < oc.length; i++) {
+          const a = oc[i], c = oc[(i + 1) % oc.length];
+          _dxfEmitOccludedEdge(b, blk, a[0], a[1], c[0], c[1], occ, 'S-BEAM');
+        }
+      }
+    }
   }
+}
+
+// member-depth-order (72h) — emit one outline edge split into solid (on
+// `solidLayer`) and AS 1100 hidden (on S-HIDDEN, HIDDEN linetype) sub-segments
+// wherever a member pushed in front covers it. Shares v25DepthClipWorldSeg with
+// the canvas so DXF and screen agree.
+function _dxfEmitOccludedEdge(b, blk, u1, v1, u2, v2, occ, solidLayer) {
+  const segs = (occ && occ.length && typeof v25DepthClipWorldSeg === 'function')
+    ? v25DepthClipWorldSeg(u1, v1, u2, v2, occ)
+    : [{ u1: u1, v1: v1, u2: u2, v2: v2, occluded: false }];
+  for (const s of segs) {
+    const p1 = _dxfBlockPlace(blk, s.u1, s.v1);
+    const p2 = _dxfBlockPlace(blk, s.u2, s.v2);
+    _dxfLine(b, s.occluded ? 'S-HIDDEN' : solidLayer, p1.x, p1.y, p2.x, p2.y);
+  }
+}
+
+// member-depth-order (72h) — v2 plates live in v2.appState.model (not
+// entities2D) and were previously absent from DXF. Emit each plate belonging to
+// this view: outline on S-PLATE, covered spans on S-HIDDEN.
+function _dxfEmitV2Plates(b, blk) {
+  const model = (typeof v2 === 'object' && v2 && v2.appState && v2.appState.model) ? v2.appState.model : null;
+  if (!model || !model.elements || typeof model.elements.forEach !== 'function') return;
+  model.elements.forEach(function (el) {
+    if (!el || el.category !== 'plate') return;
+    const g = el.geometry;
+    if (!g || !Array.isArray(g.polygon) || g.polygon.length < 3) return;
+    const m = /^v1-view-(.+)$/.exec(typeof g.viewId === 'string' ? g.viewId : '');
+    if (!m || m[1] !== blk.viewKey) return;
+    const pts = g.polygon.map(function (p) { return { u: (+p.x || 0), v: (+p.y || 0) }; });
+    const z = (el.params && typeof el.params.z === 'number') ? el.params.z : 0;
+    const occ = (typeof v25DepthOccludersFor === 'function')
+      ? v25DepthOccludersFor(blk.viewKey, el.id, z, pts) : [];
+    for (let i = 0; i < pts.length; i++) {
+      const a = pts[i], c = pts[(i + 1) % pts.length];
+      _dxfEmitOccludedEdge(b, blk, a.u, a.v, c.u, c.v, occ, 'S-PLATE');
+    }
+  });
 }
 
 // Main entry
@@ -715,6 +828,7 @@ function exportSheetToDXF() {
       if (blk.viewKey === 'isometric') continue;
       const list = entities2D[blk.viewKey] || [];
       for (const ent of list) _dxfEmit2DEntity(b, blk, ent);
+      _dxfEmitV2Plates(b, blk);   // member-depth-order (72h) — v2 plates to DXF
     }
 
     b.endSection();

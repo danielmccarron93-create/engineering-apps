@@ -178,9 +178,14 @@
       // would stopImmediatePropagation() and swallow v1's placement click.
       // Bail to v1 (return false = pass-through) for any non-select v1 tool.
       // `tool` here is shadowed by the local v2 const above, so read the v1
-      // global via readBare('tool').
+      // global via readBare('tool'). Scope this to POINTER events only — onKey
+      // (Delete/Escape on a selected plate), dblclick and wheel must still
+      // reach the edit-plate fallback even while a v1 drawing tool is active.
+      const isPointer = (handlerName === 'onPointerDown'
+                      || handlerName === 'onPointerMove'
+                      || handlerName === 'onPointerUp');
       const v1tool = (typeof readBare('tool') === 'string') ? readBare('tool') : null;
-      if (v1tool && v1tool !== 'select') return false;
+      if (isPointer && v1tool && v1tool !== 'select') return false;
       // Fix M (2026-05-23) — no active v2 tool, but the edit-plate fallback
       // wants first dibs on vertex / edge clicks (and pointermove / up during
       // a drag it started). Dispatch to editPlate; if it doesn't claim, fall

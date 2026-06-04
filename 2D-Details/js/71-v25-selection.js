@@ -171,6 +171,28 @@ function v25EntBounds(ent) {
     }
     return { L: ent.u - halfWO, R: ent.u + halfWO, B: ent.v - axHalf, T: ent.v + axHalf };
   }
+  if (ent.type === 'screw') {
+    // HBS timber screw (js/72i-v25-screw.js). Catalogue dia drives the footprint.
+    const S = (typeof getScrewSpec === 'function' && getScrewSpec(ent.screwSpec))
+            || (typeof HBS_PLATE_SCREWS === 'object' && HBS_PLATE_SCREWS[ent.screwSpec])
+            || { d: 10, dK: 16.5, t1: 16.5, L: 120 };
+    const halfW = (S.dK || 16.5) / 2;
+    const orient = ent.screwOrient || 'end';
+    if (orient === 'end') {
+      return { L: ent.u - halfW, R: ent.u + halfW, B: ent.v - halfW, T: ent.v + halfW };
+    }
+    // Section: head at the placed u,v (the live glyph snaps the head to a face at
+    // draw time); body runs ~L into the material, head overhangs ~t1 the other way.
+    const t1 = S.t1 || S.dK || 16.5;
+    const bodyLen = Math.max(0, (S.L || 120) - t1) + 4;
+    const headOver = t1 + 4;
+    const headLow = (orient === 'h-headL' || orient === 'v-headB'); // body toward +axis
+    const isH = (orient === 'h-headL' || orient === 'h-headR');
+    const axLo = headLow ? -headOver : -bodyLen;
+    const axHi = headLow ?  bodyLen  :  headOver;
+    if (isH) return { L: ent.u + axLo, R: ent.u + axHi, B: ent.v - halfW, T: ent.v + halfW };
+    return { L: ent.u - halfW, R: ent.u + halfW, B: ent.v + axLo, T: ent.v + axHi };
+  }
   if (ent.type === 'noteBox' && typeof nbBounds === 'function') return nbBounds(ent);
   return null;
 }
@@ -178,7 +200,18 @@ function v25EntBounds(ent) {
 // Hit-test in real-world (u, v). Tolerance is computed in CSS pixels but
 // also capped by an absolute real-world maximum, so when the canvas is
 // zoomed way out, picking doesn't grab everything within view.
-function v25HitTest(blk, u, v) {
+//
+// v25HitTestStack returns ALL entities under the cursor in priority order:
+//   PASS 0 — noteBox arrowhead tips (within 8px) FIRST, so an arrow head wins
+//            over an overlapping (possibly newer) member behind it; then
+//   PASS 1 — the normal z-order (newest-first) tests, accumulated (deduped).
+// v25HitTest (below) returns stack[0] — the single top-most pick — preserving
+// the entity-or-null contract every existing caller expects. The 2D select
+// click uses the full stack so repeat-clicking the same spot walks underneath.
+function v25HitTestStack(blk, u, v) {
+  const out = [];
+  const seen = new Set();
+  const push = (ent) => { if (ent && !seen.has(ent.id)) { seen.add(ent.id); out.push(ent); } };
   const cursorPx = real2px(blk, u, v);
   const real2Px = (uu, vv) => real2px(blk, uu, vv);
   const ppmm = viewport.zoom / drawingScale; // px per real-mm
@@ -197,8 +230,22 @@ function v25HitTest(blk, u, v) {
     t = Math.max(0, Math.min(1, t));
     return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
   };
-  // Iterate in reverse so top-most is selected first.
   const arr = entities2D[blk.viewKey] || [];
+  // PASS 0 — arrowhead priority. A noteBox whose arrow TIP is within 8px wins
+  // over an overlapping member regardless of z-order (an arrow naturally points
+  // AT a member, so the tip almost always sits inside the member's bounds).
+  for (let i = arr.length - 1; i >= 0; i--) {
+    const ent = arr[i];
+    if (!ent || !ent._v25 || ent.type !== 'noteBox') continue;
+    if (typeof nbLeaderPoints !== 'function' || !Array.isArray(ent.arrows)) continue;
+    for (const a of ent.arrows) {
+      const pts = nbLeaderPoints(ent, a).map(p => real2Px(p.u, p.v));
+      const tip = pts[pts.length - 1];
+      if (tip && Math.hypot(cursorPx.x - tip.x, cursorPx.y - tip.y) < 8) { push(ent); break; }
+    }
+  }
+  // PASS 1 — normal z-order (top-most first). Same per-entity tests as before,
+  // but accumulate (push+continue) instead of returning the first match.
   for (let i = arr.length - 1; i >= 0; i--) {
     const ent = arr[i];
     if (!ent._v25) continue;
@@ -206,7 +253,7 @@ function v25HitTest(blk, u, v) {
     if (ent.type === 'leader2') {
       const tp = real2Px(ent.txtU, ent.txtV);
       if (Math.abs(cursorPx.x - tp.x) < TXT_TOL_PX_X &&
-          Math.abs(cursorPx.y - tp.y) < TXT_TOL_PX_Y) return ent;
+          Math.abs(cursorPx.y - tp.y) < TXT_TOL_PX_Y) { push(ent); continue; }
       const tipPx = real2Px(ent.tipU, ent.tipV);
       const dx = tp.x - tipPx.x, dy = tp.y - tipPx.y;
       const lenPx = Math.hypot(dx, dy);
@@ -214,7 +261,7 @@ function v25HitTest(blk, u, v) {
         const t = ((cursorPx.x - tipPx.x) * dx + (cursorPx.y - tipPx.y) * dy) / (lenPx * lenPx);
         if (t > 0.15 && t < 0.95) {
           const ppx = tipPx.x + t * dx, ppy = tipPx.y + t * dy;
-          if (Math.hypot(cursorPx.x - ppx, cursorPx.y - ppy) < LINE_TOL_PX) return ent;
+          if (Math.hypot(cursorPx.x - ppx, cursorPx.y - ppy) < LINE_TOL_PX) push(ent);
         }
       }
       continue;
@@ -223,14 +270,17 @@ function v25HitTest(blk, u, v) {
     // Falls through (no continue) so the box body is still hit by the generic
     // bounds test below.
     if (ent.type === 'noteBox' && typeof nbLeaderPoints === 'function' && Array.isArray(ent.arrows)) {
+      let onLeader = false;
       for (const a of ent.arrows) {
         const pts = nbLeaderPoints(ent, a).map(p => real2Px(p.u, p.v));
         const tip = pts[pts.length - 1];
-        if (tip && Math.hypot(cursorPx.x - tip.x, cursorPx.y - tip.y) < 8) return ent;
+        if (tip && Math.hypot(cursorPx.x - tip.x, cursorPx.y - tip.y) < 8) { onLeader = true; break; }
         for (let k = 0; k < pts.length - 1; k++) {
-          if (distToSeg(cursorPx, pts[k], pts[k + 1]) < LINE_TOL_PX) return ent;
+          if (distToSeg(cursorPx, pts[k], pts[k + 1]) < LINE_TOL_PX) { onLeader = true; break; }
         }
+        if (onLeader) break;
       }
+      if (onLeader) push(ent);   // dedups with PASS 0; box body still tested below
     }
     // Other entities: convert bounds to screen px and test.
     const b = v25EntBounds(ent);
@@ -247,10 +297,19 @@ function v25HitTest(blk, u, v) {
         if (cursorPx.x > minX + inset && cursorPx.x < maxX - inset &&
             cursorPx.y > minY + inset && cursorPx.y < maxY - inset) continue;
       }
-      return ent;
+      push(ent);
     }
   }
-  return null;
+  return out;
+}
+
+// Single-pick (top-most) hit-test — thin wrapper over the ordered stack so every
+// existing caller keeps its entity-or-null contract. The PASS-0 arrowhead pre-
+// pass means a click/hover on a noteBox arrow tip now returns the noteBox even
+// when a member is drawn on top of it.
+function v25HitTest(blk, u, v) {
+  const s = v25HitTestStack(blk, u, v);
+  return s.length ? s[0] : null;
 }
 
 // Draw selection highlight for selected v25 entities
@@ -327,6 +386,9 @@ function v25EntHandles(ent) {
   } else if (ent.type === 'bolt2') {
     // Single body grip at the bolt centre — drag to reposition (mirrors the
     // anchor's simple point-move; v25Move's generic body-move translates u,v).
+    out.push({ key: 'body', u: ent.u, v: ent.v });
+  } else if (ent.type === 'screw') {
+    // Single body grip at the screw head — drag to reposition (mirrors bolt2).
     out.push({ key: 'body', u: ent.u, v: ent.v });
   }
   // Mat — rotation handle (Bluebeam-style perpendicular ball above the top
@@ -893,6 +955,10 @@ function v25HitHandle(blk, ent, u, v) {
     // Always falls through to 'body' so a click anywhere on the glyph drags it.
     return 'body';
   }
+  if (ent.type === 'screw') {
+    // Click anywhere on the glyph drags it (mirrors bolt2 — simple point move).
+    return 'body';
+  }
   if (ent.type === 'mem2') {
     // End-A is the entity origin (u,v); End-B is the other end after rot+length.
     // Tolerance is the smaller of (a) Bluebeam-like 12 px, (b) 1/3 the member's
@@ -1360,6 +1426,13 @@ function v25UpdateInspector() {
     sel('Start end (A)', 'endA', endKinds);
     sel('Far end (B)',   'endB', endKinds);
     col('Fill colour', 'fillColour');
+    // Hollow sections (SHS/RHS/CHS) draw two dashed inner-wall hidden lines in
+    // elevation — expose a per-member weight stepper so they can be made
+    // heavier/lighter. Renderer reads ent.hidLwLevel (drawMem2D, 68-v25-tools.js).
+    if (ent.memberType === 'shs' || ent.memberType === 'rhs' || ent.memberType === 'chs') {
+      fields.push({ kind:'stepper', label:'Wall line', key:'hidLwLevel',
+        ramp: MEM2_HID_LW, labels: MEM2_HID_LW_LABEL, defaultLvl: MEM2_HID_LW_DEFAULT });
+    }
     // Auto-mitre / weld read-outs and controls when a join exists.
     if (ent.endAJoin || ent.endBJoin) {
       fields.push({ kind:'h', label: 'Auto-mitre joins' });
@@ -1420,6 +1493,15 @@ function v25UpdateInspector() {
     sel('Arrow', 'arrowStyle', ['arrow','dot','open']);
     num('Arrow line (mm)', 'leaderLwMm', 0.05);
     sel('Case', 'textCase', ['upper','normal']);
+  } else if (ent.type === 'screw') {
+    // HBS timber screw (js/72i-v25-screw.js). screwSpec is the 02c catalogue key;
+    // changing it / the orientation just re-renders via the generic apply handler.
+    let screwIds = (typeof HBS_PLATE_SCREWS === 'object') ? Object.keys(HBS_PLATE_SCREWS) : [];
+    if (ent.screwSpec && !screwIds.includes(ent.screwSpec)) screwIds = [ent.screwSpec, ...screwIds];
+    sel('Size (HBS code)', 'screwSpec', screwIds);
+    sel('Orientation', 'screwOrient',
+      (typeof V25_SCREW_ORIENT === 'object' && V25_SCREW_ORIENT)
+        ? V25_SCREW_ORIENT.map(o => o.id) : ['end','h-headL','h-headR','v-headT','v-headB']);
   }
 
   // V25-layout-overhaul Phase 7 — common per-entity display overrides.
@@ -1477,15 +1559,21 @@ function v25UpdateInspector() {
       // can later offset for print-mode without changing on-screen ink.
       // Level 0 = no edge stroke at all; default level = 3 (0.13 mm export,
       // rendered at AS1100_LW_PX[3] = 2 px on screen).
+      // Per-field ramp/labels/default let other entities reuse this stepper
+      // with their own weight table (e.g. the SHS/RHS/CHS "Wall line" stepper
+      // uses MEM2_HID_LW); they default to the AS1100_LW table for back-compat.
+      const ramp   = f.ramp     || AS1100_LW;
+      const labels = f.labels   || AS1100_LW_LABEL;
+      const defLvl = (f.defaultLvl != null) ? f.defaultLvl : AS1100_LW_DEFAULT;
       const lvl = (typeof ent[f.key] === 'number')
-        ? Math.max(0, Math.min(AS1100_LW.length - 1, ent[f.key]))
-        : AS1100_LW_DEFAULT;
-      const dots = AS1100_LW.map((mm, i) =>
-        `<span class="ins-stepper__dot${i === lvl ? ' on' : ''}" data-lvl="${i}" title="${AS1100_LW_LABEL[i]}${mm ? ' (' + mm + ' mm)' : ''}"></span>`
+        ? Math.max(0, Math.min(ramp.length - 1, ent[f.key]))
+        : defLvl;
+      const dots = ramp.map((mm, i) =>
+        `<span class="ins-stepper__dot${i === lvl ? ' on' : ''}" data-lvl="${i}" title="${(labels[i] || '')}${mm ? ' (' + mm + ' mm)' : ''}"></span>`
       ).join('');
-      const mmLabel = AS1100_LW[lvl] === 0 ? 'none' : AS1100_LW[lvl] + ' mm';
+      const mmLabel = ramp[lvl] === 0 ? 'none' : ramp[lvl] + ' mm';
       html += `<div class="ins-row"><label>${f.label}</label>` +
-        `<div class="ins-stepper" data-key="${f.key}">` +
+        `<div class="ins-stepper" data-key="${f.key}" data-rlen="${ramp.length}" data-rdef="${defLvl}">` +
           `<button type="button" data-step="-1" aria-label="Lighter">−</button>` +
           `<div class="ins-stepper__dots">${dots}</div>` +
           `<button type="button" data-step="+1" aria-label="Heavier">+</button>` +
@@ -1617,15 +1705,17 @@ function v25UpdateInspector() {
   // mm readout track the new level.
   root.querySelectorAll('.ins-stepper').forEach(box => {
     const k = box.dataset.key;
+    const rlen = parseInt(box.dataset.rlen) || AS1100_LW.length;
+    const rdef = (box.dataset.rdef != null && box.dataset.rdef !== '') ? parseInt(box.dataset.rdef) : AS1100_LW_DEFAULT;
     const setLvl = (n) => {
-      const lvl = Math.max(0, Math.min(AS1100_LW.length - 1, n));
+      const lvl = Math.max(0, Math.min(rlen - 1, n));
       ent[k] = lvl;
       v25UpdateInspector();
       requestRender();
     };
     box.querySelectorAll('button[data-step]').forEach(b => {
       b.addEventListener('click', () => {
-        const cur = (typeof ent[k] === 'number') ? ent[k] : AS1100_LW_DEFAULT;
+        const cur = (typeof ent[k] === 'number') ? ent[k] : rdef;
         setLvl(cur + parseInt(b.dataset.step));
       });
     });
@@ -1658,19 +1748,58 @@ function v25DeleteSelected() {
   if (root) root.innerHTML = '';
   requestRender();
 }
-function v25DuplicateSelected() {
-  if (!v25Selected.length) return;
-  const arr = entities2D[(activeBlock && activeBlock.viewKey) || 'elevation'];
-  if (!arr) return;
-  const newIds = [];
-  for (const id of v25Selected) {
-    const ent = arr.find(e => e.id === id);
-    if (!ent) continue;
+// Clone a set of v25 entity ids IN PLACE (zero offset) into the active view's
+// entity bucket. Mints fresh entity ids; any grouped source entities get fresh
+// SHARED group ids so the copy is an independent group (never merges back into
+// the original). Skips v2 plate mirrors — plates duplicate via the v2 path.
+// Returns [{ oldId, newId }, ...] in input order. Shared by the inspector
+// "Duplicate" button (v25DuplicateSelected, which then offsets the copies) and
+// the Alt/Ctrl drag-duplicate (js/39-events.js, which clones with zero offset).
+function v25CloneEntsInPlace(ids) {
+  const vk = (activeBlock && activeBlock.viewKey) || 'elevation';
+  const arr = entities2D[vk];
+  if (!arr || !Array.isArray(ids) || !ids.length) return [];
+  const mintGid = (typeof window.v25NewGroupId === 'function')
+    ? window.v25NewGroupId
+    : function () {
+        window.v25GroupSeq = (typeof window.v25GroupSeq === 'number' ? window.v25GroupSeq : 0) + 1;
+        return 'g' + window.v25GroupSeq + '_' + Date.now().toString(36);
+      };
+  const groupRemap = {};   // old groupId -> fresh shared groupId
+  const pairs = [];
+  for (const id of ids) {
+    const ent = arr.find(e => e && e.id === id);
+    if (!ent || ent._v2Mirror) continue;   // plate mirrors duplicate via the v2 path
     const clone = JSON.parse(JSON.stringify(ent));
     clone.id = ent2dIdN++;
-    v25Move(clone, 30 * drawingScale, -30 * drawingScale);
+    if (clone.groupId) {
+      if (!groupRemap[clone.groupId]) groupRemap[clone.groupId] = mintGid();
+      clone.groupId = groupRemap[clone.groupId];
+    }
     arr.push(clone);
-    newIds.push(clone.id);
+    pairs.push({ oldId: id, newId: clone.id });
+  }
+  return pairs;
+}
+
+function v25DuplicateSelected() {
+  if (!v25Selected.length) return;
+  const vk = (activeBlock && activeBlock.viewKey) || 'elevation';
+  const arr = entities2D[vk];
+  if (!arr) return;
+  const pairs = v25CloneEntsInPlace(v25Selected);
+  const newIds = pairs.map(p => p.newId);
+  // The inspector Duplicate is a static copy (not a drag), so nudge the copies
+  // off the originals. The drag-duplicate path clones with zero offset instead.
+  for (const id of newIds) {
+    const clone = arr.find(e => e && e.id === id);
+    if (clone) v25Move(clone, 30 * drawingScale, -30 * drawingScale);
+  }
+  if (newIds.length) {
+    undoStack.push({ act: 'v25Add', view: vk,
+      ents: newIds.map(id => arr.find(e => e && e.id === id)).filter(Boolean).map(e => JSON.parse(JSON.stringify(e))) });
+    if (undoStack.length > 100) undoStack.shift();
+    redoStack = [];
   }
   v25Selected = newIds;
   v25UpdateInspector();

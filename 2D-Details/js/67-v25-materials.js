@@ -112,6 +112,18 @@ const AS1100_LW_PX = [0, 1.0, 1.5, 2.0, 2.75, 3.5, 4.5];
 const AS1100_LW_DEFAULT = 3;
 const AS1100_LW_LABEL = ['none','very faint','faint','thin','medium','heavy','heaviest'];
 
+// Hidden-line weight ramp for V25 2D-mode hollow sections (SHS/RHS/CHS inner-wall
+// dashes in elevation). Same screen-px / export-mm split as AS1100_LW_PX vs AS1100_LW:
+// the MM ramp exports true-to-paper thin hidden lines, while the PX ramp keeps them
+// visible on screen (all >= 1 px) even where mm × pm would collapse to a sub-pixel
+// hairline. Stepped per-member via ent.hidLwLevel from the inspector "Wall line" control.
+// Default index 0 = 0.10 mm / 1.0 px — a fine hairline, drawn in the member's own black
+// entity colour (not the grey --hid-color). Step up for heavier walls.
+const MEM2_HID_LW       = [0.10, 0.18, 0.25, 0.30, 0.40, 0.50, 0.70]; // mm — export / paper
+const MEM2_HID_LW_PX    = [1.0,  1.0,  1.4,  1.8,  2.4,  3.0,  4.0];  // px — screen
+const MEM2_HID_LW_LABEL = ['hairline','thin','light','standard','medium','heavy','bold'];
+const MEM2_HID_LW_DEFAULT = 0;
+
 // Map ent.edgeStyle ('solid'|'dashed'|'centre'|'phantom') to a CanvasRenderingContext2D
 // dash pattern. Empty array = solid line.
 function _v25EdgeDash(style) {

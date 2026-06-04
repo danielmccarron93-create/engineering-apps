@@ -21,7 +21,11 @@
 // `let` so a console tweak works for the current session.
 
 
-let TMBR_AUTOLOAD_EXAMPLE = true;
+// Default OFF (2026-06-03): the autoload demo + floating button is the
+// "make it visible" anti-pattern CLAUDE.md bans; the real discoverable surface is
+// the HBS-screw tile in the V26 BB-rail Draw tab. The script tag is also commented
+// out in index.html, so this file does not load in the running app.
+let TMBR_AUTOLOAD_EXAMPLE = false;
 
 
 // ============================================================

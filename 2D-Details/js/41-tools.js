@@ -13,6 +13,7 @@ function setTool(t) {
   platePts = []; plateBlock = null; plateDimInput = ''; plateDimActive = false;
   boltGroupConfig = null; weldStep = 0; weldP1 = null;
   cycleHits = []; cycleIndex = 0;
+  v25CycleIds = []; v25CycleIndex = 0; v25CycleLastPx = null;
   tool = t;
   canvas.style.cursor = t === 'select' ? 'default' : 'crosshair';
   document.querySelectorAll('.tool-btn').forEach(b => b.classList.remove('active'));

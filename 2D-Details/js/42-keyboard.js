@@ -216,10 +216,15 @@ function initKeyboard() {
       // js/v2/tools/place-plate-tool.js onKey.
       if (tool && tool.startsWith('v25-')) {
         const had = v25State.dragStart || v25State.polyPts.length
-                  || v25State.hatchDownPx;
+                  || v25State.hatchDownPx || v25State.noteDownPx
+                  || (typeof window !== 'undefined' && window.nbPlace);
         if (had) {
           v25State.dragStart = null; v25State.polyPts = [];
           v25State.hatchDownPx = null; v25State.hatchDownWorld = null;
+          // noteBox: cancel an in-progress leader-note first click (head) or a
+          // v25-note press-drag so Escape leaves no dangling placement state.
+          v25State.noteDownPx = null; v25State.noteDownWorld = null;
+          if (typeof window !== 'undefined') window.nbPlace = null;
           v25SnapInfo = null;
           requestRender();
         } else {
