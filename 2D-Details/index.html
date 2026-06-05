@@ -590,6 +590,15 @@
       <path d="M3.5 5.5 L16.5 5.5 M3.5 9 L16.5 9 M3.5 12.5 L13 12.5 M3.5 16 L10 16"/>
     </symbol>
 
+    <!-- Snapshot / region capture (key 'G'). Viewfinder frame + corner crop-marks. -->
+    <symbol id="icon-snapshot" viewBox="0 0 20 20">
+      <path d="M3 5 L17 5 L17 17 L3 17 Z" stroke-width="0.9"/>
+      <path d="M4 6 L6 6 M6 4 L6 6" stroke-width="0.85" opacity="0.85"/>
+      <path d="M14 6 L16 6 M14 4 L14 6" stroke-width="0.85" opacity="0.85"/>
+      <path d="M4 14 L6 14 M4 14 L4 16" stroke-width="0.85" opacity="0.85"/>
+      <path d="M14 14 L16 14 M16 14 L16 16" stroke-width="0.85" opacity="0.85"/>
+      <circle cx="10" cy="11" r="1" opacity="0.7"/>
+    </symbol>
     <!-- ===== Dimensions — proper engineering drawing presentation ===== -->
     <!-- Horizontal dim: witness lines (extension lines), dim line with
          slash ticks at each end, and a dimension text tick indicator. -->
@@ -1647,6 +1656,10 @@
 <!-- V25 Dimension / Measure tool (key 'm'), 2D paper-space. Loads after the
      stroke font (96) + noteBox (97/98) whose helpers it reuses at render time. -->
 <script src="js/82-v25-dimension.js"></script>
+<!-- V25 Snapshot tool (key 'G'), 2D paper-space. Bluebeam-style region capture,
+     high-DPI raster composite, paste at cursor / in-place. Loads after dimension (82)
+     so render pipeline + dispatch + selection are in place. -->
+<script src="js/86-v25-snapshot.js"></script>
 <!-- Timber-screw connection feature — Phase 2 entity types (added 2026-05-18).
      Note: number 76 was originally js/76-v25-plate.js (the v1 V25 plate path),
      deleted by architecture-v2 Phase 2 on 2026-05-22 once plates became

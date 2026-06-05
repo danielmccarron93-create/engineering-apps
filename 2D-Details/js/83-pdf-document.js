@@ -418,6 +418,64 @@
     }
   };
 
+  // Snapshot-tool ZONE renderer (snapshot-region-tool, 2026-06-05). Renders only a
+  // sub-rectangle of a PDF-backed page onto a fresh offscreen canvas sized to the
+  // caller's pixel target. The compositor (snapCaptureRegion, js/86) supplies the
+  // already-clamped offscreen px (offW/offH) so the zone lands at TRUE capture DPI
+  // and shares the exact sheet-mm -> offscreen-px mapping `(s - origin) * effZoom`
+  // as the vector layer drawn on top of it (pixel-exact overlay).
+  //
+  //   zoneMm   = { x, y, w, h }  sub-rect in sheet-mm (page top-left origin).
+  //   targetPx = { w, h }        device-px size of the returned canvas (= the zone).
+  //
+  // Mirrors renderPdfPageToBitmap's rotation / getViewport idiom: scale is chosen
+  // so the ZONE (not the whole page) fills targetPx.w, then the full page is drawn
+  // shifted by (-zoneX,-zoneY) so only the zone lands on the canvas. NO whole-page
+  // MAX_RASTER_SIDE clamp here (the compositor already bounded targetPx by
+  // MAX_SNAP_SIDE). White-backed (PDF composites on white) and one-shot — never
+  // touches the on-screen LRU cache. Never throws (guarded like the rest of 83).
+  window.renderPdfPageRegionToCanvas = async function renderPdfPageRegionToCanvas(file, bg, zoneMm, targetPx) {
+    if (!file || !bg || bg.type !== 'pdf') return null;
+    if (!window.pdfjsLib) { console.warn('[pdf] renderPdfPageRegionToCanvas: pdf.js unavailable.'); return null; }
+    if (!zoneMm || !(zoneMm.w > 0) || !(zoneMm.h > 0)) return null;
+    if (!targetPx || !(targetPx.w > 0) || !(targetPx.h > 0)) return null;
+    const docP = _resolveDoc(file, bg.pdfId);
+    if (!docP) return null;
+    try {
+      const doc = await docP;
+      const rot = (bg.rotation || 0);
+      const p = await doc.getPage(bg.pageIndex + 1);
+      // Base visual size in pt (already /Rotate-baked via the rotation arg).
+      const base = p.getViewport({ scale: 1, rotation: rot });
+      // Full-page size in sheet-mm (== page.size; A1 SHEET default for native pages).
+      const pageSize = (typeof activePageSize === 'function')
+        ? activePageSize() : { w: SHEET.W, h: SHEET.H };
+      if (!pageSize || !(pageSize.w > 0) || !(pageSize.h > 0)) return null;
+      // Scale so the ZONE fills targetPx.w. No MAX_RASTER_SIDE clamp (§11.7): the
+      // compositor already bounded targetPx by MAX_SNAP_SIDE.
+      const scale = (targetPx.w * pageSize.w) / (zoneMm.w * base.width);
+      const vp = p.getViewport({ scale: scale, rotation: rot });
+      // Zone origin in vp px (proportional sheet-mm -> page-px mapping).
+      const zoneX = (zoneMm.x / pageSize.w) * vp.width;
+      const zoneY = (zoneMm.y / pageSize.h) * vp.height;
+
+      const cnv = document.createElement('canvas');
+      cnv.width = Math.max(1, Math.round(targetPx.w));
+      cnv.height = Math.max(1, Math.round(targetPx.h));
+      const cctx = cnv.getContext('2d');
+      // White backing so a transparent PDF page composites like paper.
+      cctx.fillStyle = '#ffffff';
+      cctx.fillRect(0, 0, cnv.width, cnv.height);
+      // Shift the full page so only the zone lands on the canvas.
+      cctx.translate(-zoneX, -zoneY);
+      await p.render({ canvasContext: cctx, viewport: vp }).promise;
+      return cnv;
+    } catch (e) {
+      console.warn('[pdf] renderPdfPageRegionToCanvas failed', e);
+      return null;
+    }
+  };
+
   // Publish the synchronous background hook (called by 22-render-core.js drawSheet).
   window.drawPdfBackground = drawPdfBackground;
   // multi-file-workspace Phase 5 — the PDF export path (44 / 51) sets a pre-rendered

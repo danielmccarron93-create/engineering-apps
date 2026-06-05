@@ -23,6 +23,7 @@ function v25DrawEnt(blk, ent, cs) {
   if (ent.type === 'stiff2' && typeof drawStiff2D === 'function') { drawStiff2D(blk, ent, cs); return true; }
   if (ent.type === 'jweld' && typeof drawJWeld2D === 'function') { drawJWeld2D(blk, ent, cs); return true; }
   if (ent.type === 'dim2' && typeof drawDim2_2D === 'function') { drawDim2_2D(blk, ent, cs); return true; }
+  if (ent.type === 'snapshot' && typeof drawSnapshot2D === 'function') { drawSnapshot2D(blk, ent, cs); return true; }
   return false;
 }
 
@@ -152,6 +153,7 @@ function v25SetTool(t) {
   boltGroupConfig = null; weldStep = 0; weldP1 = null;
   cycleHits = []; cycleIndex = 0;
   v25CycleIds = []; v25CycleIndex = 0; v25CycleLastPx = null;
+  if (typeof snapResetTransient === 'function') snapResetTransient();
   v25State = { polyPts: [], dragStart: null, boltOrient: lastBoltOrient, boltSize: lastBoltSize, boltGrade: lastBoltGrade, boltCat: lastBoltCat };
   // Clear any half-finished leader placement so switching tools never leaves a
   // dangling first-click (noteBox leader head) behind.
@@ -941,6 +943,7 @@ function v25DrawPreview(blk, cs) {
 function v25ActiveTileId() {
   if (tool === 'v25-frame') return 'v25-frame';
   if (tool === 'v25-measure') return 'v25-measure';
+  if (tool === 'v25-snapshot') return 'v25-snapshot';
   // V25-layout-overhaul — Phase 4 — map active hatch material to the new
   // Draw-tab tile id so the active tile highlights while drawing.
   if (tool === 'v25-hatch') {

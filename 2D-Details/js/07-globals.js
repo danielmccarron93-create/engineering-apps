@@ -78,6 +78,10 @@ let spellEnabled = true;   // note spell-check on by default (js/80 + js/81); pe
 
 let clipboardObjs = null;
 
+// Snapshot-tool clipboard (2D paper-space region capture). Null until a capture.
+// { bytes, paperMM:{w,h}, srcW, srcH, originSheet:{x,y}, shape, polySheet, committed:{} } | null
+let snapClip = null;
+
 // ---- TAB-TO-CYCLE SELECTION STATE ----
 let cycleHits = [];    // all objects under cursor (for Tab cycling)
 let cycleIndex = 0;    // current index in cycleHits

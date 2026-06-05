@@ -14,6 +14,7 @@ function setTool(t) {
   boltGroupConfig = null; weldStep = 0; weldP1 = null;
   cycleHits = []; cycleIndex = 0;
   v25CycleIds = []; v25CycleIndex = 0; v25CycleLastPx = null;
+  if (typeof snapResetTransient === 'function') snapResetTransient();
   // Tear down v25 transient state so leaving a v25 tool (e.g. measure) via a v1
   // setTool route (letter shortcut / Draw-tab tile) doesn't leak its first-click
   // origin into the next tool's ortho, mirroring v25SetTool's reset.

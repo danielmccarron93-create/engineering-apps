@@ -481,6 +481,12 @@
         { id: 'v25-measure', kind: 'tool', label: 'Measure',
           icon: 'icon-dim-h',
           onClick: () => { if (typeof v25SetTool === 'function') v25SetTool('v25-measure'); } },
+        // Snapshot / region capture (key 'G'). Bluebeam-style: rubber-band or
+        // polygon-trace a region of the sheet, capture it to a high-DPI raster,
+        // then paste at cursor (Cmd/Ctrl+V) or in-place (Cmd/Ctrl+Shift+V).
+        { id: 'v25-snapshot', kind: 'tool', label: 'Snapshot',
+          icon: 'icon-snapshot',
+          onClick: () => { if (typeof v25SetTool === 'function') v25SetTool('v25-snapshot'); } },
         // Legacy aligned/horizontal dimension (V22-era 3-click) kept as a
         // secondary access point.
         { id: 'a-dimH',    kind: 'tool', label: 'Dim (old)',

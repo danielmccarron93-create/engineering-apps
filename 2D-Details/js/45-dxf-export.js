@@ -312,6 +312,12 @@ function _dxfEmitGenericMember(b, blk, obj) {
 
 // 2D entity → DXF
 function _dxfEmit2DEntity(b, blk, ent) {
+  if (ent.type === 'snapshot') {
+    // Snapshots are rasters — they can't be vectorised; the user traces them
+    // with entities that DO export. Skip with a one-time-ish note.
+    console.info('[dxf] snapshot entity #' + ent.id + ' skipped (raster; trace it to export).');
+    return;
+  }
   if (ent.type === 'line') {
     const p1 = _dxfBlockPlace(blk, ent.u1, ent.v1);
     const p2 = _dxfBlockPlace(blk, ent.u2, ent.v2);
@@ -673,24 +679,17 @@ function _dxfEmit2DEntity(b, blk, ent) {
       lineDxf(ent.u - r * c45, ent.v - r * c45, ent.u + r * c45, ent.v + r * c45);
       lineDxf(ent.u - r * c45, ent.v + r * c45, ent.u + r * c45, ent.v - r * c45);
     } else {
-      const axisIsU = (orient === 'h-nutL' || orient === 'h-nutR');
-      const trans = axisIsU ? ent.v : ent.u;
-      const bodyDir = (orient === 'h-nutL' || orient === 'v-nutB') ? 1 : -1;
-      const snap = (typeof v25StudBearingFace === 'function') ? v25StudBearingFace(blk, ent) : null;
-      const junction = snap ? snap.face : (axisIsU ? ent.u : ent.v);
-      const d = S.d || 16, L = S.L || 190, Le = S.Le || 165, dh = S.dh || d + 2;
-      const maxFixt = (S.maxFixt != null) ? S.maxFixt : Math.max(0, Le - (S.embed || Le * 0.75));
-      const nutAF = nd.nutAF || d * 1.7, nutH = nd.nutH || d * 0.86;
-      const washOD = nd.washOD || d * 2.1, washT = nd.washT || d * 0.2, minorD = nd.minorD || d * 0.84;
-      const pitch = nd.pitch || 2;
-      const dh2 = d / 2, hole2 = dh / 2, washHalf = washOD / 2, nutHalf = nutAF / 2, min2 = minorD / 2;
-      const tail = Math.max(2 * pitch, (L - Le) - (washT + nutH));
-      const sTailTop = -(washT + nutH + tail), sNutCrown = -(washT + nutH), sNutWash = -washT;
-      const embLen = Math.max(d + 2, L - (washT + nutH + tail)), sChiselBase = embLen - d;
-      let sFace = snap ? Math.max(0, snap.fixtureThk) : maxFixt;
-      sFace = Math.min(sFace, Math.max(0, embLen - 0.5));
+      // Single-source geometry (honours the embedment override + bearing snap),
+      // mapped through place() for DXF. blk is the per-block export context —
+      // never the global activeBlock (export iterates every block).
+      const g = (typeof studSectionGeom === 'function') ? studSectionGeom(blk, ent) : null;
+      if (!g) { return; }
+      const axisIsU = g.axisIsU, trans = g.trans, junction = g.junction, snap = g.snap;
+      const dh2 = g.dh2, hole2 = g.hole2, washHalf = g.washHalf, nutHalf = g.nutHalf, min2 = g.minorD / 2;
+      const sTailTop = g.sTailTop, sNutCrown = g.sNutCrown, sNutWash = g.sNutWash;
+      const sFace = g.sFace, embLen = g.embLen, sChiselBase = g.sChiselBase;
+      const axisAt = g.axisAt;
       const sHoleBot = embLen + Math.max(3, 0.06 * embLen);
-      const axisAt = (s) => junction + bodyDir * s;
       const P = axisIsU ? (s, t) => place(axisAt(s), trans + t)
                         : (s, t) => place(trans + t, axisAt(s));
       // Rod body outline (tail-top → 45° chisel tip).

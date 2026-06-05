@@ -191,6 +191,9 @@ function render() {
     }
   }
 
+  // Snapshot snip-marquee + Polaroid-flash transient overlays (2D paper-space).
+  if (typeof snapDrawOverlay === 'function') snapDrawOverlay(cs);
+
   // View labels
   blocks.forEach(blk => drawViewLabel(blk, cs));
 

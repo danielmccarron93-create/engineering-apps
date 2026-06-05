@@ -43,6 +43,8 @@ function _workspaceMakeFile(name, kind) {
     // --- file-level fields ---
     pdfBlobs: {},
     _nextPdfId: 1,
+    imageBlobs: {},
+    _nextImageId: 1,
     dirty: false,
     diskName: null,
   };
@@ -112,6 +114,8 @@ function workspaceOpenFile(projectObj, name) {
   if (projectObj.kind == null) projectObj.kind = 'native';
   if (projectObj.pdfBlobs == null) projectObj.pdfBlobs = {};
   if (projectObj._nextPdfId == null) projectObj._nextPdfId = 1;
+  if (projectObj.imageBlobs == null) projectObj.imageBlobs = {};
+  if (projectObj._nextImageId == null) projectObj._nextImageId = 1;
   if (projectObj.dirty == null) projectObj.dirty = false;
   if (projectObj.diskName == null) projectObj.diskName = null;
   if (!Array.isArray(projectObj.sheets)) projectObj.sheets = [];

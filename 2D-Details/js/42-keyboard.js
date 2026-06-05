@@ -18,6 +18,14 @@ function initKeyboard() {
     if (e.key === 'Escape' && _palVisible) { e.preventDefault(); _palClose(); return; }
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
 
+    // Snapshot tool — route Esc (cancel) / Enter (close+capture polygon) to the
+    // snip handler before any generic Escape/Enter handling below. Guarded by the
+    // tool, and placed after the input-focus guard so inspector typing is unaffected.
+    if (tool === 'v25-snapshot' && typeof snapKey === 'function'
+        && (e.key === 'Escape' || e.key === 'Enter')) {
+      snapKey(e); e.preventDefault(); return;
+    }
+
     // ---- DIMENSION VALUE / LABEL TYPING (v25 measure tool, after the 2nd click) ----
     // Runs BEFORE every tool shortcut so typing a length, a label letter, or even
     // a capital 'M' edits the just-placed dimension instead of switching tools or
@@ -216,7 +224,12 @@ function initKeyboard() {
       }
       return;
     }
-    if (e.key === 'g' || e.key === 'G') { gridOn = !gridOn;
+    if (e.key === 'g' || e.key === 'G') {
+      if (sheetMode === '2d') {
+        if (typeof v25SetTool === 'function') v25SetTool('v25-snapshot');
+        e.preventDefault(); return;
+      }
+      gridOn = !gridOn;
       document.getElementById('btnGrid').classList.toggle('active', gridOn);
       document.getElementById('sbGrid')?.classList.toggle('active', gridOn);
       requestRender(); }
@@ -371,7 +384,17 @@ function initKeyboard() {
       if (selected3D.length > 0) { clipboardObjs = selected3D.map(o => JSON.parse(JSON.stringify(o))); e.preventDefault(); }
     }
     if ((e.ctrlKey || e.metaKey) && e.key === 'v' && !e.shiftKey) {
-      if (clipboardObjs && clipboardObjs.length > 0) { pasteObjects(); e.preventDefault(); }
+      if (sheetMode === '2d' && typeof snapClip !== 'undefined' && snapClip && snapClip.bytes
+          && typeof snapPasteAtCursor === 'function') {
+        snapPasteAtCursor(); e.preventDefault();
+      } else if (clipboardObjs && clipboardObjs.length > 0) { pasteObjects(); e.preventDefault(); }
+    }
+    if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'v' || e.key === 'V')) {
+      if (sheetMode === '2d' && typeof snapClip !== 'undefined' && snapClip && snapClip.bytes
+          && typeof snapPasteInPlace === 'function') {
+        snapPasteInPlace(); e.preventDefault();
+      }
+      // else: no 3D paste-in-place exists today — fall through (no-op).
     }
 
     // Arrow keys: nudge

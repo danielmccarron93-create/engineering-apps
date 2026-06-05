@@ -52,6 +52,19 @@ function v25SelectedSingleMem2() {
   return (ent && ent.type === 'mem2') ? ent : null;
 }
 
+// selected-stud-bar — the single selected ChemSet anchor stud, or null. Mirrors
+// v25SelectedSingleMem2 so the top options bar can surface a selected stud's
+// Size / Orientation / Embedment (like the other fixings). Requires exactly one
+// selection so editing is never ambiguous.
+function v25SelectedSingleStud() {
+  if (typeof sheetMode === 'undefined' || sheetMode !== '2d') return null;
+  if (typeof v25Selected === 'undefined' || !Array.isArray(v25Selected) || v25Selected.length !== 1) return null;
+  const view = (typeof activeBlock !== 'undefined' && activeBlock && activeBlock.viewKey) || 'elevation';
+  const arr = (typeof entities2D !== 'undefined' && entities2D[view]) || [];
+  const ent = arr.find(e => e && e.id === v25Selected[0]);
+  return (ent && ent.type === 'stud') ? ent : null;
+}
+
 function v25UpdateOptionsBar() {
   const bar = v25BuildOptionsBar();
   // plate-orientation-presets (2026-05-31): v2 PlacePlateTool — Thickness select
@@ -162,6 +175,75 @@ function v25UpdateOptionsBar() {
         title: 'Pick ' + kind.toUpperCase() + ' size',
         onChoose: (name) => applySel(name),
       });
+    });
+    return;
+  }
+
+  // selected-stud-bar (2026-06-05) — when the Select tool is active and a single
+  // stud is selected, surface its Size / Orientation / Embedment in the top bar
+  // (mirrors the selected-member bar above and the inspector). Built + wired
+  // INLINE before the early return — the shared orientation-swap + wire() block
+  // further down is unreachable for an early-returning branch. Placed after
+  // selMem and before the placement-tool hide; refreshed via the same
+  // v25UpdateInspector → v25UpdateOptionsBar path as the member bar.
+  const selStud = (typeof v25SelectedSingleStud === 'function') ? v25SelectedSingleStud() : null;
+  if (sheetMode === '2d' && tool === 'select' && selStud) {
+    bar.style.display = 'flex';
+    const SDB = (typeof CHEMSET_STUDS === 'object' && CHEMSET_STUDS) ? CHEMSET_STUDS : {};
+    const ssizes = (typeof CHEMSET_SIZES !== 'undefined' && CHEMSET_SIZES) ? CHEMSET_SIZES : Object.keys(SDB);
+    const curStud = selStud.studSpec || 'M16';
+    const studOpts = ssizes.map(id => {
+      const s = SDB[id];
+      const lab = s ? (s.size + ' × ' + s.L) : id;
+      return `<option value="${id}"${id === curStud ? ' selected' : ''}>${lab}</option>`;
+    }).join('');
+    const isSection = (selStud.studOrient || 'v-nutT') !== 'end';
+    let embG = null;
+    if (isSection && typeof studSectionGeom === 'function') {
+      embG = studSectionGeom((typeof activeBlock !== 'undefined') ? activeBlock : null, selStud);
+    }
+    const effDepth = embG ? Math.round(embG.embedDepth) : (selStud.embedDepth || 125);
+    bar.innerHTML =
+      `<strong>Stud</strong>` +
+      `<span style="color:var(--text-mute);font-size:11px">selected</span>` +
+      `<label style="display:flex;align-items:center;gap:4px">` +
+        `<span style="color:var(--text-mute);font-size:11px">Size</span>` +
+        `<select id="v25o-selstud-size" style="width:120px">${studOpts}</select>` +
+      `</label>` +
+      `<label style="display:flex;align-items:center;gap:4px">` +
+        `<span style="color:var(--text-mute);font-size:11px">Orientation</span>` +
+        `<span id="v25OrientSlot"></span>` +
+      `</label>` +
+      (isSection ?
+        `<label style="display:flex;align-items:center;gap:4px">` +
+          `<span style="color:var(--text-mute);font-size:11px">Embedment (mm)</span>` +
+          `<input id="v25o-selstud-embed" type="number" min="5" step="5" value="${effDepth}" style="width:64px"/>` +
+        `</label>` : '') +
+      `<span style="color:var(--text-mute);margin-left:4px;font-size:11px">Drag the tip to set depth · drag the edge to snap to a face · also in the Settings tab</span>`;
+    // Live orientation icon-row (handlers can't be serialised into innerHTML).
+    const slot = bar.querySelector('#v25OrientSlot');
+    if (slot && typeof v25BuildStudOrientRowForEnt === 'function') {
+      slot.replaceWith(v25BuildStudOrientRowForEnt(selStud));
+    }
+    const sizeSel = bar.querySelector('#v25o-selstud-size');
+    if (sizeSel) sizeSel.addEventListener('change', (e) => {
+      selStud.studSpec = e.target.value;
+      delete selStud.embedDepth; delete selStud.faceOffset;   // size change → catalogue defaults
+      if (typeof lastUsedSection !== 'undefined') lastUsedSection.stud = selStud.studSpec;
+      if (typeof requestRender === 'function') requestRender();
+      if (typeof v25UpdateInspector === 'function') v25UpdateInspector();
+      if (typeof v25UpdateOptionsBar === 'function') v25UpdateOptionsBar();
+    });
+    const embInp = bar.querySelector('#v25o-selstud-embed');
+    if (embInp) embInp.addEventListener('input', (e) => {
+      const val = e.target.value;
+      if (val === '' || !isFinite(parseFloat(val))) delete selStud.embedDepth;
+      else selStud.embedDepth = Math.max(5, parseFloat(val));
+      // Live update + sync the inspector field WITHOUT rebuilding the bar — a
+      // rebuild would destroy this input and steal focus mid-type. The sync skips
+      // whichever input is focused, so it never fights the typing.
+      if (typeof v25SyncStudEmbedReadouts === 'function') v25SyncStudEmbedReadouts(selStud);
+      if (typeof requestRender === 'function') requestRender();
     });
     return;
   }

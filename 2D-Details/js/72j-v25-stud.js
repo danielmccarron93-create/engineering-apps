@@ -110,6 +110,35 @@ function v25BuildStudOrientationRow() {
 }
 
 /* ----------------------------------------------------------------------------
+ * v25BuildStudOrientRowForEnt(ent) → HTMLDivElement
+ * Like v25BuildStudOrientationRow, but edits the ORIENTATION OF A SELECTED stud
+ * (writes ent.studOrient) rather than the placement state — used by the
+ * selected-stud options bar + inspector. Re-renders and refreshes both surfaces.
+ * -------------------------------------------------------------------------- */
+function v25BuildStudOrientRowForEnt(ent) {
+  const row = document.createElement('div');
+  row.id = 'v25OrientRow';
+  const activeId = ent.studOrient || 'v-nutT';
+  V25_STUD_ORIENT.forEach(preset => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'v25-orient-btn' + (preset.id === activeId ? ' active' : '');
+    btn.title = preset.label;
+    btn.setAttribute('aria-label', preset.label);
+    btn.innerHTML = '<svg class="icon"><use href="#' + preset.icon + '"/></svg>';
+    btn.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      ent.studOrient = preset.id;
+      if (typeof requestRender === 'function') requestRender();
+      if (typeof v25UpdateOptionsBar === 'function') v25UpdateOptionsBar();
+      if (typeof v25UpdateInspector === 'function') v25UpdateInspector();
+    });
+    row.appendChild(btn);
+  });
+  return row;
+}
+
+/* ----------------------------------------------------------------------------
  * v25PickAndSetStud(spec) — arm the 'v25-stud' tool from a BB-rail / palette
  * tile. v25SetTool rebuilds v25State, so we set the stud state on the FRESH
  * v25State afterwards; persistence lives on lastUsedSection.stud /
@@ -155,6 +184,10 @@ function v25PickAndSetStud(spec) {
  * end-on never snaps.
  * ========================================================================== */
 function v25StudBearingFace(blk, ent) {
+  // Block guard — this scans entities2D[blk.viewKey]; the no-block selection
+  // helpers (v25EntBounds etc.) must never make it throw (PDF export runs
+  // render() with activeBlock===null). Null block ⇒ no snap.
+  if (!blk || !blk.viewKey) return null;
   if (!ent || !ent.studOrient || ent.studOrient === 'end') return null;
 
   const horiz = (ent.studOrient === 'h-nutL' || ent.studOrient === 'h-nutR');
@@ -219,6 +252,145 @@ function v25StudBearingFace(blk, ent) {
   }
 
   return (best != null) ? { face: best, fixtureThk: bestThk } : null;
+}
+
+/* ============================================================================
+ * studSectionGeom(blk, ent) → geometry bundle | null  (SINGLE SOURCE OF TRUTH)
+ * ----------------------------------------------------------------------------
+ * Every consumer of a SECTION stud's drawn geometry — the drawer, the DXF
+ * emitter, the precise hit-test, the hover centreline, the selection footprint
+ * and the drag grips — reads from here, so the glyph, pick, highlight and export
+ * can never drift. Returns null for end-on / non-stud. Tolerates a null block
+ * (snap=null, geometry centred on ent.u/ent.v) so the no-block selection helpers
+ * never throw.
+ *
+ * Embedment is user-overridable via two optional entity fields:
+ *   ent.embedDepth — bonded length below the embedment-edge datum (the user's
+ *                    "embedment depth"). Unset ⇒ legacyEmbLen − sFace, which
+ *                    reproduces today's catalogue geometry byte-for-byte (the
+ *                    tip lands on the same Le as before) for EVERY size and in
+ *                    both the no-host and snapped cases — zero regression.
+ *   ent.faceOffset — distance from the bearing plane (s=0) down to the embedment
+ *                    edge (s=sFace). Unset ⇒ detected fixture thickness, else the
+ *                    catalogue maxFixt (today's behaviour).
+ * ========================================================================== */
+function studSectionGeom(blk, ent) {
+  const orient = (ent && ent.studOrient) || 'v-nutT';
+  if (orient === 'end') return null;
+
+  const spec = (typeof getStudSpec === 'function')
+             ? getStudSpec(ent.studSpec)
+             : (typeof CHEMSET_STUDS === 'object' ? CHEMSET_STUDS[ent.studSpec] : null);
+  const S = spec || { size: 'M16', d: 16, L: 190, Le: 165, maxFixt: 40, dh: 18, embed: 125 };
+
+  const d   = S.d || 16;
+  const L   = S.L || d * 12;
+  const Le  = S.Le || L * 0.87;
+  const dh  = S.dh || d + 2;
+  const maxFixt = (S.maxFixt != null) ? S.maxFixt : Math.max(0, Le - (S.embed || Le * 0.75));
+  const nd  = (typeof studDims === 'function') ? studDims(S.size, d)
+            : { nutAF: d * 1.7, nutH: d * 0.86, washOD: d * 2.1, washT: d * 0.2, minorD: d * 0.84, pitch: Math.max(1, 0.13 * d) };
+  const nutAF = nd.nutAF || d * 1.7, nutH = nd.nutH || d * 0.86;
+  const washOD = nd.washOD || d * 2.1, washT = nd.washT || d * 0.2;
+  const minorD = nd.minorD || d * 0.84, pitch = nd.pitch || Math.max(1, 0.13 * d);
+
+  const axisIsU = (orient === 'h-nutL' || orient === 'h-nutR');
+  const trans   = axisIsU ? ent.v : ent.u;
+  const bodyDir = (orient === 'h-nutL' || orient === 'v-nutB') ? 1 : -1;
+
+  const snap = blk ? v25StudBearingFace(blk, ent) : null;
+  const junction = snap ? snap.face : (axisIsU ? ent.u : ent.v);
+
+  // Projection stack (above the bearing plane) — catalogue-pinned, independent
+  // of the embedment override.
+  const tail = Math.max(2 * pitch, (L - Le) - (washT + nutH));
+  const sTailTop  = -(washT + nutH + tail);
+  const sNutCrown = -(washT + nutH);
+  const sNutWash  = -washT;
+  // Today's embedded length (== Le for every catalogue size) — the back-compat anchor.
+  const legacyEmbLen = Math.max(d + 2, L - (washT + nutH + tail));
+
+  // Embedment edge datum + bonded depth (both user-overridable).
+  let sFace = (ent.faceOffset != null) ? Math.max(0, ent.faceOffset)
+            : (snap ? Math.max(0, snap.fixtureThk) : maxFixt);
+  const embedDepth = (ent.embedDepth != null && ent.embedDepth > 0)
+            ? ent.embedDepth
+            : Math.max(d + 2, legacyEmbLen - sFace);   // unset ⇒ reproduces legacyEmbLen
+  let embLen = Math.max(d + 2, sFace + embedDepth);
+  sFace = Math.min(sFace, Math.max(0, embLen - 0.5));   // always keep a bond region
+  const sChiselBase = embLen - d;                       // 45° bevel rises d over run d
+
+  const axisAt = (s) => junction + bodyDir * s;
+  // NB: rPolygon/rFillPolygon read points as [u,v] ARRAYS — Puv returns arrays.
+  const Puv = axisIsU ? (s, t) => [axisAt(s), trans + t]
+                      : (s, t) => [trans + t, axisAt(s)];
+
+  return {
+    S, d, L, Le, dh, maxFixt, nd, nutAF, nutH, washOD, washT, minorD, pitch,
+    axisIsU, trans, bodyDir, snap, junction, tail,
+    sTailTop, sNutCrown, sNutWash, legacyEmbLen, sFace, embedDepth, embLen, sChiselBase,
+    axisAt, Puv, washHalf: washOD / 2, nutHalf: nutAF / 2, dh2: d / 2, hole2: dh / 2,
+  };
+}
+
+/* ============================================================================
+ * v25StudEdgeSnap(blk, ent, g, sCand) → snapped s | null
+ * ----------------------------------------------------------------------------
+ * When the user drags the embedment-edge grip, snap the edge datum to a nearby
+ * host face crossing the stud axis — so it can land on top-of-grout, top-of-
+ * blockwork, a plate underside, etc. v25StudBearingFace only sees mem2/plate2,
+ * but grout/blockwork are mat/blockWall entities, so this does its OWN host
+ * detection over mem2/mat/blockWall/plate2 using the snap-independent
+ * v25EntBounds. Both axis-faces of each spanning host are candidates (so you can
+ * drop the edge from the top of a pad to its underside). Wins over grid-snap.
+ * ========================================================================== */
+function v25StudEdgeSnap(blk, ent, g, sCand) {
+  if (!blk || !g) return null;
+  const list = (typeof entities2D !== 'undefined' && entities2D[blk.viewKey]) || [];
+  const axisIsU = g.axisIsU, junction = g.junction, bodyDir = g.bodyDir, trans = g.trans;
+  const ppmm = (typeof viewport === 'object' && viewport.zoom && typeof drawingScale !== 'undefined' && drawingScale)
+             ? (viewport.zoom / drawingScale) : 1;
+  const tol = 10 / ppmm;                                 // 10 screen-px in real mm
+  let best = null, bestD = tol;
+  for (const e of list) {
+    if (!e || e === ent) continue;
+    if (e.type !== 'mem2' && e.type !== 'mat' && e.type !== 'blockWall' && e.type !== 'plate2') continue;
+    const bb = (typeof v25EntBounds === 'function') ? v25EntBounds(e) : null;
+    if (!bb) continue;
+    const tLo = axisIsU ? bb.B : bb.L, tHi = axisIsU ? bb.T : bb.R;     // transverse extent
+    if (trans < tLo - 1 || trans > tHi + 1) continue;                  // axis must cross the host
+    const faces = axisIsU ? [bb.L, bb.R] : [bb.B, bb.T];                // both axis-faces
+    for (const f of faces) {
+      const s = (f - junction) * bodyDir;
+      if (s < -2) continue;                                            // only at/below the bearing plane
+      const dd = Math.abs(s - sCand);
+      if (dd < bestD) { bestD = dd; best = s; }
+    }
+  }
+  return best;
+}
+
+/* ============================================================================
+ * v25SyncStudEmbedReadouts(ent, blk) — push the LIVE embedment numbers into the
+ * top options-bar input + the inspector fields WITHOUT rebuilding either (a
+ * rebuild would steal focus mid-type / interrupt a drag). Reads the effective
+ * geometry so the displayed numbers always match the drawn rod; skips whichever
+ * input is currently focused so it never fights the user's typing.
+ * ========================================================================== */
+function v25SyncStudEmbedReadouts(ent, blk) {
+  if (!ent || ent.type !== 'stud' || typeof document === 'undefined') return;
+  const g = (typeof studSectionGeom === 'function')
+    ? studSectionGeom(blk || (typeof activeBlock !== 'undefined' ? activeBlock : null), ent)
+    : null;
+  if (!g) return;
+  const active = document.activeElement;
+  const set = (id, v) => {
+    const el = document.getElementById(id);
+    if (el && el !== active) el.value = Math.round(v);
+  };
+  set('v25o-selstud-embed', g.embedDepth);   // top options bar
+  set('v25-fld-embedDepth', g.embedDepth);   // inspector
+  set('v25-fld-faceOffset', g.sFace);        // inspector (edge offset)
 }
 
 /* ============================================================================
@@ -317,45 +489,19 @@ function drawStud2D_End(blk, ent, S, col, pm) {
  *   s = embLen:          chisel tip (true catalogue L below the projection)
  * -------------------------------------------------------------------------- */
 function drawStud2D_Section(blk, ent, S, col, pm, orient) {
-  const axisIsU = (orient === 'h-nutL' || orient === 'h-nutR');
-  const trans   = axisIsU ? ent.v : ent.u;
-  const bodyDir = (orient === 'h-nutL' || orient === 'v-nutB') ? 1 : -1;
+  // All geometry (incl. the user embedment override + bearing snap) comes from
+  // the single-source helper, so the glyph, hit-test, footprint, DXF and grips
+  // never drift.
+  const g = (typeof studSectionGeom === 'function') ? studSectionGeom(blk, ent) : null;
+  if (!g) return;   // end-on is dispatched to drawStud2D_End by drawStud2D
 
-  // Catalogue + nut/washer geometry (mm), all catalogue/standard-pinned.
-  const d   = S.d || 16;
-  const L   = S.L || d * 12;
-  const Le  = S.Le || L * 0.87;
-  const dh  = S.dh || d + 2;
-  const maxFixt = (S.maxFixt != null) ? S.maxFixt : Math.max(0, Le - (S.embed || Le * 0.75));
-  const nd  = studDims(S.size, d);
-  const nutAF = nd.nutAF || d * 1.7;
-  const nutH  = nd.nutH  || d * 0.86;
-  const washOD= nd.washOD|| d * 2.1;
-  const washT = nd.washT || d * 0.2;
-  const minorD= nd.minorD|| d * 0.84;
-  const pitch = nd.pitch || Math.max(1, 0.13 * d);
+  const axisIsU = g.axisIsU, trans = g.trans;
+  const minorD = g.minorD, pitch = g.pitch;
+  const dh2 = g.dh2, hole2 = g.hole2, washHalf = g.washHalf, nutHalf = g.nutHalf;
+  const sTailTop = g.sTailTop, sNutCrown = g.sNutCrown, sNutWash = g.sNutWash;
+  const sFace = g.sFace, embLen = g.embLen, sChiselBase = g.sChiselBase;
+  const snap = g.snap, junction = g.junction, axisAt = g.axisAt, P = g.Puv;
 
-  const dh2 = d / 2, hole2 = dh / 2, washHalf = washOD / 2, nutHalf = nutAF / 2;
-
-  // Projection stack (above the bearing plane). tail = the exposed thread above
-  // the nut; sized so the whole projection ≈ catalogue (L − Le).
-  const tail = Math.max(2 * pitch, (L - Le) - (washT + nutH));
-  const sTailTop = -(washT + nutH + tail);              // most-negative s (tail apex, flat cap)
-  const sNutCrown = -(washT + nutH);                    // nut outer (crown) face
-  const sNutWash  = -washT;                             // nut underside / washer top
-  // Embedded length below the bearing plane → tip at true catalogue L.
-  const embLen   = Math.max(d + 2, L - (washT + nutH + tail));
-  const sChiselBase = embLen - d;                       // 45° bevel rises d over run d
-
-  // Bearing snap (one-sided) + fixture thickness for the concrete datum.
-  const snap = v25StudBearingFace(blk, ent);
-  const junction = snap ? snap.face : (axisIsU ? ent.u : ent.v);
-  let sFace = snap ? Math.max(0, snap.fixtureThk) : maxFixt;   // concrete-face datum
-  sFace = Math.min(sFace, Math.max(0, embLen - 0.5));          // keep a bond region
-
-  const axisAt = (s) => junction + bodyDir * s;
-  const P = axisIsU ? (s, t) => [axisAt(s), trans + t]
-                    : (s, t) => [trans + t, axisAt(s)];
   // Axis-aligned rect helper in (u,v) from an s-interval × ±half transverse.
   const rectFor = (sA, sB, half) => {
     const a = axisAt(sA), b = axisAt(sB);
@@ -364,6 +510,13 @@ function drawStud2D_Section(blk, ent, S, col, pm, orient) {
   };
 
   ctx.setLineDash([]);
+
+  // Two-tone by the DRILLING DATUM (the embedment-edge node at sFace):
+  //   STEEL  — solid dark fill ABOVE the datum: head (nut + washer) + the shaft
+  //            passing through the grout / fixture (NOT drilled). Reads as steel.
+  //   EPOXY  — light fill BELOW the datum: the drill hole + adhesive bond zone,
+  //            i.e. the embedment depth the builder actually drills.
+  const STEEL = 0.62, EPOXY = 0.13;
 
   // (A) CENTRELINE first (under everything).
   {
@@ -397,22 +550,22 @@ function drawStud2D_Section(blk, ent, S, col, pm, orient) {
     rLine(blk, w1b[0], w1b[1], w2b[0], w2b[1]);          // bottom cap
   }
 
-  // (C) ROD — solid above the concrete face (free / grip), OUTLINE-ONLY through
-  //     the bond zone so the adhesive hatch reads. Full-length thread overlay.
-  // (C1) Upper rod (projection tail + grip) solid.
+  // (C) ROD — DARK STEEL above the drilling datum (head + fixture shaft), light /
+  //     outline-only through the drilled bond zone so the adhesive hatch reads.
+  // (C1) Upper rod (projection tail + fixture shaft, down to the datum) — solid steel.
   const upperTop = sTailTop, upperBot = Math.max(sFace, sNutWash);
   const up = [P(upperTop, dh2), P(upperBot, dh2), P(upperBot, -dh2), P(upperTop, -dh2)];
-  ctx.fillStyle = colorAlpha(col, 0.5);
+  ctx.fillStyle = colorAlpha(col, STEEL);
   ctx.strokeStyle = col;
   ctx.lineWidth = Math.max(0.4, LW.VIS * pm);
   rFillPolygon(blk, up);
   rPolygon(blk, up);
 
-  // (C2) Lower rod (bond zone) outline + chisel — light fill so hatch shows.
+  // (C2) Lower rod (drilled embedment) — light fill so the epoxy hatch reads.
   const low = [
     P(upperBot, dh2), P(embLen, dh2), P(sChiselBase, -dh2), P(upperBot, -dh2),
   ];
-  ctx.fillStyle = colorAlpha(col, 0.14);
+  ctx.fillStyle = colorAlpha(col, EPOXY);
   rFillPolygon(blk, low);
   ctx.lineWidth = Math.max(0.4, LW.VIS * pm);
   rPolygon(blk, low);
@@ -424,26 +577,34 @@ function drawStud2D_Section(blk, ent, S, col, pm, orient) {
   //     drawThreadAlong* — the latter's overshoot guard is tuned for short bolt
   //     thread zones and marches spurious teeth past the chisel over the long
   //     full-rod span.
+  //     The fixture shaft (datum → bearing) is drawn as SOLID steel (no thread),
+  //     so the thread runs the exposed tail + the DRILLED bond zone only — which
+  //     keeps the dark-steel-above / threaded-epoxy-below read crisp.
   drawStudThread(blk, P, sTailTop, sNutCrown, dh2, minorD / 2, pitch, col, pm);
-  drawStudThread(blk, P, 0, sChiselBase, dh2, minorD / 2, pitch, col, pm);
+  drawStudThread(blk, P, sFace, sChiselBase, dh2, minorD / 2, pitch, col, pm);
 
-  // (E) DEPTH-SET MARK — a short transverse tick pair on the thread at the
-  //     concrete-face datum (only when a host fixture was detected, so it never
-  //     floats with no concrete behind it).
-  if (snap) {
-    ctx.strokeStyle = colorAlpha(col, 0.6);
+  // (E) DRILLING DATUM — the embedment-ZERO line: where the drill hole + epoxy
+  //     bond begins (the draggable edge node). A crisp transverse line across the
+  //     hole width + short outward ticks, so the dark steel above reads as the
+  //     fixture/grout shaft and the hatched zone below as the drilled depth.
+  //     Always drawn (the datum is meaningful even with no detected host).
+  {
+    ctx.strokeStyle = colorAlpha(col, 0.85);
+    ctx.lineWidth = Math.max(0.5, LW.VIS * pm);
+    const d1 = P(sFace, hole2), d2 = P(sFace, -hole2);
+    rLine(blk, d1[0], d1[1], d2[0], d2[1]);
     ctx.lineWidth = Math.max(0.25, LW.HID * pm);
-    const m1a = P(sFace, dh2), m1b = P(sFace, dh2 + 2.0);
-    const m2a = P(sFace, -dh2), m2b = P(sFace, -(dh2 + 2.0));
+    const m1a = P(sFace, hole2), m1b = P(sFace, hole2 + 2.5);
+    const m2a = P(sFace, -hole2), m2b = P(sFace, -(hole2 + 2.5));
     rLine(blk, m1a[0], m1a[1], m1b[0], m1b[1]);
     rLine(blk, m2a[0], m2a[1], m2b[0], m2b[1]);
   }
 
-  // (F) WASHER (plain) — touching the bearing plane, light fill.
+  // (F) WASHER (plain) — touching the bearing plane, solid steel (head).
   ctx.setLineDash([]);
   ctx.strokeStyle = col;
   ctx.lineWidth = Math.max(0.5, LW.VIS * pm);
-  ctx.fillStyle = colorAlpha(col, 0.10);
+  ctx.fillStyle = colorAlpha(col, STEEL);
   const wr = rectFor(sNutWash, 0, washHalf);
   rFillRect(blk, wr[0], wr[1], wr[2], wr[3]);
   rRect(blk, wr[0], wr[1], wr[2], wr[3]);
@@ -452,7 +613,7 @@ function drawStud2D_Section(blk, ent, S, col, pm, orient) {
   const aCrown = axisAt(sNutCrown), aFlat = axisAt(sNutWash);
   const nutPts = axisIsU ? hexPointsAlongU(trans, aCrown, aFlat, nutHalf)
                          : hexPointsAlongV(trans, aCrown, aFlat, nutHalf);
-  ctx.fillStyle = colorAlpha(col, 0.10);
+  ctx.fillStyle = colorAlpha(col, STEEL);
   rFillPolygon(blk, nutPts);
   ctx.lineWidth = Math.max(0.5, LW.VIS * pm);
   rPolygon(blk, nutPts);

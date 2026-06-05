@@ -90,6 +90,19 @@ function v25EntBounds(ent) {
     });
     return { L, R, B, T };
   }
+  if (ent.type === 'snapshot') {
+    const w = ent.w || 0, h = ent.h || 0, rotDeg = ent.rot || 0;
+    if (!rotDeg) return { L: ent.u, R: ent.u + w, B: ent.v, T: ent.v + h };
+    const rr = rotDeg * Math.PI / 180, cc = Math.cos(rr), ss = Math.sin(rr);
+    const cu = ent.u + w / 2, cv = ent.v + h / 2;
+    let L = Infinity, R = -Infinity, B = Infinity, T = -Infinity;
+    [[-w/2,-h/2],[w/2,-h/2],[w/2,h/2],[-w/2,h/2]].forEach(([lx, ly]) => {
+      const wu = cu + lx * cc - ly * ss, wv = cv + lx * ss + ly * cc;
+      if (wu < L) L = wu; if (wu > R) R = wu;
+      if (wv < B) B = wv; if (wv > T) T = wv;
+    });
+    return { L, R, B, T };
+  }
   if (ent.type === 'anchor') {
     const tot = ent.embed || 100;
     return { L: ent.u - 30, R: ent.u + 30, B: ent.v - tot, T: ent.v + 10 };
@@ -208,7 +221,12 @@ function v25EntBounds(ent) {
     return { L: ent.u - halfW, R: ent.u + halfW, B: ent.v + axLo, T: ent.v + axHi };
   }
   if (ent.type === 'stud') {
-    // ChemSet anchor stud (js/72j-v25-stud.js). Catalogue dia drives footprint.
+    // ChemSet anchor stud (js/72j-v25-stud.js). Snap-independent generous box
+    // (the bolt2 pattern): centred on the placed u,v — the live glyph re-centres
+    // on the detected bearing face at draw time, so this is a selection box, not
+    // a pixel-exact footprint (the precise pick + the highlight footprint use the
+    // snapped geometry). Sized to the embedment override so a typed/dragged-longer
+    // rod still marquee-selects. No block context here → no bearing scan.
     const S = (typeof getStudSpec === 'function' && getStudSpec(ent.studSpec))
             || (typeof CHEMSET_STUDS === 'object' && CHEMSET_STUDS[ent.studSpec])
             || { size: 'M16', d: 16, L: 190, Le: 165 };
@@ -218,10 +236,13 @@ function v25EntBounds(ent) {
     if (orient === 'end') {
       return { L: ent.u - halfW, R: ent.u + halfW, B: ent.v - halfW, T: ent.v + halfW };
     }
-    // Section: washer/nut at the placed u,v (the live glyph snaps to a face at
-    // draw time); body runs ~Le into the material, nut/washer projects ~(L−Le).
-    const nutOver = Math.max(8, (S.L || 190) - (S.Le || 165)) + 6;   // projection side
-    const bodyLen = (S.Le || 165) + 8;                               // embedded side
+    const d = S.d || 16, L = S.L || 190, Le = S.Le || 165;
+    const maxFixt = (S.maxFixt != null) ? S.maxFixt : Math.max(0, Le - (S.embed || Le * 0.75));
+    const sFace = (ent.faceOffset != null) ? Math.max(0, ent.faceOffset) : maxFixt;
+    const embedDepth = (ent.embedDepth != null && ent.embedDepth > 0)
+      ? ent.embedDepth : Math.max(d + 2, Le - sFace);   // Le == today's embedded length
+    const nutOver = Math.max(8, L - Le) + 6;             // projection side
+    const bodyLen = sFace + embedDepth + 8;              // embedded side (override-aware)
     const nutLow = (orient === 'h-nutL' || orient === 'v-nutB');     // body toward +axis
     const isH = (orient === 'h-nutL' || orient === 'h-nutR');
     const axLo = nutLow ? -nutOver : -bodyLen;
@@ -441,6 +462,17 @@ function v25EntHit(blk, ent, cursorPx, ctx) {
     }
     return areaHit(poly);
   }
+  if (t === 'snapshot') {
+    const w = ent.w || 0, h = ent.h || 0, rotDeg = ent.rot || 0;
+    let poly;
+    if (!rotDeg) poly = [{ u: ent.u, v: ent.v }, { u: ent.u + w, v: ent.v }, { u: ent.u + w, v: ent.v + h }, { u: ent.u, v: ent.v + h }];
+    else {
+      const rr = rotDeg * Math.PI / 180, cc = Math.cos(rr), ss = Math.sin(rr);
+      const cu = ent.u + w / 2, cv = ent.v + h / 2;
+      poly = [[-w/2,-h/2],[w/2,-h/2],[w/2,h/2],[-w/2,h/2]].map(([lx,ly]) => ({ u: cu + lx * cc - ly * ss, v: cv + lx * ss + ly * cc }));
+    }
+    return areaHit(poly);   // precise:false, score = area → ranks LOW so trace members on top win the click
+  }
   if (t === 'mesh' || t === 'txtBox') {
     const b = v25EntBounds(ent);
     if (!b) return null;
@@ -524,20 +556,14 @@ function v25FastenerHit(blk, ent, cursorPx, ctx, kind) {
       const tol = halfWO * ppmm + FLOOR_PX;
       return (d <= tol) ? { precise: true, score: d } : null;
     }
-    // SECTION: replicate drawStud2D_Section's axis mapping (s=0 at the bearing
-    // plane, axisAt(s)=junction+bodyDir*s; centreline spans the projection
-    // −(L−Le) to the embedded tip Le, +3 overrun) so the pick sits on the
-    // drawn centreline (which lands on the detected bearing face).
-    const axisIsU = (orient === 'h-nutL' || orient === 'h-nutR');
-    const trans = axisIsU ? ent.v : ent.u;
-    const bodyDir = (orient === 'h-nutL' || orient === 'v-nutB') ? 1 : -1;
-    const L = S.L || 190, Le = S.Le || 165;
-    const snap = (typeof v25StudBearingFace === 'function') ? v25StudBearingFace(blk, ent) : null;
-    const junction = snap ? snap.face : (axisIsU ? ent.u : ent.v);
-    const axisAt = (s) => junction + bodyDir * s;
-    const a0 = axisAt(-(L - Le) - 3), aL = axisAt(Le + 3);
-    const A = axisIsU ? real2Px(a0, trans) : real2Px(trans, a0);
-    const B = axisIsU ? real2Px(aL, trans) : real2Px(trans, aL);
+    // SECTION — span the DRAWN extents (tail-top → embedded tip, +3 overrun)
+    // from the single-source geometry, so the pick sits on the drawn centreline
+    // (which lands on the detected bearing face and honours the embedment override).
+    const g = (typeof studSectionGeom === 'function') ? studSectionGeom(blk, ent) : null;
+    if (!g) return null;
+    const a0 = g.axisAt(g.sTailTop - 3), aL = g.axisAt(g.embLen + 3);
+    const A = g.axisIsU ? real2Px(a0, g.trans) : real2Px(g.trans, a0);
+    const B = g.axisIsU ? real2Px(aL, g.trans) : real2Px(g.trans, aL);
     const dist = distSeg(cursorPx, A, B);
     const tol = Math.max(FLOOR_PX, halfWO * ppmm);
     return (dist <= tol) ? { precise: true, score: dist } : null;
@@ -787,7 +813,7 @@ function v25HitTest(blk, u, v) {
 // Returns the list of visible drag-handles for an entity. Each handle
 // becomes a clickable Bluebeam-style "grip square" when the entity is
 // selected. The `key` matches what v25HitHandle returns / v25Move expects.
-function v25EntHandles(ent) {
+function v25EntHandles(ent, blk) {
   if (ent.type === 'stiff2' && typeof v25StiffGrips === 'function') return v25StiffGrips(ent);
   const out = [];
   if (!ent) return out;
@@ -874,13 +900,43 @@ function v25EntHandles(ent) {
     // Single body grip at the screw head — drag to reposition (mirrors bolt2).
     out.push({ key: 'body', u: ent.u, v: ent.v });
   } else if (ent.type === 'stud') {
-    // Single body grip at the stud washer/nut — drag to reposition (mirrors bolt2).
-    out.push({ key: 'body', u: ent.u, v: ent.v });
+    // Section: body grip at the bearing plane + an embedment-EDGE grip (drag to
+    // re-datum, snaps to host edges) + a TIP grip (drag to set embedment depth),
+    // all on the bearing-snapped glyph via the single-source geometry. End-on (or
+    // no block): a single body grip at the placed point.
+    const g = (typeof studSectionGeom === 'function') ? studSectionGeom(blk, ent) : null;
+    if (!g) {
+      out.push({ key: 'body', u: ent.u, v: ent.v });
+    } else {
+      const body = g.Puv(0, 0), face = g.Puv(g.sFace, 0), tip = g.Puv(g.embLen, 0);
+      out.push({ key: 'body', u: body[0], v: body[1] });
+      out.push({ key: 'stud-face', shape: 'circle', u: face[0], v: face[1] });
+      out.push({ key: 'stud-tip', u: tip[0], v: tip[1] });
+    }
   }
   // Mat — rotation handle (Bluebeam-style perpendicular ball above the top
   // edge). Same affordance as mem2 so the user has one mental model for
   // "spin this thing". Polygon mats use centroid + furthest-point radius
   // to push the handle outside the visible polygon.
+  if (ent.type === 'snapshot') {
+    const w = ent.w || 0, h = ent.h || 0;
+    const rr = (ent.rot || 0) * Math.PI / 180, cc = Math.cos(rr), ss = Math.sin(rr);
+    const cu = ent.u + w / 2, cv = ent.v + h / 2;
+    const X = (lx, ly) => cu + lx * cc - ly * ss;
+    const Y = (lx, ly) => cv + lx * ss + ly * cc;
+    // local frame: u right, v UP. corners + edge-midpoints (pre-rotation), rotated about centre.
+    out.push({ key: 'c-bl', u: X(-w/2,-h/2), v: Y(-w/2,-h/2) });
+    out.push({ key: 'c-br', u: X( w/2,-h/2), v: Y( w/2,-h/2) });
+    out.push({ key: 'c-tr', u: X( w/2, h/2), v: Y( w/2, h/2) });
+    out.push({ key: 'c-tl', u: X(-w/2, h/2), v: Y(-w/2, h/2) });
+    out.push({ key: 'e-left',   u: X(-w/2, 0), v: Y(-w/2, 0) });
+    out.push({ key: 'e-right',  u: X( w/2, 0), v: Y( w/2, 0) });
+    out.push({ key: 'e-bottom', u: X(0, -h/2), v: Y(0, -h/2) });
+    out.push({ key: 'e-top',    u: X(0,  h/2), v: Y(0,  h/2) });
+    const halfH = h / 2, offsetMm = halfH + Math.max(40, halfH * 0.15);
+    out.push({ key: 'rotate', shape: 'circle', u: cu + (-ss) * offsetMm, v: cv + (cc) * offsetMm });
+    return out;
+  }
   if (ent.type === 'mat') {
     const rotRad = (ent.rot || 0) * Math.PI / 180;
     const cosR = Math.cos(rotRad), sinR = Math.sin(rotRad);
@@ -1260,11 +1316,46 @@ function v25DrawSnapIndicator(blk, cs) {
 // outline-only so the wash stays signal, not noise.
 const V25_SEL_FILL_TYPES = new Set(['mem2', 'mat', 'mesh', 'blockWall', 'stiff2', 'anchor', 'screw', 'stud', 'bolt2']);
 
+// Oriented rod rectangle hugging a fastener's DRAWN glyph (stud / screw / bolt2).
+// Built from the bearing/clamp-recentred centreline (v25FastenerCentreline) ±
+// the widest transverse half (washer / head), so the highlight hugs the snapped
+// glyph instead of the raw-click bbox — the fix for the "offset selection box".
+function _v25FastenerFootprintPoly(ent, blk) {
+  const cl = (typeof v25FastenerCentreline === 'function') ? v25FastenerCentreline(blk, ent) : null;
+  if (!cl) return null;
+  if (cl.kind === 'pt') {                       // end-on glyph → square at the head/washer Ø
+    const r = cl.radMm || 10;
+    return [{ u: cl.u - r, v: cl.v - r }, { u: cl.u + r, v: cl.v - r },
+            { u: cl.u + r, v: cl.v + r }, { u: cl.u - r, v: cl.v + r }];
+  }
+  if (cl.kind !== 'seg') return null;
+  let halfW = 10;
+  if (ent.type === 'stud') {
+    const S = (typeof getStudSpec === 'function' && getStudSpec(ent.studSpec))
+            || (typeof CHEMSET_STUDS === 'object' && CHEMSET_STUDS[ent.studSpec]) || { size: 'M16', d: 16 };
+    const nd = (typeof studDims === 'function') ? studDims(S.size, S.d || 16) : { washOD: (S.d || 16) * 2.1 };
+    halfW = (nd.washOD || (S.d || 16) * 2.1) / 2;
+  } else if (ent.type === 'screw') {
+    const S = (typeof getScrewSpec === 'function' && getScrewSpec(ent.screwSpec))
+            || (typeof HBS_PLATE_SCREWS === 'object' && HBS_PLATE_SCREWS[ent.screwSpec]) || { dK: 16.5 };
+    halfW = (S.dK || 16.5) / 2;
+  } else if (ent.type === 'bolt2') {
+    const b = (typeof BOLT_DB === 'object' && (BOLT_DB[ent.size] || BOLT_DB.M20)) || { washOD: 44, d: 20 };
+    halfW = (b.washOD || (b.d || 20) * 1.85) / 2;
+  }
+  const dx = cl.b.u - cl.a.u, dy = cl.b.v - cl.a.v, len = Math.hypot(dx, dy) || 1;
+  const nx = -dy / len * halfW, ny = dx / len * halfW;
+  return [{ u: cl.a.u + nx, v: cl.a.v + ny }, { u: cl.b.u + nx, v: cl.b.v + ny },
+          { u: cl.b.u - nx, v: cl.b.v - ny }, { u: cl.a.u - nx, v: cl.a.v - ny }];
+}
+
 // Footprint polygon (world u,v) for a selected entity's highlight: oriented for
-// members / rotated mats / section walls so the outline + fill hug the visible
-// geometry; axis-aligned bbox for everything else. dim2 is handled by its own
-// halo before this is called; returns null when there's no sensible footprint.
-function v25SelFootprint(ent) {
+// members / rotated mats / section walls + fasteners so the outline + fill hug
+// the visible geometry; axis-aligned bbox for everything else. dim2 is handled by
+// its own halo before this is called; returns null when there's no sensible
+// footprint. `blk` (optional) lets the fastener branch recentre on the snapped
+// glyph — callers in the selection-highlight pass already have it.
+function v25SelFootprint(ent, blk) {
   if (!ent) return null;
   const t = ent.type;
   // Oriented member rectangle (elevation / plan), or a square for a pure
@@ -1302,6 +1393,13 @@ function v25SelFootprint(ent) {
     const half = (cat.thk || 190) / 2, r = (ent.rot || 0) * Math.PI / 180, c = Math.cos(r), s = Math.sin(r);
     return [[0, -half], [len, -half], [len, half], [0, half]].map(([lx, ly]) => ({
       u: ent.u + lx * c - ly * s, v: ent.v + lx * s + ly * c }));
+  }
+  // Fasteners (stud / screw / bolt2) — oriented rod rectangle hugging the
+  // bearing/clamp-recentred glyph (NOT the raw-click bbox, which is offset once
+  // the glyph snaps to a face). The fix for the "offset selection box".
+  if (t === 'stud' || t === 'screw' || t === 'bolt2') {
+    const fp = (typeof _v25FastenerFootprintPoly === 'function') ? _v25FastenerFootprintPoly(ent, blk) : null;
+    if (fp) return fp;
   }
   // Everything else — axis-aligned bbox corners.
   const b = (typeof v25EntBounds === 'function') ? v25EntBounds(ent) : null;
@@ -1349,7 +1447,7 @@ function v25DrawSelectionHighlight(blk, cs) {
       // Footprint polygon (oriented for members / rotated mats / section walls,
       // axis-aligned bbox otherwise). Shade solid-object types with the subtle
       // fill; everything draws the same solid outline.
-      const fp = v25SelFootprint(ent);
+      const fp = v25SelFootprint(ent, blk);
       if (!fp || fp.length < 2) continue;
       ctx.globalAlpha = 1;
       ctx.setLineDash([]);
@@ -1376,7 +1474,7 @@ function v25DrawSelectionHighlight(blk, cs) {
   for (const id of v25Selected) {
     const ent = (entities2D[blk.viewKey] || []).find(e => e.id === id);
     if (!ent) continue;
-    const handles = v25EntHandles(ent);
+    const handles = v25EntHandles(ent, blk);
     handles.forEach(h => {
       const p = real2px(blk, h.u, h.v);
       const isHover = (v25Hover && v25Hover.entId === ent.id && v25Hover.handle === h.key);
@@ -1510,16 +1608,11 @@ function v25FastenerCentreline(blk, ent) {
     const halfWO = (nd.washOD || (S.d || 16) * 2.1) / 2;
     const orient = ent.studOrient || 'v-nutT';
     if (orient === 'end') return { kind: 'pt', u: ent.u, v: ent.v, radMm: halfWO };
-    const axisIsU = (orient === 'h-nutL' || orient === 'h-nutR');
-    const trans = axisIsU ? ent.v : ent.u;
-    const bodyDir = (orient === 'h-nutL' || orient === 'v-nutB') ? 1 : -1;
-    const L = S.L || 190, Le = S.Le || 165;
-    const snap = (typeof v25StudBearingFace === 'function') ? v25StudBearingFace(blk, ent) : null;
-    const junction = snap ? snap.face : (axisIsU ? ent.u : ent.v);
-    const axisAt = (s) => junction + bodyDir * s;
-    const a0 = axisAt(-(L - Le) - 3), aL = axisAt(Le + 3);
-    return axisIsU ? { kind: 'seg', a: { u: a0, v: trans }, b: { u: aL, v: trans } }
-                   : { kind: 'seg', a: { u: trans, v: a0 }, b: { u: trans, v: aL } };
+    const g = (typeof studSectionGeom === 'function') ? studSectionGeom(blk, ent) : null;
+    if (!g) return { kind: 'pt', u: ent.u, v: ent.v, radMm: halfWO };
+    const a0 = g.axisAt(g.sTailTop - 3), aL = g.axisAt(g.embLen + 3);
+    return g.axisIsU ? { kind: 'seg', a: { u: a0, v: g.trans }, b: { u: aL, v: g.trans } }
+                     : { kind: 'seg', a: { u: g.trans, v: a0 }, b: { u: g.trans, v: aL } };
   }
   // bolt2
   const b = (typeof BOLT_DB === 'object' && (BOLT_DB[ent.size] || BOLT_DB.M20))
@@ -1651,7 +1744,7 @@ function v25NearestHandleOnSelected(blk, u, v) {
   for (const id of v25Selected) {
     const ent = (entities2D[blk.viewKey] || []).find(e => e.id === id);
     if (!ent) continue;
-    const handles = v25EntHandles(ent);
+    const handles = v25EntHandles(ent, blk);
     for (const h of handles) {
       const hp = real2px(blk, h.u, h.v);
       const d = Math.hypot(hp.x - cursorPx.x, hp.y - cursorPx.y);
@@ -1718,7 +1811,16 @@ function v25HitHandle(blk, ent, u, v) {
     return 'body';
   }
   if (ent.type === 'stud') {
-    // Click anywhere on the glyph drags it (mirrors bolt2 — simple point move).
+    // First-click grip pick — the embedment TIP / EDGE grips before the body
+    // fallback. (For an already-selected stud the grab actually routes through
+    // v25NearestHandleOnSelected → v25EntHandles; this covers the select+grab in
+    // one gesture.)
+    const g = (typeof studSectionGeom === 'function') ? studSectionGeom(blk, ent) : null;
+    if (g) {
+      const tip = g.Puv(g.embLen, 0), face = g.Puv(g.sFace, 0);
+      if (distPx(tip[0], tip[1]) < 11) return 'stud-tip';
+      if (distPx(face[0], face[1]) < 11) return 'stud-face';
+    }
     return 'body';
   }
   if (ent.type === 'mem2') {
@@ -1918,6 +2020,37 @@ function v25Move(ent, du, dv, handle) {
   if (handle === 'txt' && ent.type === 'leader2') { ent.txtU += du; ent.txtV += dv; return; }
   if (handle === 'txt' && ent.type === 'anchor') { ent.txtU += du; ent.txtV += dv; return; }
 
+  // Stud embedment grips — edit the bonded length / edge datum, NEVER ent.u/ent.v.
+  // Must run before the generic body-translate tail. Cursor is reconstructed from
+  // v25Drag.lastU+du (v25Move receives deltas), like the rotate handles.
+  if (ent.type === 'stud' && (handle === 'stud-tip' || handle === 'stud-face')) {
+    const _blk = (typeof activeBlock !== 'undefined') ? activeBlock : null;
+    const g = (typeof studSectionGeom === 'function') ? studSectionGeom(_blk, ent) : null;
+    if (!g) return;
+    const cu = (typeof v25Drag === 'object' && v25Drag) ? (v25Drag.lastU + du) : (ent.u + du);
+    const cv = (typeof v25Drag === 'object' && v25Drag) ? (v25Drag.lastV + dv) : (ent.v + dv);
+    const cursorAxis = g.axisIsU ? cu : cv;
+    const s = (cursorAxis - g.junction) * g.bodyDir;     // project cursor onto the stud axis
+    if (handle === 'stud-tip') {
+      // Edge fixed, tip moves → bonded embedment depth, in clean 5 mm steps so the
+      // drag reads as round numbers as it grows/shrinks.
+      ent.embedDepth = Math.max(5, Math.round((s - g.sFace) / 5) * 5);
+    } else {
+      // Edge moves, tip rides down (bond fixed): pin the current bond first, then
+      // re-datum the edge — snapping to a host face (grout/blockwork/plate) in
+      // range, else clean 5 mm steps.
+      if (ent.embedDepth == null) ent.embedDepth = Math.round(g.embedDepth);
+      const snapped = (typeof v25StudEdgeSnap === 'function') ? v25StudEdgeSnap(_blk, ent, g, s) : null;
+      const newFace = (snapped != null) ? snapped : Math.round(s / 5) * 5;
+      ent.faceOffset = Math.max(0, newFace);
+    }
+    // Live-update the embedment readouts (top bar + inspector) as the drag moves,
+    // so the number ticks up/down to the value the user is chasing.
+    if (typeof v25SyncStudEmbedReadouts === 'function') v25SyncStudEmbedReadouts(ent, _blk);
+    if (typeof requestRender === 'function') requestRender();
+    return;
+  }
+
   // Dimension grips: p1/p2 move endpoints; 'off' re-offsets the dim line (paper-mm);
   // body translates both endpoints (the generic tail below never touches p1u..p2v).
   if (ent.type === 'dim2') {
@@ -2048,6 +2181,48 @@ function v25Move(ent, du, dv, handle) {
     return;
   }
 
+  // Snapshot resize/rotate. Edges: free 1-axis (mirror blockWall e-*). Corners:
+  // aspect-locked by default (lockAspect); Shift toggles free. Rotate: mat-style.
+  if (ent.type === 'snapshot' && typeof handle === 'string'
+      && (handle === 'rotate' || handle[0] === 'c' || handle.startsWith('e-'))) {
+    const MIN = 20;
+    const ds = (typeof drawingScale === 'number' && drawingScale) ? drawingScale : 1;
+    const sync = () => { ent.paperMM = { w: (ent.w || 0) / ds, h: (ent.h || 0) / ds }; };
+    if (handle === 'rotate') {
+      const cu = ent.u + (ent.w || 0) / 2, cv = ent.v + (ent.h || 0) / 2;
+      const ccu = (typeof v25Drag === 'object' && v25Drag) ? (v25Drag.lastU + du) : (cu + du);
+      const ccv = (typeof v25Drag === 'object' && v25Drag) ? (v25Drag.lastV + dv) : (cv + dv);
+      const dx = ccu - cu, dy = ccv - cv;
+      if (dx * dx + dy * dy < 1) return;
+      const cursorRot = Math.atan2(dy, dx) - Math.PI / 2;
+      const newRot = applySnappedRotation(cursorRot, !!(typeof shiftHeld !== 'undefined' && shiftHeld));
+      ent.rot = newRot * 180 / Math.PI;
+      return;
+    }
+    // Edge grips — free single-axis stretch (blockWall e-* math; MIN real-mm).
+    if (handle === 'e-left')   { const nw = (ent.w || 0) - du; if (nw >= MIN) { ent.u += du; ent.w = nw; } sync(); return; }
+    if (handle === 'e-right')  { const nw = (ent.w || 0) + du; if (nw >= MIN) ent.w = nw; sync(); return; }
+    if (handle === 'e-bottom') { const nh = (ent.h || 0) - dv; if (nh >= MIN) { ent.v += dv; ent.h = nh; } sync(); return; }
+    if (handle === 'e-top')    { const nh = (ent.h || 0) + dv; if (nh >= MIN) ent.h = nh; sync(); return; }
+    // Corner grips — anchor opposite corner; aspect-locked unless Shift.
+    const free = !!(typeof shiftHeld !== 'undefined' && shiftHeld) ? !ent.lockAspect : ent.lockAspect; // Shift inverts lockAspect
+    const aspect = (ent.h || 1) / (ent.w || 1);
+    // anchor corner stays fixed; the dragged corner moves by (du,dv) in axis-aligned terms.
+    // For the unrotated common case (rot 0): adjust w/h and shift u/v for left/bottom anchors.
+    let nu = ent.u, nv = ent.v, nw = ent.w || 0, nh = ent.h || 0;
+    if (handle === 'c-br') { nw += du;       nh -= dv; nv += dv; }
+    if (handle === 'c-bl') { nw -= du; nu += du; nh -= dv; nv += dv; }
+    if (handle === 'c-tr') { nw += du;       nh += dv; }
+    if (handle === 'c-tl') { nw -= du; nu += du; nh += dv; }
+    if (free) {            // aspect-locked: drive h from w (use the dominant axis = w)
+      nh = nw * aspect;
+      // keep bottom-left/top-left anchors' origin consistent for the locked height
+      if (handle === 'c-bl' || handle === 'c-br') nv = (ent.v + (ent.h || 0)) - nh;
+    }
+    if (nw >= MIN && nh >= MIN) { ent.u = nu; ent.v = nv; ent.w = nw; ent.h = nh; }
+    sync();
+    return;
+  }
   // Member end-handles: drag one end to extend / re-angle while the other end stays put.
   if (ent.type === 'mem2' && (handle === 'end-a' || handle === 'end-b')) {
     const rot = (ent.rot || 0) * Math.PI / 180;
@@ -2168,6 +2343,12 @@ function v25UpdateInspector() {
     txt('Title', 'title');
     num('Scale 1:', 'scale');
     txt('Reference', 'ref');
+  } else if (ent.type === 'snapshot') {
+    const ds = (typeof drawingScale === 'number' && drawingScale) ? drawingScale : 1;
+    // Read-only size heading only. Opacity + Rotation are auto-added by the
+    // shared Display block below; precise resize is via grips + the live size
+    // chip. No editable size / lock-aspect widget in v1 (per §11.1/§11.2).
+    fields.push({ kind: 'h', label: 'Image  ' + Math.round((ent.w || 0) / ds) + ' x ' + Math.round((ent.h || 0) / ds) + ' mm (paper)' });
   } else if (ent.type === 'mat') {
     sel('Material', 'material', Object.keys(V25_MATERIALS));
     num('Width (mm)', 'w'); num('Height (mm)', 'h');
@@ -2368,6 +2549,17 @@ function v25UpdateInspector() {
     sel('Orientation', 'studOrient',
       (typeof V25_STUD_ORIENT === 'object' && V25_STUD_ORIENT)
         ? V25_STUD_ORIENT.map(o => o.id) : ['end','h-nutL','h-nutR','v-nutT','v-nutB']);
+    // Embedment controls — SECTION orientations only. The shown defaults are the
+    // values actually drawn (from the single-source geometry), so typing over
+    // them is WYSIWYG; clearing a field reverts to the catalogue default.
+    if ((ent.studOrient || 'v-nutT') !== 'end') {
+      const _blk = (typeof activeBlock !== 'undefined') ? activeBlock : null;
+      const g = (typeof studSectionGeom === 'function') ? studSectionGeom(_blk, ent) : null;
+      const effDepth = g ? Math.round(g.embedDepth) : (ent.embedDepth || 125);
+      const effFace  = g ? Math.round(g.sFace) : (ent.faceOffset || 0);
+      fields.push({ kind: 'num', label: 'Embedment depth (mm)', key: 'embedDepth', step: 5, min: 10, value: effDepth });
+      fields.push({ kind: 'num', label: 'Edge offset (mm)', key: 'faceOffset', step: 5, min: 0, value: effFace });
+    }
   }
 
   // V25-layout-overhaul Phase 7 — common per-entity display overrides.
@@ -2514,7 +2706,9 @@ function v25UpdateInspector() {
         // V25-layout-overhaul Phase 7 — for opacity, an empty / NaN value
         // clears the override (rather than setting it to 0 which would hide
         // the entity). All other num fields keep the legacy "|| 0" coercion.
-        if (k === 'opacity' && (val === '' || !isFinite(parseFloat(val)))) {
+        if ((k === 'opacity' || k === 'embedDepth' || k === 'faceOffset') && (val === '' || !isFinite(parseFloat(val)))) {
+          // Empty / NaN clears the override → revert to the catalogue default
+          // (rather than writing 0, which would collapse the field).
           delete ent[k];
           requestRender();
           return;
@@ -2554,6 +2748,12 @@ function v25UpdateInspector() {
         if (def && def.defaults) { ent.size = def.defaults.size; ent.embed = def.defaults.embed; }
         v25UpdateInspector();
       }
+      // Stud size change → drop the embedment overrides (size/host-dependent) so
+      // the entity reverts to the new size's catalogue defaults.
+      if (k === 'studSpec' && ent.type === 'stud') {
+        delete ent.embedDepth; delete ent.faceOffset;
+        v25UpdateInspector();
+      }
       // Member type change → reset section to a valid one for the new type.
       if (k === 'memberType' && ent.type === 'mem2') {
         const newDb = val === 'ub' ? UB_DB
@@ -2568,6 +2768,12 @@ function v25UpdateInspector() {
         if (val === 'wb' && typeof WB_DB === 'object') names = Object.keys(WB_DB);
         if (!names.includes(ent.section)) ent.section = (typeof lastUsedSection !== 'undefined' && lastUsedSection[val]) || names[0] || '';
         v25UpdateInspector();
+      }
+      // Live-sync the top-bar embedment readout when a stud's embedment is edited
+      // from the inspector (skips the focused inspector field; no rebuild).
+      if (ent.type === 'stud' && (k === 'embedDepth' || k === 'faceOffset')
+          && typeof v25SyncStudEmbedReadouts === 'function') {
+        v25SyncStudEmbedReadouts(ent);
       }
       requestRender();
     });

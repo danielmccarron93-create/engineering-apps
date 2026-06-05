@@ -50,6 +50,21 @@ function _encodePdfBlobs(pdfBlobs) {
   return out;
 }
 
+// imageBlobs share the pdfBlobs byte-map shape; reuse the same base64 walk.
+function _encodeImageBlobs(imageBlobs) { return _encodePdfBlobs(imageBlobs); }
+function _decodeImageBlobsInProject(projObj) {
+  if (!projObj || !projObj.imageBlobs || typeof projObj.imageBlobs !== 'object') return;
+  const map = projObj.imageBlobs;
+  for (const k of Object.keys(map)) {
+    const v = map[k];
+    if (v instanceof Uint8Array) continue;
+    if (v && typeof v === 'object' && typeof v._b64 === 'string') {
+      try { map[k] = _bytesFromB64(v._b64); }
+      catch (e) { console.warn('[project] could not decode embedded image blob "' + k + '"', e); delete map[k]; }
+    }
+  }
+}
+
 // Walk a just-loaded project object and decode any { "_b64": ... } pdfBlob entry
 // back into a live Uint8Array, in place. Safe to call on a project with no PDFs.
 // Guards each entry so a malformed blob is skipped rather than thrown.
@@ -76,7 +91,10 @@ function exportProject() {
   // (sheets, activeSheetIdx, per-page size/bg, file metadata) rides through
   // unchanged. A native file with no imported PDF yields an empty {} — identical
   // on disk to before this feature.
-  const projOut = Object.assign({}, project, { pdfBlobs: _encodePdfBlobs(project && project.pdfBlobs) });
+  const projOut = Object.assign({}, project, {
+    pdfBlobs: _encodePdfBlobs(project && project.pdfBlobs),
+    imageBlobs: _encodeImageBlobs(project && project.imageBlobs),
+  });
   const payload = {
     format: 'structdraw-project',
     version: 1,
@@ -123,6 +141,7 @@ function importProject() {
         // file, so file.pdfBlobs holds real byte buffers (what the PDF renderer and
         // the IndexedDB session both expect). No-op for native saves with no PDF.
         _decodePdfBlobsInProject(data.project);
+        _decodeImageBlobsInProject(data.project);
         // multi-file-workspace — open the loaded .sdproj as a NEW file (a new
         // top-bar tab) instead of clobbering the file the user is working on.
         // Falls back to the legacy in-place replace if the workspace layer
