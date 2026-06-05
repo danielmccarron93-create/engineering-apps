@@ -239,8 +239,9 @@ function initEvents() {
         ? v25NearestHandleOnSelected(activeBlock, cu, cv) : null;
       if (nearestSel) {
         if (!v25Selected.includes(nearestSel.ent.id)) v25Selected = [nearestSel.ent.id];
-        v25Drag = { ent: nearestSel.ent, handle: nearestSel.handle, lastU: cu, lastV: cv };
+        v25Drag = { ent: nearestSel.ent, handle: nearestSel.handle, lastU: cu, lastV: cv, startU: cu, startV: cv };
         v25Drag.undoBefore = v25SnapshotMoveTargets(nearestSel.ent);
+        if (typeof v25ResetSnapState === 'function') v25ResetSnapState();
         // Click-again cycle (arm): when this repeat click at the same spot (raw
         // canvas px) grabbed a handle of the entity we're currently cycled to,
         // and a multi-entity cycle is active, a pure CLICK (no drag past the dead
@@ -282,14 +283,44 @@ function initEvents() {
         v25CycleLastPx = { x: px, y: py };
         hit = _stack[v25CycleIndex];
       }
+      // SELECTION-PRECISION (A) — PLATE WINS. The ranked hit-stack (js/71) now
+      // folds v2 plates in as synthetic { _v2Plate, _v2Id, type:'plate2' } ents.
+      // When one is the tightest target (or the cycle lands on it), select the
+      // plate in ITS store (window.v25SelPlateIds — the one allowed window.*
+      // plate bridge), clear the v1 set (mutual exclusion), and hand off to
+      // editPlate to arm the body drag. The v2 capture-phase pointermove/up then
+      // drive the move/commit/group/undo unchanged. Mirrors the contextmenu
+      // mutual-exclusion encoding at the bottom of this file.
+      if (hit && hit._v2Plate) {
+        window.v25SelPlateIds = [hit._v2Id];
+        v25Selected = [];
+        if (window.v2 && v2.tools && v2.tools.editPlate) {
+          if (v2.tools.editPlate.state) v2.tools.editPlate.state.selectedId = hit._v2Id;
+          if (typeof v2.tools.editPlate.beginBodyDragFromExternalSelect === 'function') {
+            v2.tools.editPlate.beginBodyDragFromExternalSelect(
+              hit._v2Id, { u: cu, v: cv },
+              (typeof isDupDragModifier === 'function' && isDupDragModifier(e)));
+          }
+        }
+        if (typeof v25UpdateInspector === 'function') v25UpdateInspector();
+        requestRender();
+        return;
+      }
       if (hit) {
         v25Selected = e.shiftKey ? Array.from(new Set([...(v25Selected||[]), hit.id])) : [hit.id];
+        // SELECTION-PRECISION (B) — v1 ENTITY WINS: clear the plate co-selection
+        // so exactly one of {v25Selected, v25SelPlateIds} is ever non-empty.
+        window.v25SelPlateIds = [];
+        if (window.v2 && v2.tools && v2.tools.editPlate && v2.tools.editPlate.state) {
+          v2.tools.editPlate.state.selectedId = null;
+        }
         // plate-grouping-stiffener — clicking any grouped member selects the
         // whole group so it highlights + moves as one (skip while Shift-adding).
         if (!e.shiftKey && typeof v25ExpandGroupSelection === 'function') v25ExpandGroupSelection();
         const handle = (typeof v25HitHandle === 'function') ? v25HitHandle(activeBlock, hit, cu, cv) : 'body';
-        v25Drag = { ent: hit, handle, lastU: cu, lastV: cv };
+        v25Drag = { ent: hit, handle, lastU: cu, lastV: cv, startU: cu, startV: cv };
         v25Drag.undoBefore = v25SnapshotMoveTargets(hit);
+        if (typeof v25ResetSnapState === 'function') v25ResetSnapState();
         // Bluebeam copy-drag: Alt (or Ctrl on Windows) + body-drag duplicates.
         // The clone is deferred to the first mouse movement (see the mousemove
         // dupPending branch) so a modifier-click that never moves leaves no
@@ -322,9 +353,19 @@ function initEvents() {
         }
         if (!nearSel) {
           v25Selected = [];
+          // SELECTION-PRECISION (C) — empty-space clear now also owns the plate
+          // co-selection (editPlate priority-4 defers plain body selection to
+          // v1, so v1 is the single empty-space deselect path for both stores).
+          window.v25SelPlateIds = [];
+          if (window.v2 && v2.tools && v2.tools.editPlate && v2.tools.editPlate.state) {
+            v2.tools.editPlate.state.selectedId = null;
+          }
           v25CycleLastPx = null;   // clicking empty space ends any pick cycle
           const root = document.getElementById('inspectorRoot');
           if (root && sheetMode === '2d') root.innerHTML = '';
+          // member-size-from-top-bar (2026-06-04) — clear the selected-member
+          // size editor from the top bar on empty-space deselect.
+          if (typeof v25UpdateOptionsBar === 'function') v25UpdateOptionsBar();
           // Start V25 marquee (Bluebeam/AutoCAD-style). Mouseup branch in this
           // file finalises window-vs-crossing against entities2D + v25EntBounds.
           selBoxStart = [cu, cv];
@@ -1104,7 +1145,7 @@ function initEvents() {
     if (sheetMode === '2d' && tool === 'select' && !v25Drag && !blockDragging && !blockResizing && !selBoxStart && activeBlock) {
       const real = px2real(activeBlock, px, py);
       const hover = (typeof v25HoverPick === 'function') ? v25HoverPick(activeBlock, real.u, real.v) : null;
-      const newHover = hover ? { entId: hover.ent.id, handle: hover.handle } : null;
+      const newHover = hover ? { entId: hover.ent.id, handle: hover.handle, ent: hover.ent } : null;
       // Only re-render if hover state actually changed.
       const changed = (!!v25Hover) !== (!!newHover) ||
         (v25Hover && newHover && (v25Hover.entId !== newHover.entId || v25Hover.handle !== newHover.handle));
@@ -1133,8 +1174,8 @@ function initEvents() {
       }
       const real = px2real(activeBlock, px, py);
       // Snap to grid for clean placement
-      const u = snapOn ? Math.round(real.u / gridSize) * gridSize : real.u;
-      const v = snapOn ? Math.round(real.v / gridSize) * gridSize : real.v;
+      let u = snapOn ? Math.round(real.u / gridSize) * gridSize : real.u;
+      let v = snapOn ? Math.round(real.v / gridSize) * gridSize : real.v;
       // Bluebeam copy-drag: on the FIRST real movement of a modifier+body drag,
       // clone the selection in place and switch the drag onto the COPY — the
       // originals never move. v25CloneEntsInPlace mints fresh entity ids (and
@@ -1156,23 +1197,66 @@ function initEvents() {
           v25Drag.dupAdded = { view: activeBlock.viewKey, ids: _newIds.slice() };
         }
       }
+      // Shift held mid-drag → lock the move orthogonally to the line through
+      // the element's drag-START point (AutoCAD/Bluebeam "ortho from base").
+      // The dominant axis wins, so it follows whichever way you're currently
+      // dragging; the other axis collapses back onto the start coordinate, so a
+      // bolt nudged downward rides straight down its original vertical line.
+      // Body drags only — grip/vertex/rotate handles keep precise editing.
+      const orthoLock = (shiftHeld && v25Drag.handle === 'body'
+                         && v25Drag.startU != null
+                         && typeof v25OrthoSnap === 'function');
+      if (orthoLock && !v25Drag.orthoEngaged) {
+        v25Drag.orthoEngaged = true;
+        if (typeof v25ResetSnapState === 'function') v25ResetSnapState();
+      } else if (!orthoLock) {
+        v25Drag.orthoEngaged = false;
+      }
+      if (orthoLock) {
+        const _o = v25OrthoSnap(v25Drag.startU, v25Drag.startV, u, v);
+        u = _o.u; v = _o.v;
+      }
       const du = u - v25Drag.lastU, dv = v - v25Drag.lastV;
       if (du !== 0 || dv !== 0) {
         v25Move(v25Drag.ent, du, dv, v25Drag.handle);
-        // V25-layout-overhaul Phase 6.3 — body-translation snap. Only fires
-        // when the user is moving the whole member (not pulling an end-handle
-        // or rotation handle), so end-edits stay precise. Mutates ent.u/ent.v
-        // when a snap catches; activeEdgeSnaps drives the dashed feedback
-        // line via the existing drawEdgeSnapLines() in the main render path.
-        // Body-translation soft-snap. Only fires on whole-entity drag (not
-        // end-handle / vertex / rotate handles, so per-handle edits stay
-        // precise). Architecture-v2 Phase 2 retired the v1 V25 plate leg
-        // here; v2 plate body-snap arrives with Phase 10's grip migration.
-        if (v25Drag.handle === 'body' && v25Drag.ent
-            && v25Drag.ent.type === 'mem2') {
+        // Body-translation soft-snap — gently aligns the moving item onto
+        // another item's centreline / edge (members ↔ member edges; fixings ↔
+        // other fixings' centres + member edges). Mutates ent.u/ent.v when a
+        // snap catches; activeEdgeSnaps drives the dashed feedback line via the
+        // existing drawEdgeSnapLines() in the main render path. Paused while
+        // Shift ortho-locks (so Shift gives a pure straight slide), and cleared
+        // otherwise so no stale guide lingers on grip/vertex/rotate drags.
+        // (Architecture-v2 Phase 2 retired the v1 V25 plate leg here; v2 plates
+        // ride their own pipeline.)
+        const _bt = v25Drag.ent && v25Drag.ent.type;
+        // ASK C: snap correction the soft-snap applied to ent.u/.v this frame.
+        // Folded into the lastU/lastV baseline below so a later Shift-engage
+        // computes du/dv from the entity's TRUE (snapped) position rather than
+        // the raw cursor — otherwise the bolt lands parallel-shifted by the
+        // snap offset (a visible jump) the instant ortho takes over.
+        let _snapCorrU = 0, _snapCorrV = 0;
+        // Skip the soft-snap for a GROUPED body-drag: v25Move translates the
+        // whole group rigidly, but v25ApplySnap is handed only the grabbed
+        // entity, so a catch would shift it (and its pts[]) without its mates —
+        // tearing the welded assembly apart by the snap offset (which persists
+        // after drop). A group should slide as one unit; aligning a single
+        // member of it to a neighbour independently is wrong anyway.
+        if (!orthoLock && v25Drag.handle === 'body'
+            && !(v25Drag.ent && v25Drag.ent.groupId)
+            && (_bt === 'mem2' || _bt === 'bolt2' || _bt === 'screw' || _bt === 'stud')) {
+          const _uBefore = v25Drag.ent.u, _vBefore = v25Drag.ent.v;
           activeEdgeSnaps = v25ApplySnap(activeBlock, [v25Drag.ent]);
+          _snapCorrU = v25Drag.ent.u - _uBefore;
+          _snapCorrV = v25Drag.ent.v - _vBefore;
+        } else {
+          activeEdgeSnaps = [];
         }
-        v25Drag.lastU = u; v25Drag.lastV = v;
+        // Baseline = the cursor-equivalent of the entity's snapped position.
+        // With no snap the correction is 0, so this is the original `= u`.
+        // Grab-offset for off-centre member grabs lives in the cursor→u mapping
+        // upstream (not in lastU), so folding the snap correction here leaves it
+        // intact.
+        v25Drag.lastU = u + _snapCorrU; v25Drag.lastV = v + _snapCorrV;
         canvas.style.cursor = (v25Drag.handle === 'body') ? 'move'
                             : (v25Drag.handle === 'rotate') ? 'grabbing' : 'crosshair';
         requestRender();
@@ -1302,6 +1386,14 @@ function initEvents() {
         e.preventDefault();
         return;
       }
+      // Dimension: double-click opens the inline value/text editor (js/82).
+      if (hit && hit.type === 'dim2' && typeof dimOpenEditor === 'function') {
+        v25Selected = [hit.id];
+        if (typeof v25UpdateInspector === 'function') v25UpdateInspector();
+        dimOpenEditor(hit, activeBlock);
+        e.preventDefault();
+        return;
+      }
       if (hit && hit.type === 'lineSet' && hit.closed) {
         if (typeof v25OpenFillPicker === 'function') v25OpenFillPicker(hit, e.clientX, e.clientY);
         e.preventDefault();
@@ -1322,12 +1414,47 @@ function initEvents() {
           return;
         }
       }
+      // weld-priority-truss — mid-body double-click on a WELDED member opens the
+      // weld-priority dropdown (truss N-member cascade). End clicks were already
+      // consumed by the end-cap branch above; this is gated to mid-body (so
+      // v25HitMemberEnd returns null) and to members participating in >=1 joint.
+      // A lone (unwelded) member falls through to the generic Settings open.
+      // Joint-NODE double-clicks are handled by the dedicated 2nd dblclick
+      // listener via showJointPopupV25 — the on-node bail above keeps them apart.
+      if (hit && hit.type === 'mem2' && (hit.aspect || 'elev') === 'elev'
+          && typeof v25HitMemberEnd === 'function' && v25HitMemberEnd(hit, real.u, real.v) === null
+          && typeof v25IsMemberWelded === 'function' && v25IsMemberWelded(hit, activeBlock.viewKey)
+          && typeof v25OpenWeldPriorityPopup === 'function') {
+        v25Selected = [hit.id];
+        if (typeof v25UpdateInspector === 'function') v25UpdateInspector();
+        if (typeof window.bbRailSwitchTab === 'function') window.bbRailSwitchTab('settings');
+        v25OpenWeldPriorityPopup(hit, activeBlock.viewKey, e.clientX, e.clientY);
+        e.preventDefault();
+        return;
+      }
       // Stiffener: double-click opens its properties popup (thickness / weld /
       // steel-hatch toggle) rather than the generic Settings tab.
       if (hit && hit.type === 'stiff2' && typeof v25OpenStiffPopup === 'function') {
         v25Selected = [hit.id];
         if (typeof v25UpdateInspector === 'function') v25UpdateInspector();
         v25OpenStiffPopup(hit, e.clientX, e.clientY);
+        e.preventDefault();
+        return;
+      }
+      // SELECTION-PRECISION — double-click a v2 plate. v25HitTest now folds v2
+      // plates into the stack, so `hit` may be a synthetic { _v2Plate } ent.
+      // Select it in ITS store (v25SelPlateIds) and clear the v1 set so the
+      // generic branch below never writes the synthetic 'v2plate-' id into
+      // v25Selected (which would leave BOTH stores populated). Mirrors the
+      // single-click plate-wins branch; opens Settings instead of arming a drag.
+      if (hit && hit._v2Plate) {
+        window.v25SelPlateIds = [hit._v2Id];
+        v25Selected = [];
+        if (window.v2 && v2.tools && v2.tools.editPlate && v2.tools.editPlate.state) {
+          v2.tools.editPlate.state.selectedId = hit._v2Id;
+        }
+        if (typeof v25UpdateInspector === 'function') v25UpdateInspector();
+        if (typeof window.bbRailSwitchTab === 'function') window.bbRailSwitchTab('settings');
         e.preventDefault();
         return;
       }
@@ -1432,9 +1559,35 @@ function initEvents() {
         v25Drag = null;
         v25CycleIndex = (v25CycleIndex + 1) % v25CycleIds.length;
         const _nextId = v25CycleIds[v25CycleIndex];
+        // SELECTION-PRECISION (D) — the cycle now spans v2 plates too. A
+        // 'v2plate-<elId>' synthetic id isn't in entities2D, so route it to the
+        // plate store + arm its body drag (mutual exclusion: clear v25Selected),
+        // mirroring the primary repeat-click cycle's PLATE-WINS branch (A).
+        if (typeof _nextId === 'string' && _nextId.indexOf('v2plate-') === 0) {
+          const _elId = _nextId.slice('v2plate-'.length);
+          window.v25SelPlateIds = [_elId];
+          v25Selected = [];
+          if (window.v2 && v2.tools && v2.tools.editPlate) {
+            if (v2.tools.editPlate.state) v2.tools.editPlate.state.selectedId = _elId;
+            const _r = canvas.getBoundingClientRect();
+            const _w = px2real(activeBlock, e.clientX - _r.left, e.clientY - _r.top);
+            if (typeof v2.tools.editPlate.beginBodyDragFromExternalSelect === 'function') {
+              v2.tools.editPlate.beginBodyDragFromExternalSelect(_elId, { u: _w.u, v: _w.v }, false);
+            }
+          }
+          if (typeof v25UpdateInspector === 'function') v25UpdateInspector();
+          v25CycleLastPx = { x: px, y: py };
+          requestRender();
+          return;
+        }
         const _next = (entities2D[activeBlock.viewKey] || []).find(en => en && en.id === _nextId);
         if (_next) {
           v25Selected = [_nextId];
+          // mutual exclusion — leaving a plate behind in the cycle clears it.
+          window.v25SelPlateIds = [];
+          if (window.v2 && v2.tools && v2.tools.editPlate && v2.tools.editPlate.state) {
+            v2.tools.editPlate.state.selectedId = null;
+          }
           if (typeof v25ExpandGroupSelection === 'function') v25ExpandGroupSelection();
           if (typeof v25UpdateInspector === 'function') v25UpdateInspector();
         }
@@ -1801,6 +1954,43 @@ function initEvents() {
 
   canvas.addEventListener('wheel', (e) => {
     e.preventDefault();
+    // multi-file-workspace — SHIFT+wheel steps between pages instead of zooming.
+    // (ctrl+wheel stays zoom — the ctrl exclusion keeps the two gestures apart.)
+    // Wheel deltas are accumulated and the step count is PROPORTIONAL to how much
+    // delta has piled up: one mouse notch (~100-120) ≈ one page, but a hard flick
+    // (large/burst delta) flies through several pages at once. We jump DIRECTLY to
+    // the clamped target in ONE projectSwitchSheet (= one snapshot + one load), so
+    // only the LANDED page rasterises — the skipped pages are never loaded/drawn.
+    if (e.shiftKey && !e.ctrlKey) {
+      if (typeof project === 'undefined' || !project || !Array.isArray(project.sheets)) return;
+      // Real mice convert Shift+vertical-wheel into HORIZONTAL scroll, so under
+      // Shift the delta arrives as e.deltaX (deltaY ≈ 0) on a physical mouse.
+      // Accumulate whichever axis dominates so Shift+scroll flips pages on a
+      // mouse AND on trackpads / synthetic deltaY alike.
+      const navDelta = (Math.abs(e.deltaX) > Math.abs(e.deltaY)) ? e.deltaX : e.deltaY;
+      pageNavAccum += navDelta;
+      const STEP = 60; // px of wheel delta per page step (tunable; one notch ≈ 1 page)
+      const steps = Math.floor(Math.abs(pageNavAccum) / STEP);
+      if (steps >= 1) {
+        const dir = pageNavAccum > 0 ? 1 : -1;
+        // Consume only the whole-step amount; keep the sub-threshold remainder so a
+        // slow drip of small deltas still eventually advances (no lost motion).
+        pageNavAccum -= dir * steps * STEP;
+        const last = project.sheets.length - 1;
+        const next = Math.max(0, Math.min(last, project.activeSheetIdx + dir * steps));
+        if (next !== project.activeSheetIdx && typeof projectSwitchSheet === 'function') {
+          projectSwitchSheet(next); // ONE snapshot + ONE load; calls requestRender()
+          // Mirror the click path: just move the active-highlight class (no DOM
+          // teardown, no thumbnail re-request) — a hard flick fires many wheel
+          // events, so a full per-notch grid rebuild is avoidable churn. Fall back
+          // to a full rebuild only if the highlighter reports a stale grid.
+          if (!(typeof window.setActivePageHighlight === 'function' && window.setActivePageHighlight())) {
+            if (typeof window.renderPagesTab === 'function') window.renderPagesTab();
+          }
+        }
+      }
+      return;
+    }
     const { px, py } = getPixelXY(e);
     // Get sheet coords before zoom
     const before = px2s(px, py);
@@ -1827,21 +2017,30 @@ function initEvents() {
       // member-depth-order (72h) — right-click selects the member/plate under
       // the cursor (unless already selected) so Front/Back acts on what was
       // clicked, then the group/depth menu opens on that selection.
+      // SELECTION-PRECISION — consult the SAME ranked hit-stack as left-click so
+      // right-click and left-click agree on a screw-over-plate (the top pick is
+      // the tightest target). The stack already folds v2 plates in as synthetic
+      // 'v2plate-' ents, so plate-vs-v1 falls out of stack[0] directly; no
+      // separate plate-first hitTestBody pass (which used to always pick the
+      // plate, contradicting the new specificity).
       if (_real) {
-        const _pHit = (window.v2 && v2.tools && v2.tools.editPlate &&
-                       typeof v2.tools.editPlate.hitTestBody === 'function')
-          ? v2.tools.editPlate.hitTestBody(activeBlock, _real.u, _real.v) : null;
-        if (_pHit && _pHit.elementId) {
+        const _topHit = (typeof v25HitTest === 'function') ? v25HitTest(activeBlock, _real.u, _real.v) : null;
+        if (_topHit && _topHit._v2Plate) {
           const _cur = Array.isArray(window.v25SelPlateIds) ? window.v25SelPlateIds : [];
-          if (_cur.indexOf(_pHit.elementId) < 0) {
-            window.v25SelPlateIds = [_pHit.elementId];
+          if (_cur.indexOf(_topHit._v2Id) < 0) {
+            window.v25SelPlateIds = [_topHit._v2Id];
             if (typeof v25Selected !== 'undefined') v25Selected = [];
+            if (window.v2 && v2.tools && v2.tools.editPlate && v2.tools.editPlate.state) {
+              v2.tools.editPlate.state.selectedId = _topHit._v2Id;
+            }
           }
-        } else if (typeof v25HitTest === 'function') {
-          const _eHit = v25HitTest(activeBlock, _real.u, _real.v);
-          if (_eHit && typeof v25Selected !== 'undefined' && v25Selected.indexOf(_eHit.id) < 0) {
-            v25Selected = [_eHit.id];
+        } else if (_topHit) {
+          if (typeof v25Selected !== 'undefined' && v25Selected.indexOf(_topHit.id) < 0) {
+            v25Selected = [_topHit.id];
             window.v25SelPlateIds = [];
+            if (window.v2 && v2.tools && v2.tools.editPlate && v2.tools.editPlate.state) {
+              v2.tools.editPlate.state.selectedId = null;
+            }
           }
         }
         if (typeof requestRender === 'function') requestRender();

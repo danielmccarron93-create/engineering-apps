@@ -113,7 +113,27 @@ function _projectMakeSheet(name, drawingNo, mode) {
     entities2D: { elevation: [], sectionA: [], planB: [] },
     secCutX: 0, planCutY: 0,
     objIdN: 1, ent2dIdN: 1,
+    // multi-file-workspace (2026-06-04) — per-page fields. These live ONLY on
+    // the page object (never mirrored into live globals), so they persist on the
+    // page across switches and _projectSnapshotActive() needs no change for them.
+    // Native pages default to A1 + title block + no PDF background.
+    size: { w: SHEET.W, h: SHEET.H },
+    paper: 'A1',
+    hasTitleBlock: true,
+    bg: null,
   };
+}
+
+// multi-file-workspace (2026-06-04) — backfill the per-page fields onto an old
+// page object loaded from a pre-feature save. Idempotent: only stamps when the
+// page lacks `size`. Mirrors the migrateAllMembers backfill pattern.
+function migratePage(p) {
+  if (p && !p.size) {
+    p.size = { w: SHEET.W, h: SHEET.H };
+    p.paper = 'A1';
+    p.hasTitleBlock = true;
+    p.bg = null;
+  }
 }
 
 // Snapshot the *current* globals into `project.sheets[project.activeSheetIdx]`.
@@ -137,6 +157,9 @@ function _projectSnapshotActive() {
 function _projectLoadSheet(idx) {
   const s = project.sheets[idx];
   if (!s) return;
+  // multi-file-workspace (2026-06-04) — backfill per-page fields on old saves
+  // before anything reads them. Idempotent; no-op for pages already migrated.
+  migratePage(s);
   project.activeSheetIdx = idx;
   sheetInfo = JSON.parse(JSON.stringify(s.sheetInfo));
   objects3D = JSON.parse(JSON.stringify(s.objects3D));
@@ -172,6 +195,12 @@ function projectAddSheet(name) {
   const newSheet = _projectMakeSheet(name);
   project.sheets.push(newSheet);
   _projectLoadSheet(project.sheets.length - 1);
+  // multi-file-workspace Phase 2 — adding a PAGE is a content mutation of the
+  // active file: mark it disk-dirty (top-tab dot) + persist the session so a
+  // freshly-added blank page survives a reload. Guarded so it no-ops without the
+  // workspace layer. NOTE: workspaceAddFile's seedPage path routes through here;
+  // that's fine — it marks the brand-new file dirty (it has unsaved content).
+  if (typeof workspaceTouchActive === 'function') workspaceTouchActive();
 }
 function projectDeleteSheet(idx) {
   if (project.sheets.length <= 1) {
@@ -183,6 +212,10 @@ function projectDeleteSheet(idx) {
   project.sheets.splice(idx, 1);
   const newIdx = Math.min(project.activeSheetIdx, project.sheets.length - 1);
   _projectLoadSheet(newIdx);
+  // multi-file-workspace Phase 2 — deleting a PAGE mutates the active file's
+  // page list: mark it disk-dirty + persist the session so the deletion survives
+  // a reload. Guarded so it no-ops without the workspace layer.
+  if (typeof workspaceTouchActive === 'function') workspaceTouchActive();
 }
 function projectRenameSheet(idx, newName) {
   const s = project.sheets[idx];
@@ -226,6 +259,9 @@ function addObj(obj) {
   redoStack = [];
   if (typeof v3dMarkDirty === 'function') v3dMarkDirty();
   if (typeof invalidateWeldCache === 'function') invalidateWeldCache();
+  // multi-file-workspace Phase 2 — mark the active file disk-dirty + persist the
+  // session (debounced). Guarded so it no-ops if the workspace layer is absent.
+  if (typeof workspaceTouchActive === 'function') workspaceTouchActive();
 }
 
 function delObj(id) {
@@ -237,6 +273,8 @@ function delObj(id) {
   redoStack = [];
   if (typeof v3dMarkDirty === 'function') v3dMarkDirty();
   if (typeof invalidateWeldCache === 'function') invalidateWeldCache();
+  // multi-file-workspace Phase 2 — mark active file disk-dirty + persist session.
+  if (typeof workspaceTouchActive === 'function') workspaceTouchActive();
 }
 
 let ent2dIdN = 1;
@@ -248,6 +286,8 @@ function addEnt2D(ent) {
   undoStack.push({ act: 'addEnt2D', ent: JSON.parse(JSON.stringify(ent)) });
   if (undoStack.length > 100) undoStack.shift();
   redoStack = [];
+  // multi-file-workspace Phase 2 — mark active file disk-dirty + persist session.
+  if (typeof workspaceTouchActive === 'function') workspaceTouchActive();
 }
 
 // Restore a v25 entity-move snapshot (the {ents, plates} shape captured in
@@ -371,9 +411,25 @@ function undo() {
       v2.engine.undoStack.undo();
     }
   }
+  else if (a.act === 'v25EntFields') {
+    // weld-priority-truss — restore the BEFORE weldPriority snapshot for every
+    // member the re-rank touched, in one atomic step. null wp = field absent.
+    const arr = entities2D[a.view] || [];
+    for (const s of (a.before || [])) {
+      const e = arr.find(x => x && x.id === s.id);
+      if (!e) continue;
+      if (s.wp == null) delete e.weldPriority; else e.weldPriority = s.wp;
+    }
+    if (a.mitreBefore && typeof mitrePairs !== 'undefined' && mitrePairs) {
+      for (const pk in a.mitreBefore) { const v = a.mitreBefore[pk]; if (v == null) delete mitrePairs[pk]; else mitrePairs[pk] = v; }
+    }
+  }
   selected3D = [];
   if (typeof v3dMarkDirty === 'function') v3dMarkDirty();
   if (typeof invalidateWeldCache === 'function') invalidateWeldCache();
+  // multi-file-workspace Phase 2 — an undo mutates the active file's content, so
+  // mark it disk-dirty + persist the (now-reverted) state to the session.
+  if (typeof workspaceTouchActive === 'function') workspaceTouchActive();
   requestRender();
 }
 
@@ -417,9 +473,24 @@ function redo() {
       v2.engine.undoStack.redo();
     }
   }
+  else if (a.act === 'v25EntFields') {
+    // weld-priority-truss — re-apply the AFTER weldPriority snapshot.
+    const arr = entities2D[a.view] || [];
+    for (const s of (a.after || [])) {
+      const e = arr.find(x => x && x.id === s.id);
+      if (!e) continue;
+      if (s.wp == null) delete e.weldPriority; else e.weldPriority = s.wp;
+    }
+    if (a.mitreAfter && typeof mitrePairs !== 'undefined' && mitrePairs) {
+      for (const pk in a.mitreAfter) { const v = a.mitreAfter[pk]; if (v == null) delete mitrePairs[pk]; else mitrePairs[pk] = v; }
+    }
+  }
   selected3D = [];
   if (typeof v3dMarkDirty === 'function') v3dMarkDirty();
   if (typeof invalidateWeldCache === 'function') invalidateWeldCache();
+  // multi-file-workspace Phase 2 — a redo re-applies a content change; mark the
+  // active file disk-dirty + persist the session.
+  if (typeof workspaceTouchActive === 'function') workspaceTouchActive();
   requestRender();
 }
 

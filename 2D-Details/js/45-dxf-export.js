@@ -384,6 +384,25 @@ function _dxfEmit2DEntity(b, blk, ent) {
       const dist = Math.abs((ent.p2u || 0) - (ent.p1u || 0));
       _dxfText(b, 'S-DIM', mid.x, mid.y + 2, Math.round(dist).toString(), 2.5);
     }
+  } else if (ent.type === 'dim2') {
+    // V25 measure dimension. dim2DimLinePx resolves the paper-mm offset to px;
+    // px2real maps back to real-world view coords (viewport zoom cancels), so the
+    // DXF geometry matches the on-screen render. Witness lines as plain LINEs
+    // (this DXF emitter has no per-entity dash), label honours any override.
+    if (typeof dim2DimLinePx === 'function' && typeof px2real === 'function') {
+      const g = dim2DimLinePx(blk, ent);
+      const d1 = px2real(blk, g.d1.x, g.d1.y), d2 = px2real(blk, g.d2.x, g.d2.y);
+      const w1 = px2real(blk, g.w1.x, g.w1.y), w2 = px2real(blk, g.w2.x, g.w2.y);
+      const A = _dxfBlockPlace(blk, d1.u, d1.v), C = _dxfBlockPlace(blk, d2.u, d2.v);
+      const W1 = _dxfBlockPlace(blk, w1.u, w1.v), W2 = _dxfBlockPlace(blk, w2.u, w2.v);
+      _dxfLine(b, 'S-DIM', A.x, A.y, C.x, C.y);        // dimension line
+      _dxfLine(b, 'S-DIM', W1.x, W1.y, A.x, A.y);       // witness line 1
+      _dxfLine(b, 'S-DIM', W2.x, W2.y, C.x, C.y);       // witness line 2
+      const mid = { x: (A.x + C.x) / 2, y: (A.y + C.y) / 2 };
+      const label = (typeof dim2Label === 'function') ? dim2Label(ent)
+                  : Math.round(Math.hypot((ent.p2u||0)-(ent.p1u||0), (ent.p2v||0)-(ent.p1v||0))).toString();
+      _dxfText(b, 'S-DIM', mid.x, mid.y + 2, label, (ent.sz || 2.5));
+    }
   } else if (ent.type === 'weld') {
     // Emit as a leader line with text describing the weld
     const p = _dxfBlockPlace(blk, ent.u, ent.v);
@@ -580,42 +599,124 @@ function _dxfEmit2DEntity(b, blk, ent) {
       lineDxf(ent.u - r * c45, ent.v - r * c45, ent.u + r * c45, ent.v + r * c45);
       lineDxf(ent.u - r * c45, ent.v + r * c45, ent.u + r * c45, ent.v - r * c45);
     } else {
-      const horiz = (orient === 'h-headL' || orient === 'h-headR');
-      const axisIsU = horiz;
+      // Mirrors drawScrew2D_Section (js/72i): pan head + washer collar (dK) →
+      // bearing underside → under-head neck (dUK) → cone to shank (dS) → thread
+      // core (d2) with leaning teeth (crest d1) → pointed tip. Collar underside
+      // (s=tK) sits on the bearing face.
+      const axisIsU = (orient === 'h-headL' || orient === 'h-headR');
       const trans = axisIsU ? ent.v : ent.u;
       const bodyDir = (orient === 'h-headL' || orient === 'v-headB') ? 1 : -1;
       const bearing = (typeof v25ScrewBearingFace === 'function') ? v25ScrewBearingFace(blk, ent) : null;
       const junction = (bearing != null) ? bearing : (axisIsU ? ent.u : ent.v);
-      const d = S.d || 10, d2 = S.d2 || d * 0.74, dS = S.dS || d * 0.79, dK = S.dK || d * 1.85;
-      const t1 = S.t1 || d * 1.6, tK = S.tK || d * 0.55, L = S.L || d * 12, bThr = S.b || L * 0.78;
-      const dKh = dK / 2, dSh = dS / 2, d2h = d2 / 2, dh = d / 2;
-      const capLen = Math.min(t1 * 0.5, Math.max(tK, dK * 0.30));
-      const sThread = Math.max(t1, L - bThr);
-      const tipLen = Math.min((L - sThread) * 0.6 + 0.001, Math.max(d * 1.2, 4));
-      const sTipStart = Math.max(sThread, L - tipLen);
-      const axisAt = (s) => junction + bodyDir * (s - t1);
+      const d = S.d || 10, d2 = S.d2 || d * 0.74, dS = S.dS || d * 0.79;
+      const dK = S.dK || d * 1.69, dUK = S.dUK || d * 1.25, tK = S.tK || d * 0.56;
+      const L = S.L || d * 12, bThr = S.b || L * 0.78;
+      const dKh = dK / 2, dUKh = dUK / 2, dSh = dS / 2, d2h = d2 / 2, dh = d / 2;
+      const headLen = 1.80 * d, neckEnd = Math.min(0.95 * d, headLen - 0.5), tipLen = 1.48 * d;
+      const sBear = Math.min(tK, headLen * 0.45);
+      const sThread = Math.max(headLen, L - bThr);
+      const sTipBase = Math.max(sThread + 0.5, L - tipLen);
+      const axisAt = (s) => junction + bodyDir * (s - sBear);
       const P = axisIsU ? (s, t) => place(axisAt(s), trans + t)
                         : (s, t) => place(trans + t, axisAt(s));
-      // Body (shank + thread core + pointed tip)
-      polyDxf([P(t1, dSh), P(sThread, dSh), P(sTipStart, d2h), P(L, 0), P(sTipStart, -d2h), P(sThread, -dSh), P(t1, -dSh)], true);
-      // Head (pan + collar + under-head taper)
-      polyDxf([P(0, dKh), P(capLen, dKh), P(t1, dSh), P(t1, -dSh), P(capLen, -dKh), P(0, -dKh)], true);
-      // Thread sawtooth (alternating crest/root transverse lines)
+      const headTop = [[0, dKh], [tK, dKh], [tK, dUKh], [neckEnd, dUKh], [headLen, dSh]];
+      // Body envelope (head + shank + thread core + tip)
+      const bodyTop = headTop.concat([[sThread, dSh], [sThread, d2h], [sTipBase, d2h], [L, 0]]);
+      polyDxf(bodyTop.map(p => P(p[0], p[1])).concat(bodyTop.slice().reverse().map(p => P(p[0], -p[1]))), true);
+      // Head outline
+      polyDxf(headTop.map(p => P(p[0], p[1])).concat(headTop.slice().reverse().map(p => P(p[0], -p[1]))), true);
+      // Thread teeth — leaning sawtooth, two rows offset half a pitch
       {
-        const p = Math.max(1.2, d * 0.42), spanT = sTipStart - sThread;
-        if (spanT > 0.5) {
-          const n = Math.max(1, Math.floor(spanT / p));
-          for (let i = 0; i <= n; i++) {
-            const s = sThread + spanT * i / n, hv = (i % 2 === 0) ? d2h : dh, a = axisAt(s);
-            if (axisIsU) lineDxf(a, trans - hv, a, trans + hv);
-            else lineDxf(trans - hv, a, trans + hv, a);
+        const cat = (typeof HBS_THREAD_PITCH === 'object' && HBS_THREAD_PITCH[Math.round(d)]) || 0.5 * d;
+        const ds = (typeof drawingScale !== 'undefined' && drawingScale) ? drawingScale : 1;
+        const pitch = Math.max(cat, 1.6 * ds), nMax = Math.ceil((L - sThread) / pitch) + 4;
+        const hAt = (s, base) => (s <= sTipBase) ? base : base * Math.max(0, (L - s) / Math.max(0.5, L - sTipBase));
+        const row = (sign, off) => {
+          for (let n = 0; n <= nMax; n++) {
+            const sPk = sThread + off + n * pitch;
+            if (sPk >= L - 0.3) break;
+            const cr = hAt(sPk, dh), ro = hAt(sPk, d2h);
+            if (cr - ro < 0.2) continue;
+            const f1 = Math.max(sThread, sPk - pitch * 0.6), f2 = Math.min(L, sPk + pitch * 0.4);
+            polyDxf([P(f1, sign * ro), P(sPk, sign * cr), P(f2, sign * ro)], false);
           }
-        }
+        };
+        row(1, 0); row(-1, pitch / 2);
       }
       // Centreline
       const a0 = axisAt(0), aL = axisAt(L);
       if (axisIsU) lineDxf(Math.min(a0, aL) - 4, trans, Math.max(a0, aL) + 4, trans);
       else lineDxf(trans, Math.min(a0, aL) - 4, trans, Math.max(a0, aL) + 4);
+    }
+  } else if (ent.type === 'stud') {
+    // 2D-mode ChemSet anchor stud (V25). Mirrors drawStud2D_Section: chamfered
+    // hex nut + washer at the projecting end, full-length threaded rod (root
+    // lines), 45° single-bevel chisel tip, drill-hole walls over the bonded
+    // length, dashed centreline. End-on → washer + rod circles + cross. S-BOLT.
+    const S = (typeof getStudSpec === 'function' && getStudSpec(ent.studSpec))
+            || (typeof CHEMSET_STUDS === 'object' && CHEMSET_STUDS[ent.studSpec])
+            || { size: 'M16', d: 16, L: 190, Le: 165, dh: 18, maxFixt: 40 };
+    const nd = (typeof studDims === 'function') ? studDims(S.size, S.d || 16)
+             : { nutAF: (S.d || 16) * 1.7, nutH: (S.d || 16) * 0.86, washOD: (S.d || 16) * 2.1,
+                 washT: (S.d || 16) * 0.2, minorD: (S.d || 16) * 0.84, pitch: 2 };
+    const place = (u, v) => { const p = _dxfBlockPlace(blk, u, v); return [p.x, p.y]; };
+    const polyDxf = (pts, closed) => _dxfPolyline(b, 'S-BOLT', pts, closed);
+    const lineDxf = (u1, v1, u2, v2) => { const a = place(u1, v1), c = place(u2, v2); _dxfLine(b, 'S-BOLT', a[0], a[1], c[0], c[1]); };
+    const segP = (p1, p2) => _dxfLine(b, 'S-BOLT', p1[0], p1[1], p2[0], p2[1]);
+    const orient = ent.studOrient || 'v-nutT';
+
+    if (orient === 'end') {
+      const ctr = _dxfBlockPlace(blk, ent.u, ent.v);
+      _dxfCircle(b, 'S-BOLT', ctr.x, ctr.y, (nd.washOD || (S.d || 16) * 2.1) / 2);
+      _dxfCircle(b, 'S-BOLT', ctr.x, ctr.y, (S.d || 16) / 2);
+      const r = (S.d || 16) / 2, c45 = Math.SQRT1_2;
+      lineDxf(ent.u - r * c45, ent.v - r * c45, ent.u + r * c45, ent.v + r * c45);
+      lineDxf(ent.u - r * c45, ent.v + r * c45, ent.u + r * c45, ent.v - r * c45);
+    } else {
+      const axisIsU = (orient === 'h-nutL' || orient === 'h-nutR');
+      const trans = axisIsU ? ent.v : ent.u;
+      const bodyDir = (orient === 'h-nutL' || orient === 'v-nutB') ? 1 : -1;
+      const snap = (typeof v25StudBearingFace === 'function') ? v25StudBearingFace(blk, ent) : null;
+      const junction = snap ? snap.face : (axisIsU ? ent.u : ent.v);
+      const d = S.d || 16, L = S.L || 190, Le = S.Le || 165, dh = S.dh || d + 2;
+      const maxFixt = (S.maxFixt != null) ? S.maxFixt : Math.max(0, Le - (S.embed || Le * 0.75));
+      const nutAF = nd.nutAF || d * 1.7, nutH = nd.nutH || d * 0.86;
+      const washOD = nd.washOD || d * 2.1, washT = nd.washT || d * 0.2, minorD = nd.minorD || d * 0.84;
+      const pitch = nd.pitch || 2;
+      const dh2 = d / 2, hole2 = dh / 2, washHalf = washOD / 2, nutHalf = nutAF / 2, min2 = minorD / 2;
+      const tail = Math.max(2 * pitch, (L - Le) - (washT + nutH));
+      const sTailTop = -(washT + nutH + tail), sNutCrown = -(washT + nutH), sNutWash = -washT;
+      const embLen = Math.max(d + 2, L - (washT + nutH + tail)), sChiselBase = embLen - d;
+      let sFace = snap ? Math.max(0, snap.fixtureThk) : maxFixt;
+      sFace = Math.min(sFace, Math.max(0, embLen - 0.5));
+      const sHoleBot = embLen + Math.max(3, 0.06 * embLen);
+      const axisAt = (s) => junction + bodyDir * s;
+      const P = axisIsU ? (s, t) => place(axisAt(s), trans + t)
+                        : (s, t) => place(trans + t, axisAt(s));
+      // Rod body outline (tail-top → 45° chisel tip).
+      polyDxf([P(sTailTop, dh2), P(embLen, dh2), P(sChiselBase, -dh2), P(sTailTop, -dh2)], true);
+      // Thread root lines (±minorD/2) over the visible rod (tail + body).
+      segP(P(sTailTop, min2), P(sNutCrown, min2));
+      segP(P(sTailTop, -min2), P(sNutCrown, -min2));
+      segP(P(0, min2), P(sChiselBase, min2));
+      segP(P(0, -min2), P(sChiselBase, -min2));
+      // Chamfered hex nut (reuse the canvas hex helper, mapped through place()).
+      const nutPts = axisIsU ? hexPointsAlongU(trans, axisAt(sNutCrown), axisAt(sNutWash), nutHalf)
+                             : hexPointsAlongV(trans, axisAt(sNutCrown), axisAt(sNutWash), nutHalf);
+      polyDxf(nutPts.map(p => place(p[0], p[1])), true);
+      // Washer + bearing line.
+      polyDxf([P(sNutWash, washHalf), P(0, washHalf), P(0, -washHalf), P(sNutWash, -washHalf)], true);
+      segP(P(0, washHalf), P(0, -washHalf));
+      // Drill-hole walls + bottom cap over the bonded length.
+      if (sHoleBot - sFace > 1) {
+        segP(P(sFace, hole2), P(sHoleBot, hole2));
+        segP(P(sFace, -hole2), P(sHoleBot, -hole2));
+        segP(P(sHoleBot, hole2), P(sHoleBot, -hole2));
+      }
+      // Centreline.
+      const a0 = axisAt(sTailTop - 3), aL = axisAt(embLen + 3);
+      if (axisIsU) lineDxf(Math.min(a0, aL), trans, Math.max(a0, aL), trans);
+      else lineDxf(trans, Math.min(a0, aL), trans, Math.max(a0, aL));
     }
   } else if (ent.type === 'stiff2') {
     // plate-grouping-stiffener — web stiffener plate: outline rectangle (two
@@ -873,8 +974,13 @@ function _paperGrain() {
 }
 
 function drawSheet(cs) {
+  // multi-file-workspace: the page rectangle / fill / extents follow the active
+  // page's own size. Native A1 pages return {SHEET.W, SHEET.H} from
+  // activePageSize() so this is byte-identical to the old SHEET.W/H read.
+  const pgSize = (typeof activePageSize === 'function')
+    ? activePageSize() : { w: SHEET.W, h: SHEET.H };
   const tl = s2px(0, 0);
-  const br = s2px(SHEET.W, SHEET.H);
+  const br = s2px(pgSize.w, pgSize.h);
   const sw = br.x - tl.x, sh = br.y - tl.y;
 
   // V25 — Shadow tuned to design's quieter "borders-first" aesthetic:

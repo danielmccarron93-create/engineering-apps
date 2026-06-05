@@ -18,6 +18,60 @@ function initKeyboard() {
     if (e.key === 'Escape' && _palVisible) { e.preventDefault(); _palClose(); return; }
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
 
+    // ---- DIMENSION VALUE / LABEL TYPING (v25 measure tool, after the 2nd click) ----
+    // Runs BEFORE every tool shortcut so typing a length, a label letter, or even
+    // a capital 'M' edits the just-placed dimension instead of switching tools or
+    // toggling the sheet mode. Digits live-rescale (anchored at P1); a printable
+    // non-digit starts a text label; Enter commits, Esc reverts. (js/82)
+    if (tool === 'v25-measure' && measureAwaitId != null && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      const _arr = (activeBlock && entities2D[activeBlock.viewKey]) || null;
+      const _ent = _arr ? _arr.find(x => x.id === measureAwaitId) : null;
+      if (_ent) {
+        const inText = (_ent.textOverride != null);
+        if (e.key === 'Enter') {
+          measureAwaitId = null; measureDimInput = ''; measureDimActive = false; measureClickLen = 0;
+          requestRender(); e.preventDefault(); return;
+        }
+        if (e.key === 'Escape') {
+          if (measureDimActive && measureClickLen > 0 && typeof dim2SetLength === 'function') dim2SetLength(_ent, measureClickLen);
+          if (_ent.textOverride === '') _ent.textOverride = null;
+          measureAwaitId = null; measureDimInput = ''; measureDimActive = false; measureClickLen = 0;
+          requestRender(); e.preventDefault(); return;
+        }
+        if (e.key === 'Backspace') {
+          if (inText) {
+            _ent.textOverride = _ent.textOverride.slice(0, -1);
+            if (_ent.textOverride.length === 0) _ent.textOverride = null;
+          } else if (measureDimActive) {
+            measureDimInput = measureDimInput.slice(0, -1);
+            if (measureDimInput.length === 0) { measureDimActive = false; if (typeof dim2SetLength === 'function') dim2SetLength(_ent, measureClickLen); }
+            else { const l = parseFloat(measureDimInput); if (l > 0 && typeof dim2SetLength === 'function') dim2SetLength(_ent, l); }
+          }
+          requestRender(); e.preventDefault(); return;
+        }
+        // NUMBER MODE: digits / decimal point — live-rescale anchored at P1.
+        // Reject a 2nd decimal point, and only latch number-mode once the buffer
+        // is a positive number (so a lone '.' doesn't lock out a text label).
+        if (!inText && /^[0-9.]$/.test(e.key)) {
+          if (e.key === '.' && measureDimInput.includes('.')) { e.preventDefault(); return; }
+          measureDimInput += e.key;
+          const l = parseFloat(measureDimInput);
+          if (l > 0) { measureDimActive = true; if (typeof dim2SetLength === 'function') dim2SetLength(_ent, l); }
+          requestRender(); e.preventDefault(); return;
+        }
+        // TEXT MODE: a printable non-digit starts a label (geometry unchanged);
+        // once started, any printable char extends it.
+        if ((inText || !measureDimActive) && /^[\x20-\x7E]$/.test(e.key)) {
+          _ent.textOverride = (_ent.textOverride || '') + e.key;
+          requestRender(); e.preventDefault(); return;
+        }
+        // Any other printable char while awaiting input (e.g. a letter typed
+        // after a digit, which number-mode blocks from starting a label) is
+        // swallowed so it can't leak to the global tool shortcuts below.
+        if (/^[\x20-\x7E]$/.test(e.key)) { e.preventDefault(); return; }
+      }
+    }
+
     // V20 help overlay — `?` (shift + / on US keyboard). Allow pressing ? to
     // toggle from anywhere outside an input.
     if (e.key === '?') { e.preventDefault(); toggleKbdHelp(); return; }
@@ -26,8 +80,14 @@ function initKeyboard() {
       if (typeof toggleSheetMode === 'function') toggleSheetMode();
       e.preventDefault(); return;
     }
-    if (e.key === 'm' || e.key === 'M') {
-      if (!(e.ctrlKey || e.metaKey)) { setTool('mirror'); return; }
+    // 'm' = Measure / Dimension tool (Mirror relocated to 'i'). 2D paper-space →
+    // the v25 dimension tool (js/82); 3D model space → the legacy dimension tool,
+    // which is the measure equivalent there. (Skipped while a dimension is
+    // awaiting typed input — the capture block above already handled the key.)
+    if ((e.key === 'm' || e.key === 'M') && !e.shiftKey && !(e.ctrlKey || e.metaKey)) {
+      if (sheetMode === '2d' && typeof v25SetTool === 'function') v25SetTool('v25-measure');
+      else setTool('dimension');
+      e.preventDefault(); return;
     }
 
     // ---- TAB-TO-CYCLE SELECTION ----
@@ -92,6 +152,7 @@ function initKeyboard() {
     }
 
     if (e.key === 'v' || e.key === 'V') setTool('select');
+    if ((e.key === 'i' || e.key === 'I') && !(e.ctrlKey || e.metaKey)) setTool('mirror'); // Mirror (relocated from 'm')
     if (e.key === 'l' || e.key === 'L') setTool('line');
     if (e.key === 'c' || e.key === 'C') setTool('circle');
     if (e.key === 'p' || e.key === 'P') setTool('polyline');

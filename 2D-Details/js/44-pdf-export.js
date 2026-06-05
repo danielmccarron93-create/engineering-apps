@@ -17,7 +17,62 @@
 // Router: exportSheetToPDF() picks the path based on the feature flag.
 // File name is derived from sheetInfo.drawingNo + revision.
 
-function exportSheetToPDF() {
+// ---- PER-PAGE EXPORT HELPERS (multi-file-workspace Phase 5) ----
+// A page can now carry its own size (native A1, or an imported PDF page's real
+// A3/A4/portrait size). These helpers let the single-sheet + project exporters
+// size each jsPDF page to the page's own dimensions and stamp a high-DPI raster
+// of a PDF-background page under the vector overlay. Native A1 pages resolve to
+// {[841,594],'landscape'} and no raster, so they export byte-identical to before.
+
+// jsPDF page format + orientation for a page. Defaults to A1 landscape when the
+// page (or its size) is missing, matching the historical hardcoded export.
+function _pdfPageFormat(page) {
+  const sz = (page && page.size && typeof page.size.w === 'number' && typeof page.size.h === 'number')
+    ? page.size
+    : { w: SHEET.W, h: SHEET.H };
+  return {
+    format: [sz.w, sz.h],
+    orientation: (sz.w >= sz.h) ? 'landscape' : 'portrait',
+    w: sz.w,
+    h: sz.h,
+  };
+}
+
+// If `page` has a PDF background, pre-render it to a ~300 DPI canvas and hand it
+// to the background hook (window.setPdfExportRaster) so the export render pass
+// draws it under the markup. Returns true when a raster was staged, false for a
+// native page or when the PDF renderer/library is unavailable. Callers always
+// clear the override (setPdfExportRaster(null)) after the page render regardless,
+// so a staged raster can never leak into the next page.
+async function _pdfStageBgRaster(file, page) {
+  try {
+    if (!page || !page.bg || page.bg.type !== 'pdf') return false;
+    if (typeof window.renderPdfPageToCanvas !== 'function'
+        || typeof window.setPdfExportRaster !== 'function') return false;
+    const fmt = _pdfPageFormat(page);
+    // ~300 DPI: device-px width = mm / 25.4 * 300. renderPdfPageToCanvas takes a
+    // CSS-px width and multiplies by DPR internally, so divide by DPR to land on a
+    // DPR-independent device-pixel target. (renderPdfPageToBitmap also clamps the
+    // larger side to its MAX_RASTER_SIDE, bounding memory on big pages.)
+    const dpr = (typeof DPR === 'number' && DPR > 0) ? DPR : 1;
+    const targetDevPx = (fmt.w / 25.4) * 300;
+    const targetCssW = targetDevPx / dpr;
+    const cnv = await window.renderPdfPageToCanvas(file, page.bg, targetCssW);
+    if (!cnv) return false;
+    window.setPdfExportRaster(cnv);
+    return true;
+  } catch (e) {
+    console.warn('[pdf] export bg raster staging failed:', e);
+    try { window.setPdfExportRaster && window.setPdfExportRaster(null); } catch (_) {}
+    return false;
+  }
+}
+
+// async — staging a PDF-background page's high-DPI raster is async (pdf.js render
+// returns a promise). All callers are fire-and-forget UI handlers, so returning a
+// promise is harmless; awaiting here keeps the theme save/restore correctly
+// bracketing the (possibly async) render pass.
+async function exportSheetToPDF() {
   if (!window.jspdf || !window.jspdf.jsPDF) {
     alert('PDF library not loaded. Check your internet connection and try again.');
     return;
@@ -36,14 +91,14 @@ function exportSheetToPDF() {
   try {
     if (V15_VECTOR_PDF) {
       try {
-        exportSheetToPDFVector();
+        await exportSheetToPDFVector();
         return;
       } catch (e) {
         // Fall through to raster so the user always gets *some* output.
         console.warn('Vector PDF export failed, falling back to raster:', e);
       }
     }
-    exportSheetToPDFRaster();
+    await exportSheetToPDFRaster();
   } finally {
     if (hadDark) { body.classList.add('theme-dark'); }
     if (!hadClassic) { body.classList.remove('theme-classic'); }
@@ -51,17 +106,34 @@ function exportSheetToPDF() {
 }
 
 // ---- RASTER PATH (V14) ----
-function exportSheetToPDFRaster() {
+// async so it can stage a PDF-background page's high-DPI raster (see
+// _pdfStageBgRaster). Native pages stage nothing and run exactly as before.
+async function exportSheetToPDFRaster() {
   const { jsPDF } = window.jspdf;
 
-  // Target resolution: ~200 DPI for A1 = ~6623 × 4680 px (sheet 841×594mm)
-  // Scale back to a sensible render size: 3600 × 2544 px (~110 DPI) keeps
-  // filesize reasonable while producing sharp output.
+  // multi-file-workspace Phase 5 — size the offscreen render + the jsPDF page to
+  // the ACTIVE page's own dimensions. Native A1 pages resolve to 841×594, so the
+  // px targets and format are byte-identical to the historical hardcoded values.
+  const _pg = (typeof activePage === 'function') ? activePage() : null;
+  const fmt = _pdfPageFormat(_pg);
+
+  // Target resolution: ~110 DPI keeps filesize reasonable while producing sharp
+  // output (A1 → 3600 × 2544 px). Scales with the page size for non-A1 pages.
   const PX_PER_MM = 4.3;
-  const targetW = Math.round(SHEET.W * PX_PER_MM);
-  const targetH = Math.round(SHEET.H * PX_PER_MM);
+  const targetW = Math.round(fmt.w * PX_PER_MM);
+  const targetH = Math.round(fmt.h * PX_PER_MM);
 
   const saved = { canvas, ctx, W, H, viewport: { ...viewport } };
+
+  // Stage a crisp PDF-background raster (no-op for native pages). The override is
+  // drawn by drawPdfBackground during render() into the page rect, then cleared.
+  // Warn if a PDF-background page can't be staged (it would export blank-white).
+  if (_pg) {
+    const _staged = await _pdfStageBgRaster((typeof workspaceActiveFile === 'function') ? workspaceActiveFile() : null, _pg);
+    if (!_staged && _pg.bg && _pg.bg.type === 'pdf' && typeof alert === 'function') {
+      alert('PDF export warning: the PDF background could not be rendered for this page. It was exported blank (markup only).');
+    }
+  }
 
   const off = document.createElement('canvas');
   off.width = targetW;
@@ -81,13 +153,13 @@ function exportSheetToPDFRaster() {
   try {
     render();
     const pdf = new jsPDF({
-      orientation: 'landscape',
+      orientation: fmt.orientation,
       unit: 'mm',
-      format: [SHEET.W, SHEET.H],
+      format: fmt.format,
       compress: true,
     });
     const imgData = off.toDataURL('image/jpeg', 0.92);
-    pdf.addImage(imgData, 'JPEG', 0, 0, SHEET.W, SHEET.H);
+    pdf.addImage(imgData, 'JPEG', 0, 0, fmt.w, fmt.h);
 
     const fname = `${sheetInfo.drawingNo || 'detail'}_Rev${sheetInfo.revision || 'A'}.pdf`
       .replace(/[^a-z0-9._-]/gi, '_');
@@ -96,6 +168,7 @@ function exportSheetToPDFRaster() {
     console.error('Raster PDF export failed:', e);
     alert('PDF export failed: ' + e.message);
   } finally {
+    if (typeof window.setPdfExportRaster === 'function') window.setPdfExportRaster(null);
     canvas = saved.canvas;
     ctx = saved.ctx;
     W = saved.W;
@@ -121,14 +194,22 @@ function exportSheetToPDFRaster() {
 //     drawImage path converts the offscreen Three.js canvas to PNG and
 //     embeds it via pdf.addImage — a single raster block inside an
 //     otherwise fully-vector document.
-function exportSheetToPDFVector() {
+// async — see exportSheetToPDF. A PDF-background active page stages a high-DPI
+// raster (awaited) that drawPdfBackground draws under the vector overlay.
+async function exportSheetToPDFVector() {
   const { jsPDF } = window.jspdf;
 
-  // Create PDF doc — A1 landscape, mm units so 1 pdf-unit == 1 sheet-mm.
+  // multi-file-workspace Phase 5 — size the jsPDF page to the ACTIVE page's own
+  // dimensions/orientation. Native A1 pages resolve to [841,594]/'landscape', so
+  // this is byte-identical to the historical hardcoded A1 export.
+  const _pg = (typeof activePage === 'function') ? activePage() : null;
+  const fmt = _pdfPageFormat(_pg);
+
+  // Create PDF doc — page-sized, mm units so 1 pdf-unit == 1 sheet-mm.
   const pdf = new jsPDF({
-    orientation: 'landscape',
+    orientation: fmt.orientation,
     unit: 'mm',
-    format: [SHEET.W, SHEET.H],
+    format: fmt.format,
     compress: true,
   });
 
@@ -143,15 +224,27 @@ function exportSheetToPDFVector() {
     pdfExportMode,
   };
 
+  // Stage a crisp ~300 DPI raster of the PDF background (no-op for native pages).
+  // drawPdfBackground (called inside render() under the markup) draws it into the
+  // page rect via the shim's addImage; cleared in finally. If a PDF-background
+  // page can't be staged, warn — it would otherwise export blank-white (markup
+  // only) with no signal but a console line.
+  if (_pg) {
+    const _staged = await _pdfStageBgRaster((typeof workspaceActiveFile === 'function') ? workspaceActiveFile() : null, _pg);
+    if (!_staged && _pg.bg && _pg.bg.type === 'pdf' && typeof alert === 'function') {
+      alert('PDF export warning: the PDF background could not be rendered for this page. It was exported blank (markup only).');
+    }
+  }
+
   // Build the shim and swap globals. We set a fake "canvas" so code that
   // reads canvas.width / canvas.height during export gets the sheet size.
   const shim = createPdfCanvasShim(pdf);
-  const fakeCanvas = { width: SHEET.W, height: SHEET.H };
+  const fakeCanvas = { width: fmt.w, height: fmt.h };
 
   canvas = fakeCanvas;
   ctx = shim;
-  W = SHEET.W;
-  H = SHEET.H;
+  W = fmt.w;
+  H = fmt.h;
   viewport.zoom = 1;        // 1 screen-px == 1 sheet-mm
   viewport.panX = 0;
   viewport.panY = 0;
@@ -166,7 +259,7 @@ function exportSheetToPDFVector() {
   try {
     // Paint a white sheet background first — jsPDF pages are transparent.
     pdf.setFillColor(255, 255, 255);
-    pdf.rect(0, 0, SHEET.W, SHEET.H, 'F');
+    pdf.rect(0, 0, fmt.w, fmt.h, 'F');
 
     // Invoke the normal render pipeline. Every ctx.* call lands on the shim
     // and is translated into a jsPDF primitive.
@@ -176,6 +269,7 @@ function exportSheetToPDFVector() {
       .replace(/[^a-z0-9._-]/gi, '_');
     pdf.save(fname);
   } finally {
+    if (typeof window.setPdfExportRaster === 'function') window.setPdfExportRaster(null);
     // Restore globals regardless of success / failure so the app keeps working.
     canvas = saved.canvas;
     ctx = saved.ctx;

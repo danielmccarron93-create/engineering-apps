@@ -111,6 +111,20 @@ function v25EntBounds(ent) {
     const B = Math.min(ent.tipV, ent.txtV), T = Math.max(ent.tipV, ent.txtV);
     return { L: L - 5, R: R + 50, B: B - 10, T: T + 30 };
   }
+  if (ent.type === 'dim2') {
+    // Coarse AABB enclosing the two measured points and the dim line on EITHER
+    // offset side (off is paper-mm → ×drawingScale to real-mm), plus text headroom.
+    const ds = (typeof drawingScale === 'number' && drawingScale) ? drawingScale : 1;
+    const offReal = (Math.abs(typeof ent.off === 'number' ? ent.off : 12) + 6) * ds;
+    const du = ent.p2u - ent.p1u, dv = ent.p2v - ent.p1v, len = Math.hypot(du, dv) || 1;
+    const rnx = -dv / len, rny = du / len;
+    const us = [ent.p1u, ent.p2u], vs = [ent.p1v, ent.p2v];
+    [1, -1].forEach(s => {
+      us.push(ent.p1u + rnx * offReal * s, ent.p2u + rnx * offReal * s);
+      vs.push(ent.p1v + rny * offReal * s, ent.p2v + rny * offReal * s);
+    });
+    return { L: Math.min(...us) - 2, R: Math.max(...us) + 2, B: Math.min(...vs) - 2, T: Math.max(...vs) + 2 };
+  }
   if (ent.type === 'mem2') {
     const len = ent.length || 100;
     const rot = (ent.rot || 0) * Math.PI / 180;
@@ -182,10 +196,10 @@ function v25EntBounds(ent) {
       return { L: ent.u - halfW, R: ent.u + halfW, B: ent.v - halfW, T: ent.v + halfW };
     }
     // Section: head at the placed u,v (the live glyph snaps the head to a face at
-    // draw time); body runs ~L into the material, head overhangs ~t1 the other way.
-    const t1 = S.t1 || S.dK || 16.5;
-    const bodyLen = Math.max(0, (S.L || 120) - t1) + 4;
-    const headOver = t1 + 4;
+    // draw time); body runs ~L into the material, head/collar overhangs ~tK.
+    const tK = S.tK || (S.d ? S.d * 0.56 : 5);
+    const bodyLen = Math.max(0, (S.L || 120) - tK) + 4;   // shank + thread + tip side
+    const headOver = tK + 6;                               // head/collar protrudes ~tK
     const headLow = (orient === 'h-headL' || orient === 'v-headB'); // body toward +axis
     const isH = (orient === 'h-headL' || orient === 'h-headR');
     const axLo = headLow ? -headOver : -bodyLen;
@@ -193,25 +207,441 @@ function v25EntBounds(ent) {
     if (isH) return { L: ent.u + axLo, R: ent.u + axHi, B: ent.v - halfW, T: ent.v + halfW };
     return { L: ent.u - halfW, R: ent.u + halfW, B: ent.v + axLo, T: ent.v + axHi };
   }
+  if (ent.type === 'stud') {
+    // ChemSet anchor stud (js/72j-v25-stud.js). Catalogue dia drives footprint.
+    const S = (typeof getStudSpec === 'function' && getStudSpec(ent.studSpec))
+            || (typeof CHEMSET_STUDS === 'object' && CHEMSET_STUDS[ent.studSpec])
+            || { size: 'M16', d: 16, L: 190, Le: 165 };
+    const nd = (typeof studDims === 'function') ? studDims(S.size, S.d || 16) : { washOD: (S.d || 16) * 2.1 };
+    const halfW = (nd.washOD || (S.d || 16) * 2.1) / 2;
+    const orient = ent.studOrient || 'v-nutT';
+    if (orient === 'end') {
+      return { L: ent.u - halfW, R: ent.u + halfW, B: ent.v - halfW, T: ent.v + halfW };
+    }
+    // Section: washer/nut at the placed u,v (the live glyph snaps to a face at
+    // draw time); body runs ~Le into the material, nut/washer projects ~(L−Le).
+    const nutOver = Math.max(8, (S.L || 190) - (S.Le || 165)) + 6;   // projection side
+    const bodyLen = (S.Le || 165) + 8;                               // embedded side
+    const nutLow = (orient === 'h-nutL' || orient === 'v-nutB');     // body toward +axis
+    const isH = (orient === 'h-nutL' || orient === 'h-nutR');
+    const axLo = nutLow ? -nutOver : -bodyLen;
+    const axHi = nutLow ?  bodyLen  :  nutOver;
+    if (isH) return { L: ent.u + axLo, R: ent.u + axHi, B: ent.v - halfW, T: ent.v + halfW };
+    return { L: ent.u - halfW, R: ent.u + halfW, B: ent.v + axLo, T: ent.v + axHi };
+  }
   if (ent.type === 'noteBox' && typeof nbBounds === 'function') return nbBounds(ent);
   return null;
+}
+
+// Signed-area magnitude (shoelace) of a [{u,v}] polygon, in real-mm². Used as
+// the AREA-entity score: a smaller silhouette is the "tighter" (more specific)
+// target, so a screw/cleat over a big timber post wins on area alone.
+function _v25PolyAreaMM2(poly) {
+  if (!poly || poly.length < 3) return Infinity;
+  let a = 0;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    a += (poly[j].u + poly[i].u) * (poly[i].v - poly[j].v);
+  }
+  return Math.abs(a) / 2;
+}
+
+// ----------------------------------------------------------------------------
+// SELECTION-PRECISION scoring model (the heart of the precise pick).
+//
+// v25EntHit(blk, ent, cursorPx, ctx) tests ONE entity against the cursor and
+// returns { precise:boolean, score:number } — or null on a precise MISS (drop
+// the candidate even though its bbox passed the cheap pre-filter). The ranked
+// stack sorts these so stack[0] is the TIGHTEST target under the cursor:
+//
+//   precise DESC (true first) → score ASC (smaller first) → paint-index DESC.
+//
+// Because `precise` is compared FIRST, a CSS-px linear score and a real-mm²
+// area score are NEVER compared against each other — any precise (linear/point)
+// hit sorts ahead of any area (filled) hit before scores are even looked at.
+//
+//   LINEAR / POINT  (screw, bolt2, line/lineSet, leader2, dim2, reoBar, anchor,
+//                    jweld, noteBox arrow/leader, frame border) → precise=true,
+//                    score = CSS-px distance from the cursor to the ACTUAL drawn
+//                    stroke / centreline / point (smaller = better).
+//   AREA / FILLED   (mem2/timber, v2 plate, mat, blockWall, mesh, noteBox body,
+//                    stiff2, txtBox) → precise=false, score = silhouette polygon
+//                    area in real-mm² (smaller = better).
+//
+// `ctx` bundles the per-call constants already computed once in v25HitTestStack
+// (real2Px, ppmm, distToSegPx, FLOOR_PX, the *_TOL_PX). `blk` is required for
+// the fastener centreline re-centring (v25ScrewBearingFace / v25BoltClampSpan)
+// — which is exactly why the precise test lives in the stack, not v25EntBounds.
+function v25EntHit(blk, ent, cursorPx, ctx) {
+  if (!ent) return null;
+  const real2Px = ctx.real2Px;
+  const distSeg = ctx.distToSegPx;
+  const ppmm = ctx.ppmm;
+  const FLOOR_PX = ctx.FLOOR_PX;
+  const t = ent.type;
+
+  // Small helper: px distance from the cursor to a real-world (u,v) point.
+  const ptPx = (uu, vv) => {
+    const p = real2Px(uu, vv);
+    return Math.hypot(cursorPx.x - p.x, cursorPx.y - p.y);
+  };
+  // Min px distance from the cursor to a real-world polyline (array of {u,v}).
+  const polylinePx = (pts, closed) => {
+    if (!pts || pts.length === 0) return Infinity;
+    if (pts.length === 1) return ptPx(pts[0].u, pts[0].v);
+    let best = Infinity;
+    const n = closed ? pts.length : pts.length - 1;
+    for (let i = 0; i < n; i++) {
+      const a = real2Px(pts[i].u, pts[i].v);
+      const b = real2Px(pts[(i + 1) % pts.length].u, pts[(i + 1) % pts.length].v);
+      const d = distSeg(cursorPx, a, b);
+      if (d < best) best = d;
+    }
+    return best;
+  };
+  // Cursor in real-world (u,v) — supplied by the stack (it already has them).
+  const cu = ctx.cu, cv = ctx.cv;
+  // AREA hit: cursor must be strictly inside the real polygon; score = area.
+  const areaHit = (poly) => {
+    if (!poly || poly.length < 3) return null;
+    if (!_v25dPointInPoly(cu, cv, poly)) return null;
+    return { precise: false, score: _v25PolyAreaMM2(poly) };
+  };
+
+  // ---- LINEAR / POINT entities ------------------------------------------
+  if (t === 'screw') {
+    return v25FastenerHit(blk, ent, cursorPx, ctx, 'screw');
+  }
+  if (t === 'stud') {
+    return v25FastenerHit(blk, ent, cursorPx, ctx, 'stud');
+  }
+  if (t === 'bolt2') {
+    return v25FastenerHit(blk, ent, cursorPx, ctx, 'bolt');
+  }
+  if (t === 'anchor') {
+    // Shaft centreline: head at (u,v), tip at (u,v) projected -totalLen along
+    // the +V-at-rot=0 axis (matches drawAnchor2D's local frame & rotation).
+    const def = (typeof V25_ANCHOR_DB === 'object' && (V25_ANCHOR_DB[ent.kind] || V25_ANCHOR_DB.chemset)) || {};
+    const totalLen = ent.embed || (def.defaults && def.defaults.embed) || 100;
+    const rot = (ent.rot || 0) * Math.PI / 180, c = Math.cos(rot), s = Math.sin(rot);
+    // local (0,0) → (0,-totalLen): wu = u - lv*sin, wv = v + lv*cos with lv=-totalLen.
+    const tipU = ent.u - (-totalLen) * s, tipV = ent.v + (-totalLen) * c;
+    const d = polylinePx([{ u: ent.u, v: ent.v }, { u: tipU, v: tipV }], false);
+    const tol = Math.max(FLOOR_PX, ((def.shaftD || def.sleeveD || 16) / 2) * ppmm);
+    return (d <= tol) ? { precise: true, score: d } : null;
+  }
+  if (t === 'reoBar') {
+    if (ent.sectionDot && ent.pts && ent.pts.length) {
+      const d = ptPx(ent.pts[0].u, ent.pts[0].v);
+      const tol = Math.max(FLOOR_PX, 15 * ppmm);
+      return (d <= tol) ? { precise: true, score: d } : null;
+    }
+    const d = polylinePx(ent.pts, false);
+    return (d <= ctx.LINE_TOL_PX) ? { precise: true, score: d } : null;
+  }
+  if (t === 'lineSet' || t === 'line') {
+    // Stroke-only for now (filled-closed lineSets included — decided judgement).
+    const d = polylinePx(ent.pts, !!ent.closed);
+    return (d <= ctx.LINE_TOL_PX) ? { precise: true, score: d } : null;
+  }
+  if (t === 'jweld') {
+    const d = polylinePx([{ u: ent.u1, v: ent.v1 }, { u: ent.u2, v: ent.v2 }], false);
+    return (d <= ctx.LINE_TOL_PX) ? { precise: true, score: d } : null;
+  }
+  if (t === 'leader2') {
+    // Lifted from the old precise branch: text-anchor box OR a point on the
+    // leader line. Score = the px distance the branch already implies.
+    const tp = real2Px(ent.txtU, ent.txtV);
+    const dAnchor = Math.max(Math.abs(cursorPx.x - tp.x) - ctx.TXT_TOL_PX_X,
+                             Math.abs(cursorPx.y - tp.y) - ctx.TXT_TOL_PX_Y);
+    if (dAnchor < 0) return { precise: true, score: Math.hypot(cursorPx.x - tp.x, cursorPx.y - tp.y) };
+    const tipPx = real2Px(ent.tipU, ent.tipV);
+    const dx = tp.x - tipPx.x, dy = tp.y - tipPx.y;
+    const lenPx = Math.hypot(dx, dy);
+    if (lenPx > 0) {
+      const tt = ((cursorPx.x - tipPx.x) * dx + (cursorPx.y - tipPx.y) * dy) / (lenPx * lenPx);
+      if (tt > 0.15 && tt < 0.95) {
+        const ppx = tipPx.x + tt * dx, ppy = tipPx.y + tt * dy;
+        const d = Math.hypot(cursorPx.x - ppx, cursorPx.y - ppy);
+        if (d < ctx.LINE_TOL_PX) return { precise: true, score: d };
+      }
+    }
+    return null;
+  }
+  if (t === 'dim2') {
+    // Lifted from the old precise branch: nearest of dim line / two witness
+    // lines / label box. Score = the min px distance.
+    if (typeof dim2DimLinePx !== 'function') return null;
+    const g = dim2DimLinePx(blk, ent);
+    let best = Math.min(distSeg(cursorPx, g.d1, g.d2),
+                        distSeg(cursorPx, g.w1, g.d1),
+                        distSeg(cursorPx, g.w2, g.d2));
+    if (best < ctx.LINE_TOL_PX) return { precise: true, score: best };
+    // label box — mirror drawDim2_2D's outward anchor offset.
+    const z = (typeof _nbZoom === 'function') ? _nbZoom() : 1;
+    const sgn = (g.off >= 0) ? 1 : -1;
+    const capDraw = Math.max(DIM2_TXT_MIN_PX, (ent.sz || 2.5) * z);
+    const tgap = DIM2_TXT_GAP_MM * z + capDraw * 0.5;
+    const lx = g.mid.x + g.nx * sgn * tgap, ly = g.mid.y + g.ny * sgn * tgap;
+    if (Math.abs(cursorPx.x - lx) < ctx.TXT_TOL_PX_X && Math.abs(cursorPx.y - ly) < ctx.TXT_TOL_PX_Y) {
+      return { precise: true, score: Math.hypot(cursorPx.x - lx, cursorPx.y - ly) };
+    }
+    return null;
+  }
+  if (t === 'frame') {
+    // Border only: min px distance to the 4 edges; reject the interior so a
+    // member drawn inside the frame is still pickable through it.
+    const b = v25EntBounds(ent);
+    if (!b) return null;
+    const c0 = real2Px(b.L, b.B), c1 = real2Px(b.R, b.B), c2 = real2Px(b.R, b.T), c3 = real2Px(b.L, b.T);
+    const d = Math.min(distSeg(cursorPx, c0, c1), distSeg(cursorPx, c1, c2),
+                       distSeg(cursorPx, c2, c3), distSeg(cursorPx, c3, c0));
+    return (d <= ctx.TOL_PX) ? { precise: true, score: d } : null;
+  }
+
+  // ---- AREA / FILLED entities -------------------------------------------
+  if (t === 'mem2') {
+    const oc = (typeof v25Mem2WorldOutline === 'function') ? v25Mem2WorldOutline(ent) : [];
+    const poly = oc.map(p => ({ u: p[0], v: p[1] }));
+    return areaHit(poly);
+  }
+  if (t === 'mat') {
+    // Build the real (rotated) polygon and test point-in-poly, not the AABB —
+    // so a concave-notch / rotated mat doesn't grab clicks outside its outline.
+    let poly = null;
+    if (ent.shape === 'poly' && Array.isArray(ent.pts) && ent.pts.length >= 3) {
+      const rotDeg = ent.rot || 0;
+      if (!rotDeg) poly = ent.pts.map(p => ({ u: p.u, v: p.v }));
+      else {
+        const rr = rotDeg * Math.PI / 180, cc = Math.cos(rr), ss = Math.sin(rr);
+        let cu = 0, cv = 0; ent.pts.forEach(p => { cu += p.u; cv += p.v; }); cu /= ent.pts.length; cv /= ent.pts.length;
+        poly = ent.pts.map(p => { const lx = p.u - cu, ly = p.v - cv; return { u: cu + lx * cc - ly * ss, v: cv + lx * ss + ly * cc }; });
+      }
+    } else {
+      const w = ent.w || 0, h = ent.h || 0, rotDeg = ent.rot || 0;
+      if (!rotDeg) poly = [{ u: ent.u, v: ent.v }, { u: ent.u + w, v: ent.v }, { u: ent.u + w, v: ent.v + h }, { u: ent.u, v: ent.v + h }];
+      else {
+        const rr = rotDeg * Math.PI / 180, cc = Math.cos(rr), ss = Math.sin(rr);
+        const cu = ent.u + w / 2, cv = ent.v + h / 2;
+        poly = [[-w/2,-h/2],[w/2,-h/2],[w/2,h/2],[-w/2,h/2]].map(([lx,ly]) => ({ u: cu + lx * cc - ly * ss, v: cv + lx * ss + ly * cc }));
+      }
+    }
+    return areaHit(poly);
+  }
+  if (t === 'blockWall') {
+    let poly = null;
+    if (ent.wallMode === 'sec') {
+      const len = ent.lengthMM || 0;
+      const cat = (typeof V25_BLOCK_DB !== 'undefined' && V25_BLOCK_DB[ent.blockKey]) || { thk: 190 };
+      const half = (cat.thk || 190) / 2;
+      const rr = (ent.rot || 0) * Math.PI / 180, cc = Math.cos(rr), ss = Math.sin(rr);
+      poly = [[0,-half],[len,-half],[len,half],[0,half]].map(([lx,ly]) => ({ u: ent.u + lx * cc - ly * ss, v: ent.v + lx * ss + ly * cc }));
+    } else {
+      const w = ent.lengthMM || 0, h = ent.heightMM || 0;
+      poly = [{ u: ent.u, v: ent.v }, { u: ent.u + w, v: ent.v }, { u: ent.u + w, v: ent.v + h }, { u: ent.u, v: ent.v + h }];
+    }
+    return areaHit(poly);
+  }
+  if (t === 'mesh' || t === 'txtBox') {
+    const b = v25EntBounds(ent);
+    if (!b) return null;
+    return areaHit([{ u: b.L, v: b.B }, { u: b.R, v: b.B }, { u: b.R, v: b.T }, { u: b.L, v: b.T }]);
+  }
+  if (t === 'stiff2') {
+    // stiffCorners (the true quad) is internal to the 72e IIFE; fall back to a
+    // point-in-bbox test (precise=false) per the decided judgement call.
+    const b = v25EntBounds(ent);
+    if (!b) return null;
+    return areaHit([{ u: b.L, v: b.B }, { u: b.R, v: b.B }, { u: b.R, v: b.T }, { u: b.L, v: b.T }]);
+  }
+  if (t === 'noteBox') {
+    // Body only here (the leader/tip emits a SEPARATE precise candidate in the
+    // stack). Area = the box bbox rect.
+    const b = (typeof nbBounds === 'function') ? nbBounds(ent) : null;
+    if (!b) return null;
+    return areaHit([{ u: b.L, v: b.B }, { u: b.R, v: b.B }, { u: b.R, v: b.T }, { u: b.L, v: b.T }]);
+  }
+
+  // Unknown / not-yet-classified type: fall back to a bbox area test so it stays
+  // selectable (precise=false) rather than disappearing from the pick.
+  const b = v25EntBounds(ent);
+  if (!b) return null;
+  return areaHit([{ u: b.L, v: b.B }, { u: b.R, v: b.B }, { u: b.R, v: b.T }, { u: b.L, v: b.T }]);
+}
+
+// Precise hit for a fastener (screw / bolt) SECTION centreline. The drawn
+// centreline is re-centred on the detected bearing/clamp FACE — NOT ent.u/v —
+// so we recompute the exact endpoints the drawer uses. End-on glyphs are a
+// POINT (radial accept inside the head/washer circle), never a bbox corner.
+// Returns { precise:true, score:pxDistance } or null on a miss.
+function v25FastenerHit(blk, ent, cursorPx, ctx, kind) {
+  const real2Px = ctx.real2Px;
+  const distSeg = ctx.distToSegPx;
+  const ppmm = ctx.ppmm;
+  const FLOOR_PX = ctx.FLOOR_PX;
+
+  if (kind === 'screw') {
+    const S = (typeof getScrewSpec === 'function' && getScrewSpec(ent.screwSpec))
+            || (typeof HBS_PLATE_SCREWS === 'object' && HBS_PLATE_SCREWS[ent.screwSpec])
+            || { d: 10, dK: 16.5, t1: 16.5, tK: 5, L: 120 };
+    const orient = ent.screwOrient || 'end';
+    if (orient === 'end') {
+      const p = real2Px(ent.u, ent.v);
+      const d = Math.hypot(cursorPx.x - p.x, cursorPx.y - p.y);
+      const tol = ((S.dK || 16.5) / 2) * ppmm + FLOOR_PX;
+      return (d <= tol) ? { precise: true, score: d } : null;
+    }
+    // SECTION: replicate drawScrew2D_Section's axis mapping exactly so the pick
+    // sits on the DRAWN centreline (which lands on the bearing face).
+    const axisIsU = (orient === 'h-headL' || orient === 'h-headR');
+    const trans = axisIsU ? ent.v : ent.u;
+    const bodyDir = (orient === 'h-headL' || orient === 'v-headB') ? 1 : -1;
+    const d = S.d || 10;
+    const tK = S.tK || d * 0.56;
+    const L = S.L || d * 12;
+    const headLen = 1.80 * d;                    // SCREW_GEOM.headLenNorm * d
+    const sBear = Math.min(tK, headLen * 0.45);  // collar underside = bearing plane
+    const bearing = (typeof v25ScrewBearingFace === 'function') ? v25ScrewBearingFace(blk, ent) : null;
+    const junction = (bearing != null) ? bearing : (axisIsU ? ent.u : ent.v);
+    const axisAt = (s) => junction + bodyDir * (s - sBear);
+    const a0 = axisAt(-2), aL = axisAt(L + 2);
+    const A = axisIsU ? real2Px(a0, trans) : real2Px(trans, a0);
+    const B = axisIsU ? real2Px(aL, trans) : real2Px(trans, aL);
+    const dist = distSeg(cursorPx, A, B);
+    const tol = Math.max(FLOOR_PX, ((S.dK || 16.5) / 2) * ppmm);
+    return (dist <= tol) ? { precise: true, score: dist } : null;
+  }
+
+  if (kind === 'stud') {
+    const S = (typeof getStudSpec === 'function' && getStudSpec(ent.studSpec))
+            || (typeof CHEMSET_STUDS === 'object' && CHEMSET_STUDS[ent.studSpec])
+            || { size: 'M16', d: 16, L: 190, Le: 165 };
+    const nd = (typeof studDims === 'function') ? studDims(S.size, S.d || 16) : { washOD: (S.d || 16) * 2.1 };
+    const halfWO = (nd.washOD || (S.d || 16) * 2.1) / 2;
+    const orient = ent.studOrient || 'v-nutT';
+    if (orient === 'end') {
+      const p = real2Px(ent.u, ent.v);
+      const d = Math.hypot(cursorPx.x - p.x, cursorPx.y - p.y);
+      const tol = halfWO * ppmm + FLOOR_PX;
+      return (d <= tol) ? { precise: true, score: d } : null;
+    }
+    // SECTION: replicate drawStud2D_Section's axis mapping (s=0 at the bearing
+    // plane, axisAt(s)=junction+bodyDir*s; centreline spans the projection
+    // −(L−Le) to the embedded tip Le, +3 overrun) so the pick sits on the
+    // drawn centreline (which lands on the detected bearing face).
+    const axisIsU = (orient === 'h-nutL' || orient === 'h-nutR');
+    const trans = axisIsU ? ent.v : ent.u;
+    const bodyDir = (orient === 'h-nutL' || orient === 'v-nutB') ? 1 : -1;
+    const L = S.L || 190, Le = S.Le || 165;
+    const snap = (typeof v25StudBearingFace === 'function') ? v25StudBearingFace(blk, ent) : null;
+    const junction = snap ? snap.face : (axisIsU ? ent.u : ent.v);
+    const axisAt = (s) => junction + bodyDir * s;
+    const a0 = axisAt(-(L - Le) - 3), aL = axisAt(Le + 3);
+    const A = axisIsU ? real2Px(a0, trans) : real2Px(trans, a0);
+    const B = axisIsU ? real2Px(aL, trans) : real2Px(trans, aL);
+    const dist = distSeg(cursorPx, A, B);
+    const tol = Math.max(FLOOR_PX, halfWO * ppmm);
+    return (dist <= tol) ? { precise: true, score: dist } : null;
+  }
+
+  // bolt
+  const b = (typeof BOLT_DB === 'object' && (BOLT_DB[ent.size] || BOLT_DB.M20))
+          || { d: 20, pitch: 2.5, headAF: 30, headH: 13, nutAF: 30, nutH: 16, washOD: 44, washT: 4, threadL: 46 };
+  const orient = ent.boltOrient || 'end';
+  if (orient === 'end' || !ent.boltOrient) {
+    const p = real2Px(ent.u, ent.v);
+    const d = Math.hypot(cursorPx.x - p.x, cursorPx.y - p.y);
+    const tol = ((b.washOD || b.d * 1.85) / 2) * ppmm + FLOOR_PX;
+    return (d <= tol) ? { precise: true, score: d } : null;
+  }
+  // SECTION: replicate drawBolt2D_*Section's centreline extents (head-outer to
+  // thread-tip, +4 overrun each end), grip-centred on the detected clamp span.
+  // The head/nut grip-face sign differs between the H and V drawers, so mirror
+  // each exactly (drawBolt2D_HorizontalSection: zGripL = head; VerticalSection:
+  // vGripL = head). Endpoints feed a min/max span, so even if head/nut swap ends
+  // the perpendicular pick distance is unaffected; matching keeps the along-axis
+  // extent pixel-faithful to the drawn glyph.
+  let span = (typeof v25BoltClampSpan === 'function') ? v25BoltClampSpan(blk, ent) : null;
+  const horiz = (orient === 'h-nutR' || orient === 'h-nutL');
+  if (!span) span = { grip: 20, centre: (horiz ? ent.u : ent.v),
+    length: (typeof computeBoltLength === 'function') ? computeBoltLength(20, ent.size) : 60 };
+  const hG = span.grip / 2;
+  // dir +1 = H: nut to the right / V: head at top (matches both drawers).
+  const dir = (orient === 'h-nutR' || orient === 'v-nutB') ? 1 : -1;
+  // Head-side grip face: H drawer → centre - dir*hG ; V drawer → centre + dir*hG.
+  const gripHead = horiz ? (span.centre - dir * hG) : (span.centre + dir * hG);
+  const gripNut  = horiz ? (span.centre + dir * hG) : (span.centre - dir * hG);
+  // Outward direction from the grip toward the head vs the nut (per drawer):
+  // H head grows toward -dir, nut toward +dir; V head grows toward +dir, nut -dir.
+  const headOut = horiz ? -dir : dir;
+  const nutOut  = -headOut;
+  const headOuter = gripHead + headOut * ((b.washT || 4) + (b.headH || 13));
+  const nutOuter  = gripNut  + nutOut  * ((b.washT || 4) + (b.nutH || 16));
+  const threadProt = (span.threadProt != null)
+    ? span.threadProt
+    : Math.max(2 * (b.pitch || 2.5), (span.length || 0) - (span.grip + 2 * (b.washT || 4) + (b.nutH || 16)));
+  const threadTip = nutOuter + nutOut * threadProt;
+  const lo = Math.min(headOuter, threadTip) - 4, hi = Math.max(headOuter, threadTip) + 4;
+  const trans = horiz ? ent.v : ent.u;          // cy / cu in the drawer
+  const A = horiz ? real2Px(lo, trans) : real2Px(trans, lo);
+  const B = horiz ? real2Px(hi, trans) : real2Px(trans, hi);
+  const dist = distSeg(cursorPx, A, B);
+  const tol = Math.max(FLOOR_PX, ((b.washOD || b.d * 1.85) / 2) * ppmm);
+  return (dist <= tol) ? { precise: true, score: dist } : null;
+}
+
+// Enumerate v2 plates in `viewKey` as ranked-stack candidates. Walks
+// v2.appState.model directly (NOT the v1 plate2 MIRRORS — those carry
+// _v2Mirror, lack _v25, and have no v25EntBounds branch, so PASS1 skips them).
+// Each plate is an AREA candidate scored by its silhouette area; a synthetic
+// ent { id:'v2plate-'+el.id, _v2Plate, _v2Id, type:'plate2' } carries it back
+// through the same stack the v1 entities use. idx is a deterministic synthetic
+// paint index so the repeat-click cycle stays byte-stable.
+function _v25PlateCandidates(viewKey, ctx, baseIdx) {
+  const res = [];
+  const model = (typeof v2 === 'object' && v2 && v2.appState && v2.appState.model) ? v2.appState.model : null;
+  if (!model || !model.elements || typeof model.elements.forEach !== 'function') return res;
+  let n = 0;
+  model.elements.forEach(function (el) {
+    if (!el || el.category !== 'plate') return;
+    if (!el.params || el.params.v2Source !== 'place-plate-tool') return;
+    const g = el.geometry;
+    if (!g || g.kind !== 'region' || !Array.isArray(g.polygon) || g.polygon.length < 3) return;
+    const m = /^v1-view-(.+)$/.exec(typeof g.viewId === 'string' ? g.viewId : '');
+    if (!m || m[1] !== viewKey) return;
+    // Build a [{u,v}] polygon (x→u, y→v). NEVER feed editPlate.pointInPolygon
+    // ([{x,y}]) a [{u,v}] array — the field-name trap noted in the spec.
+    const poly = g.polygon.map(p => ({ u: (+p.x || 0), v: (+p.y || 0) }));
+    // Cheap bbox pre-filter, then precise point-in-poly (cursor in real coords).
+    const bb = _v25dBBox(poly);
+    if (ctx.cu < bb.minU || ctx.cu > bb.maxU || ctx.cv < bb.minV || ctx.cv > bb.maxV) { n++; return; }
+    if (!_v25dPointInPoly(ctx.cu, ctx.cv, poly)) { n++; return; }
+    res.push({
+      ent: { id: 'v2plate-' + el.id, _v2Plate: true, _v2Id: el.id, type: 'plate2' },
+      precise: false,
+      score: _v25PolyAreaMM2(poly),
+      idx: baseIdx + n,
+    });
+    n++;
+  });
+  return res;
 }
 
 // Hit-test in real-world (u, v). Tolerance is computed in CSS pixels but
 // also capped by an absolute real-world maximum, so when the canvas is
 // zoomed way out, picking doesn't grab everything within view.
 //
-// v25HitTestStack returns ALL entities under the cursor in priority order:
-//   PASS 0 — noteBox arrowhead tips (within 8px) FIRST, so an arrow head wins
-//            over an overlapping (possibly newer) member behind it; then
-//   PASS 1 — the normal z-order (newest-first) tests, accumulated (deduped).
+// v25HitTestStack returns ALL entities under the cursor in SPECIFICITY order
+// (SELECTION-PRECISION, 2026-06): each candidate is scored by v25EntHit, then
+// the stack is stable-sorted precise-first → smaller-score-first → topmost
+// paint order, so stack[0] is the TIGHTEST target — a screw on top of a plate
+// on top of a timber post returns the SCREW, not the big filled member behind
+// it. PASS 0 (noteBox arrowhead tips) and the leader2 / dim2 / noteBox-leader
+// precise branches are folded into the same scored collection (not deleted), so
+// an arrow tip still floats to the top. v2 plates are folded in too, so one
+// repeat-click cycle spans screw → plate → timber → text.
 // v25HitTest (below) returns stack[0] — the single top-most pick — preserving
-// the entity-or-null contract every existing caller expects. The 2D select
-// click uses the full stack so repeat-clicking the same spot walks underneath.
+// the entity-or-null contract every existing caller expects.
 function v25HitTestStack(blk, u, v) {
-  const out = [];
-  const seen = new Set();
-  const push = (ent) => { if (ent && !seen.has(ent.id)) { seen.add(ent.id); out.push(ent); } };
   const cursorPx = real2px(blk, u, v);
   const real2Px = (uu, vv) => real2px(blk, uu, vv);
   const ppmm = viewport.zoom / drawingScale; // px per real-mm
@@ -221,8 +651,9 @@ function v25HitTestStack(blk, u, v) {
   const LINE_TOL_PX = cap(4, 20);
   const TXT_TOL_PX_X = cap(30, 60);   // text anchor pickup width
   const TXT_TOL_PX_Y = cap(8, 20);
-  // Point-to-segment distance in px (for picking up leader lines).
-  const distToSeg = (p, a, b) => {
+  const FLOOR_PX = 5;                  // tolerance floor so tiny glyphs stay pickable when zoomed out
+  // Point-to-segment distance in px (for picking up leader / centre lines).
+  const distToSegPx = (p, a, b) => {
     const dx = b.x - a.x, dy = b.y - a.y;
     const lenSq = dx * dx + dy * dy;
     if (lenSq === 0) return Math.hypot(p.x - a.x, p.y - a.y);
@@ -230,77 +661,117 @@ function v25HitTestStack(blk, u, v) {
     t = Math.max(0, Math.min(1, t));
     return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
   };
+  // Per-call constants bundle handed to v25EntHit / the plate enumerator.
+  const ctx = {
+    real2Px, ppmm, distToSegPx, FLOOR_PX,
+    TOL_PX, LINE_TOL_PX, TXT_TOL_PX_X, TXT_TOL_PX_Y,
+    cu: u, cv: v,
+  };
   const arr = entities2D[blk.viewKey] || [];
-  // PASS 0 — arrowhead priority. A noteBox whose arrow TIP is within 8px wins
-  // over an overlapping member regardless of z-order (an arrow naturally points
-  // AT a member, so the tip almost always sits inside the member's bounds).
-  for (let i = arr.length - 1; i >= 0; i--) {
-    const ent = arr[i];
-    if (!ent || !ent._v25 || ent.type !== 'noteBox') continue;
-    if (typeof nbLeaderPoints !== 'function' || !Array.isArray(ent.arrows)) continue;
-    for (const a of ent.arrows) {
-      const pts = nbLeaderPoints(ent, a).map(p => real2Px(p.u, p.v));
-      const tip = pts[pts.length - 1];
-      if (tip && Math.hypot(cursorPx.x - tip.x, cursorPx.y - tip.y) < 8) { push(ent); break; }
-    }
-  }
-  // PASS 1 — normal z-order (top-most first). Same per-entity tests as before,
-  // but accumulate (push+continue) instead of returning the first match.
-  for (let i = arr.length - 1; i >= 0; i--) {
-    const ent = arr[i];
-    if (!ent._v25) continue;
-    // Leader2 — strict pixel-distance checks (text-anchor or on-line).
-    if (ent.type === 'leader2') {
-      const tp = real2Px(ent.txtU, ent.txtV);
-      if (Math.abs(cursorPx.x - tp.x) < TXT_TOL_PX_X &&
-          Math.abs(cursorPx.y - tp.y) < TXT_TOL_PX_Y) { push(ent); continue; }
-      const tipPx = real2Px(ent.tipU, ent.tipV);
-      const dx = tp.x - tipPx.x, dy = tp.y - tipPx.y;
-      const lenPx = Math.hypot(dx, dy);
-      if (lenPx > 0) {
-        const t = ((cursorPx.x - tipPx.x) * dx + (cursorPx.y - tipPx.y) * dy) / (lenPx * lenPx);
-        if (t > 0.15 && t < 0.95) {
-          const ppx = tipPx.x + t * dx, ppy = tipPx.y + t * dy;
-          if (Math.hypot(cursorPx.x - ppx, cursorPx.y - ppy) < LINE_TOL_PX) push(ent);
-        }
-      }
-      continue;
-    }
-    // NoteBox — pick up when the cursor is on a leader segment or near a tip.
-    // Falls through (no continue) so the box body is still hit by the generic
-    // bounds test below.
-    if (ent.type === 'noteBox' && typeof nbLeaderPoints === 'function' && Array.isArray(ent.arrows)) {
-      let onLeader = false;
+
+  // ---- collect scored candidates --------------------------------------------
+  // Each candidate is { ent, precise, score, idx }. idx = the entity's index in
+  // entities2D[viewKey] (PAINT order — the tie-break that lets the topmost win),
+  // or a deterministic synthetic index for the v2 plates appended after.
+  const cands = [];
+
+  // PASS 0 — noteBox arrowhead priority, modelled as a PRECISE candidate whose
+  // score is the tip distance, so it still floats to stack[0] over the member
+  // behind it (an arrow points AT a member, so its tip sits inside the member).
+  if (typeof nbLeaderPoints === 'function') {
+    for (let i = arr.length - 1; i >= 0; i--) {
+      const ent = arr[i];
+      if (!ent || !ent._v25 || ent.type !== 'noteBox' || !Array.isArray(ent.arrows)) continue;
+      let bestTip = Infinity;
       for (const a of ent.arrows) {
         const pts = nbLeaderPoints(ent, a).map(p => real2Px(p.u, p.v));
         const tip = pts[pts.length - 1];
-        if (tip && Math.hypot(cursorPx.x - tip.x, cursorPx.y - tip.y) < 8) { onLeader = true; break; }
-        for (let k = 0; k < pts.length - 1; k++) {
-          if (distToSeg(cursorPx, pts[k], pts[k + 1]) < LINE_TOL_PX) { onLeader = true; break; }
+        if (tip) {
+          const d = Math.hypot(cursorPx.x - tip.x, cursorPx.y - tip.y);
+          if (d < bestTip) bestTip = d;
         }
-        if (onLeader) break;
       }
-      if (onLeader) push(ent);   // dedups with PASS 0; box body still tested below
-    }
-    // Other entities: convert bounds to screen px and test.
-    const b = v25EntBounds(ent);
-    if (!b) continue;
-    const blPx = real2Px(b.L, b.B);
-    const trPx = real2Px(b.R, b.T);
-    const minX = Math.min(blPx.x, trPx.x), maxX = Math.max(blPx.x, trPx.x);
-    const minY = Math.min(blPx.y, trPx.y), maxY = Math.max(blPx.y, trPx.y);
-    if (cursorPx.x >= minX - TOL_PX && cursorPx.x <= maxX + TOL_PX &&
-        cursorPx.y >= minY - TOL_PX && cursorPx.y <= maxY + TOL_PX) {
-      // Frame — border only.
-      if (ent.type === 'frame') {
-        const inset = TOL_PX;
-        if (cursorPx.x > minX + inset && cursorPx.x < maxX - inset &&
-            cursorPx.y > minY + inset && cursorPx.y < maxY - inset) continue;
-      }
-      push(ent);
+      if (bestTip < 8) cands.push({ ent, precise: true, score: bestTip, idx: i });
     }
   }
-  return out;
+
+  // PASS 1 — every v25 entity, top-most paint order first. AABB pre-filter
+  // (cheap) gates the precise per-entity test (v25EntHit). NoteBox leaders are
+  // a separate precise candidate here; the box BODY comes from v25EntHit.
+  for (let i = arr.length - 1; i >= 0; i--) {
+    const ent = arr[i];
+    if (!ent || !ent._v25) continue;
+
+    // NoteBox leader segments — a precise candidate (mirrors the old leader
+    // pickup; the arrow TIP already emitted a PASS-0 candidate above).
+    if (ent.type === 'noteBox' && typeof nbLeaderPoints === 'function' && Array.isArray(ent.arrows)) {
+      let onLeader = Infinity;
+      for (const a of ent.arrows) {
+        const pts = nbLeaderPoints(ent, a).map(p => real2Px(p.u, p.v));
+        for (let k = 0; k < pts.length - 1; k++) {
+          const d = distToSegPx(cursorPx, pts[k], pts[k + 1]);
+          if (d < onLeader) onLeader = d;
+        }
+      }
+      if (onLeader < LINE_TOL_PX) cands.push({ ent, precise: true, score: onLeader, idx: i });
+      // fall through so the box body is still scored by v25EntHit below
+    }
+
+    // AABB pre-filter: only run the precise test when the (expanded) bbox
+    // contains the cursor. Types with no bbox run the precise test directly so
+    // nothing is silently dropped.
+    const b = v25EntBounds(ent);
+    // Fasteners (screw, bolt2) re-centre on a detected bearing/clamp face at
+    // DRAW time, so their ent.u/v-anchored bbox can sit off the drawn glyph. A
+    // far-offset bearing would let this gate `continue` past a click that lands
+    // squarely on the screw. Skip the gate for them and always run the (cheap,
+    // self-limiting) precise centreline test — it returns null for far clicks.
+    const _bboxGate = b && ent.type !== 'screw' && ent.type !== 'bolt2';
+    if (_bboxGate) {
+      const blPx = real2Px(b.L, b.B), trPx = real2Px(b.R, b.T);
+      const minX = Math.min(blPx.x, trPx.x), maxX = Math.max(blPx.x, trPx.x);
+      const minY = Math.min(blPx.y, trPx.y), maxY = Math.max(blPx.y, trPx.y);
+      if (cursorPx.x < minX - TOL_PX || cursorPx.x > maxX + TOL_PX ||
+          cursorPx.y < minY - TOL_PX || cursorPx.y > maxY + TOL_PX) continue;
+    }
+    const r = v25EntHit(blk, ent, cursorPx, ctx);
+    if (r) cands.push({ ent, precise: r.precise, score: r.score, idx: i });
+  }
+
+  // v2 plates — same scored stack, enumerated from v2.appState.model (NOT the
+  // mirrors). Synthetic idx after the v1 entities so it never collides and the
+  // cycle id-array is byte-stable.
+  const plateCands = _v25PlateCandidates(blk.viewKey, ctx, arr.length);
+  for (const c of plateCands) cands.push(c);
+
+  // ---- dedup (best-ranked per id) BEFORE the final sort ---------------------
+  // noteBox emits both a precise tip/leader candidate AND an area body candidate
+  // for one id; keep the better-ranked so the arrow tip is never re-buried under
+  // the body. "Better" = the same total order used for the final sort.
+  const better = (a, b) => {
+    if (a.precise !== b.precise) return a.precise ? a : b;     // precise wins
+    if (a.score !== b.score) return a.score < b.score ? a : b; // smaller score wins
+    return a.idx >= b.idx ? a : b;                             // topmost paint wins
+  };
+  const byId = new Map();
+  for (const c of cands) {
+    const prev = byId.get(c.ent.id);
+    byId.set(c.ent.id, prev ? better(prev, c) : c);
+  }
+  const deduped = Array.from(byId.values());
+
+  // ---- stable, deterministic sort -------------------------------------------
+  // precise DESC → score ASC → idx DESC. precise is compared FIRST so a px score
+  // and an mm² score are never compared to each other. idx folded into the
+  // comparator (not relying on engine stability) so the SAME click always yields
+  // a byte-identical ordered id-array — the repeat-click cycle depends on it.
+  deduped.sort((a, b) => {
+    if (a.precise !== b.precise) return a.precise ? -1 : 1;
+    if (a.score !== b.score) return a.score - b.score;
+    return b.idx - a.idx;
+  });
+
+  return deduped.map(c => c.ent);
 }
 
 // Single-pick (top-most) hit-test — thin wrapper over the ordered stack so every
@@ -381,6 +852,18 @@ function v25EntHandles(ent) {
   } else if (ent.type === 'leader2') {
     out.push({ key: 'tip', u: ent.tipU, v: ent.tipV });
     out.push({ key: 'txt', u: ent.txtU, v: ent.txtV });
+  } else if (ent.type === 'dim2') {
+    // p1/p2 endpoint grips + an 'off' grip on the dim-line midpoint. The off
+    // grip's real-world position is the px midpoint mapped back through px2real
+    // so it lands exactly on the rendered (paper-mm-offset) dim line.
+    out.push({ key: 'p1', u: ent.p1u, v: ent.p1v });
+    out.push({ key: 'p2', u: ent.p2u, v: ent.p2v });
+    const _blk = (typeof activeBlock !== 'undefined') ? activeBlock : null;
+    if (_blk && typeof dim2DimLinePx === 'function') {
+      const g = dim2DimLinePx(_blk, ent);
+      const m = px2real(_blk, g.mid.x, g.mid.y);
+      out.push({ key: 'off', shape: 'circle', u: m.u, v: m.v });
+    }
   } else if (ent.type === 'anchor' && ent.txtU != null && ent.txtV != null) {
     out.push({ key: 'txt', u: ent.txtU, v: ent.txtV });
   } else if (ent.type === 'bolt2') {
@@ -389,6 +872,9 @@ function v25EntHandles(ent) {
     out.push({ key: 'body', u: ent.u, v: ent.v });
   } else if (ent.type === 'screw') {
     // Single body grip at the screw head — drag to reposition (mirrors bolt2).
+    out.push({ key: 'body', u: ent.u, v: ent.v });
+  } else if (ent.type === 'stud') {
+    // Single body grip at the stud washer/nut — drag to reposition (mirrors bolt2).
     out.push({ key: 'body', u: ent.u, v: ent.v });
   }
   // Mat — rotation handle (Bluebeam-style perpendicular ball above the top
@@ -462,6 +948,9 @@ function v25CollectSnapPoints(blk, originU, originV) {
     } else if (ent.type === 'leader2') {
       pts.push({ u: ent.tipU, v: ent.tipV, src: ent.id });
       pts.push({ u: ent.txtU, v: ent.txtV, src: ent.id });
+    } else if (ent.type === 'dim2') {
+      pts.push({ u: ent.p1u, v: ent.p1v, src: ent.id });
+      pts.push({ u: ent.p2u, v: ent.p2v, src: ent.id });
     } else if (ent.type === 'anchor') {
       pts.push({ u: ent.u, v: ent.v, src: ent.id });
       if (ent.txtU != null && ent.txtV != null) pts.push({ u: ent.txtU, v: ent.txtV, src: ent.id });
@@ -764,6 +1253,62 @@ function v25DrawSnapIndicator(blk, cs) {
   ctx.restore();
 }
 
+// selection-highlight-consistency (2026-06-04) — entity types whose selection
+// gets the subtle translucent accent fill (the "shading"), matching the v2
+// plate. Members, fixings and filled regions read as "picked" at a glance; pure
+// annotations / borders (dims, leaders, reo lines, viewport frames) stay
+// outline-only so the wash stays signal, not noise.
+const V25_SEL_FILL_TYPES = new Set(['mem2', 'mat', 'mesh', 'blockWall', 'stiff2', 'anchor', 'screw', 'stud', 'bolt2']);
+
+// Footprint polygon (world u,v) for a selected entity's highlight: oriented for
+// members / rotated mats / section walls so the outline + fill hug the visible
+// geometry; axis-aligned bbox for everything else. dim2 is handled by its own
+// halo before this is called; returns null when there's no sensible footprint.
+function v25SelFootprint(ent) {
+  if (!ent) return null;
+  const t = ent.type;
+  // Oriented member rectangle (elevation / plan), or a square for a pure
+  // cross-section glyph (length 0 / aspect 'sec').
+  if (t === 'mem2') {
+    const len = ent.length || 0;
+    const hd = (typeof v25Mem2HalfDepth === 'function') ? v25Mem2HalfDepth(ent) : 50;
+    if ((ent.aspect || 'elev') === 'sec' || len === 0) {
+      return [{ u: ent.u - hd, v: ent.v - hd }, { u: ent.u + hd, v: ent.v - hd },
+              { u: ent.u + hd, v: ent.v + hd }, { u: ent.u - hd, v: ent.v + hd }];
+    }
+    const r = (ent.rot || 0) * Math.PI / 180, c = Math.cos(r), s = Math.sin(r);
+    return [[0, -hd], [len, -hd], [len, hd], [0, hd]].map(([lx, ly]) => ({
+      u: ent.u + lx * c - ly * s, v: ent.v + lx * s + ly * c }));
+  }
+  // Mat — rotated rect or (rotated) polygon, hugging the visible shape.
+  if (t === 'mat') {
+    const r = (ent.rot || 0) * Math.PI / 180, c = Math.cos(r), s = Math.sin(r);
+    if (ent.shape === 'poly' && ent.pts && ent.pts.length) {
+      if (!r) return ent.pts.map(p => ({ u: p.u, v: p.v }));
+      const ce = (typeof _v25MatCentroid === 'function') ? _v25MatCentroid(ent) : { u: 0, v: 0 };
+      return ent.pts.map(p => {
+        const lx = p.u - ce.u, ly = p.v - ce.v;
+        return { u: ce.u + lx * c - ly * s, v: ce.v + lx * s + ly * c };
+      });
+    }
+    const w = ent.w || 0, h = ent.h || 0, cu = ent.u + w / 2, cv = ent.v + h / 2;
+    return [[-w/2, -h/2], [w/2, -h/2], [w/2, h/2], [-w/2, h/2]].map(([lx, ly]) => ({
+      u: cu + lx * c - ly * s, v: cv + lx * s + ly * c }));
+  }
+  // Section block wall — oriented thin strip (width = block thickness).
+  if (t === 'blockWall' && ent.wallMode === 'sec') {
+    const len = ent.lengthMM || 0;
+    const cat = (typeof V25_BLOCK_DB !== 'undefined' && V25_BLOCK_DB[ent.blockKey]) || { thk: 190 };
+    const half = (cat.thk || 190) / 2, r = (ent.rot || 0) * Math.PI / 180, c = Math.cos(r), s = Math.sin(r);
+    return [[0, -half], [len, -half], [len, half], [0, half]].map(([lx, ly]) => ({
+      u: ent.u + lx * c - ly * s, v: ent.v + lx * s + ly * c }));
+  }
+  // Everything else — axis-aligned bbox corners.
+  const b = (typeof v25EntBounds === 'function') ? v25EntBounds(ent) : null;
+  if (!b) return null;
+  return [{ u: b.L, v: b.T }, { u: b.R, v: b.T }, { u: b.R, v: b.B }, { u: b.L, v: b.B }];
+}
+
 function v25DrawSelectionHighlight(blk, cs) {
   if (sheetMode !== '2d') return;
   const col = cs.getPropertyValue('--selected-color').trim() || '#4a90e2';
@@ -771,49 +1316,57 @@ function v25DrawSelectionHighlight(blk, cs) {
   // tight rotated outline (matching the visible polygon) when ent.rot is
   // non-zero; everything else falls back to an axis-aligned bbox.
   if (v25Selected.length) {
-    ctx.strokeStyle = col;
-    ctx.lineWidth = 1.0;
-    ctx.setLineDash([5, 4]);
-    ctx.globalAlpha = 0.5;
+    // selection-highlight-consistency (2026-06-04) — unified treatment matching
+    // the v2 plate (drawV2PlateSelection): a subtle translucent accent fill over
+    // the entity footprint + a clean solid accent outline. Replaces the old
+    // faint dashed-only box so a selected member / fixing reads as clearly as a
+    // selected plate (and the plate, dialled back to match, no longer looks
+    // heavier than everything else). Annotation / linear types (dims, leaders,
+    // reo lines, viewport frames) stay outline-only — a wash over a leader or a
+    // border would be noise, not signal.
+    const fillCol = (typeof colorAlpha === 'function') ? colorAlpha(col, 0.12) : col;
     for (const id of v25Selected) {
       const ent = (entities2D[blk.viewKey] || []).find(e => e.id === id);
       if (!ent) continue;
-      // Rotated mat — draw the actual rotated rect/poly outline so the
-      // selection highlight tracks the visible geometry instead of an
-      // overly-large AABB envelope.
-      if (ent.type === 'mat' && ent.rot) {
-        const rotRad = ent.rot * Math.PI / 180;
-        const cosR = Math.cos(rotRad), sinR = Math.sin(rotRad);
-        let pts;
-        if (ent.shape === 'poly' && ent.pts && ent.pts.length) {
-          const c = _v25MatCentroid(ent);
-          pts = ent.pts.map(p => {
-            const lx = p.u - c.u, ly = p.v - c.v;
-            return { u: c.u + lx * cosR - ly * sinR, v: c.v + lx * sinR + ly * cosR };
-          });
-        } else {
-          const w = ent.w || 0, h = ent.h || 0;
-          const cu = ent.u + w/2, cv = ent.v + h/2;
-          pts = [[-w/2,-h/2],[w/2,-h/2],[w/2,h/2],[-w/2,h/2]].map(([lx,ly]) => ({
-            u: cu + lx * cosR - ly * sinR,
-            v: cv + lx * sinR + ly * cosR,
-          }));
+      // Dimension — NO bounding box (it would cover the members being
+      // dimensioned). Instead trace a soft halo along the dim + witness lines so
+      // it reads as a selected "line with nodes"; the grips draw on top below.
+      if (ent.type === 'dim2') {
+        if (typeof dim2DimLinePx === 'function') {
+          const g = dim2DimLinePx(blk, ent);
+          ctx.save();
+          ctx.setLineDash([]); ctx.globalAlpha = 0.30; ctx.lineWidth = 3.5;
+          ctx.lineCap = 'round'; ctx.strokeStyle = col;
+          ctx.beginPath();
+          ctx.moveTo(g.d1.x, g.d1.y); ctx.lineTo(g.d2.x, g.d2.y);
+          ctx.moveTo(g.w1.x, g.w1.y); ctx.lineTo(g.d1.x, g.d1.y);
+          ctx.moveTo(g.w2.x, g.w2.y); ctx.lineTo(g.d2.x, g.d2.y);
+          ctx.stroke();
+          ctx.restore();
         }
-        ctx.beginPath();
-        pts.forEach((p, i) => {
-          const sp = real2px(blk, p.u, p.v);
-          if (i === 0) ctx.moveTo(sp.x, sp.y); else ctx.lineTo(sp.x, sp.y);
-        });
-        ctx.closePath();
-        ctx.stroke();
         continue;
       }
-      const b = v25EntBounds(ent);
-      if (!b) continue;
-      const tl = real2px(blk, b.L, b.T);
-      const br = real2px(blk, b.R, b.B);
-      ctx.strokeRect(Math.min(tl.x, br.x) - 3, Math.min(tl.y, br.y) - 3,
-                     Math.abs(br.x - tl.x) + 6, Math.abs(br.y - tl.y) + 6);
+      // Footprint polygon (oriented for members / rotated mats / section walls,
+      // axis-aligned bbox otherwise). Shade solid-object types with the subtle
+      // fill; everything draws the same solid outline.
+      const fp = v25SelFootprint(ent);
+      if (!fp || fp.length < 2) continue;
+      ctx.globalAlpha = 1;
+      ctx.setLineDash([]);
+      ctx.beginPath();
+      fp.forEach((p, i) => {
+        const sp = real2px(blk, p.u, p.v);
+        if (i === 0) ctx.moveTo(sp.x, sp.y); else ctx.lineTo(sp.x, sp.y);
+      });
+      ctx.closePath();
+      if (fp.length >= 3 && V25_SEL_FILL_TYPES.has(ent.type)) {
+        ctx.fillStyle = fillCol;
+        ctx.fill();
+      }
+      ctx.strokeStyle = col;
+      ctx.lineWidth = 1.5;
+      ctx.lineJoin = 'round';
+      ctx.stroke();
     }
     ctx.setLineDash([]);
     ctx.globalAlpha = 1;
@@ -868,25 +1421,222 @@ function v25DrawSelectionHighlight(blk, cs) {
       }
     });
   }
-  // Body-hover affordance — light dashed box around an unselected entity
-  // the cursor is over.
-  if (v25Hover && v25Hover.handle === null && !v25Selected.includes(v25Hover.entId)) {
-    const ent = (entities2D[blk.viewKey] || []).find(e => e.id === v25Hover.entId);
-    if (ent) {
-      const b = v25EntBounds(ent);
-      if (b) {
-        const tl = real2px(blk, b.L, b.T);
-        const br = real2px(blk, b.R, b.B);
-        ctx.strokeStyle = col;
-        ctx.lineWidth = 1.0;
-        ctx.setLineDash([3, 3]);
-        ctx.globalAlpha = 0.45;
-        ctx.strokeRect(Math.min(tl.x, br.x) - 3, Math.min(tl.y, br.y) - 3,
-                       Math.abs(br.x - tl.x) + 6, Math.abs(br.y - tl.y) + 6);
-        ctx.setLineDash([]);
-        ctx.globalAlpha = 1;
-      }
+  // Hover pre-highlight (Revit-style) — trace the REAL outline of the entity a
+  // click would select (incl. a v2 plate, whose synthetic ent rides on
+  // v25Hover.ent) so the user sees the EXACT target before committing — the
+  // visual counterpart of the precise, specificity-ranked pick. Skip if it's
+  // already selected. handle===null ⇒ the cursor is over an UNSELECTED entity.
+  // Wrapped defensively: hover is non-critical, so a geometry edge case must
+  // never throw out of the render loop.
+  if (v25Hover && v25Hover.handle === null && v25Hover.ent) {
+    const he = v25Hover.ent;
+    const selV1 = !he._v2Plate && v25Selected.includes(he.id);
+    const selV2 = he._v2Plate && Array.isArray(window.v25SelPlateIds) && window.v25SelPlateIds.includes(he._v2Id);
+    if (!selV1 && !selV2 && typeof v25DrawHoverPrehighlight === 'function') {
+      try { v25DrawHoverPrehighlight(blk, cs, he); } catch (_e) { /* non-critical */ }
     }
+  }
+}
+
+// ============================================================
+// Hover pre-highlight (Revit-style "show what a click will select").
+// v25HoverOutline returns the entity's REAL silhouette / stroke in WORLD
+// coords; v25DrawHoverPrehighlight strokes it as a soft glow. Mirrors the
+// precise pick (v25EntHit) so the highlight always matches what gets selected.
+// ============================================================
+
+// World silhouette polygon for a mat (rect or rotated poly). Same geometry
+// v25EntHit's 'mat' branch tests, so the highlight tracks the pickable area.
+function v25MatPolyWorld(ent) {
+  const rotDeg = ent.rot || 0;
+  if (ent.shape === 'poly' && Array.isArray(ent.pts) && ent.pts.length >= 3) {
+    if (!rotDeg) return ent.pts.map(p => ({ u: p.u, v: p.v }));
+    const rr = rotDeg * Math.PI / 180, cc = Math.cos(rr), ss = Math.sin(rr);
+    const c = (typeof _v25MatCentroid === 'function')
+      ? _v25MatCentroid(ent)
+      : (function () { let u = 0, v = 0; ent.pts.forEach(p => { u += p.u; v += p.v; }); return { u: u / ent.pts.length, v: v / ent.pts.length }; })();
+    return ent.pts.map(p => { const lx = p.u - c.u, ly = p.v - c.v; return { u: c.u + lx * cc - ly * ss, v: c.v + lx * ss + ly * cc }; });
+  }
+  const w = ent.w || 0, h = ent.h || 0;
+  if (!rotDeg) return [{ u: ent.u, v: ent.v }, { u: ent.u + w, v: ent.v }, { u: ent.u + w, v: ent.v + h }, { u: ent.u, v: ent.v + h }];
+  const rr = rotDeg * Math.PI / 180, cc = Math.cos(rr), ss = Math.sin(rr);
+  const cu = ent.u + w / 2, cv = ent.v + h / 2;
+  return [[-w/2,-h/2],[w/2,-h/2],[w/2,h/2],[-w/2,h/2]].map(([lx, ly]) => ({ u: cu + lx * cc - ly * ss, v: cv + lx * ss + ly * cc }));
+}
+
+// World silhouette polygon for a blockWall (section strip or elevation rect).
+function v25BlockWallPolyWorld(ent) {
+  if (ent.wallMode === 'sec') {
+    const len = ent.lengthMM || 0;
+    const cat = (typeof V25_BLOCK_DB !== 'undefined' && V25_BLOCK_DB[ent.blockKey]) || { thk: 190 };
+    const half = (cat.thk || 190) / 2;
+    const rr = (ent.rot || 0) * Math.PI / 180, cc = Math.cos(rr), ss = Math.sin(rr);
+    return [[0,-half],[len,-half],[len,half],[0,half]].map(([lx, ly]) => ({ u: ent.u + lx * cc - ly * ss, v: ent.v + lx * ss + ly * cc }));
+  }
+  const w = ent.lengthMM || 0, h = ent.heightMM || 0;
+  return [{ u: ent.u, v: ent.v }, { u: ent.u + w, v: ent.v }, { u: ent.u + w, v: ent.v + h }, { u: ent.u, v: ent.v + h }];
+}
+
+// World centreline of a fastener (screw / bolt2 / stud) in a SECTION orientation,
+// or the head/washer circle for an end-on glyph. GEOMETRY MIRROR of
+// v25FastenerHit's section axis math (same file) — KEEP IN SYNC so the hover
+// halo lands on the exact drawn (bearing/clamp-re-centred) axis the pick uses.
+// Returns { kind:'seg', a:{u,v}, b:{u,v} } | { kind:'pt', u, v, radMm } | null.
+function v25FastenerCentreline(blk, ent) {
+  const t = ent.type;
+  if (t === 'screw') {
+    const S = (typeof getScrewSpec === 'function' && getScrewSpec(ent.screwSpec))
+            || (typeof HBS_PLATE_SCREWS === 'object' && HBS_PLATE_SCREWS[ent.screwSpec])
+            || { d: 10, dK: 16.5, tK: 5, L: 120 };
+    const orient = ent.screwOrient || 'end';
+    if (orient === 'end') return { kind: 'pt', u: ent.u, v: ent.v, radMm: (S.dK || 16.5) / 2 };
+    const axisIsU = (orient === 'h-headL' || orient === 'h-headR');
+    const trans = axisIsU ? ent.v : ent.u;
+    const bodyDir = (orient === 'h-headL' || orient === 'v-headB') ? 1 : -1;
+    const d = S.d || 10, tK = S.tK || d * 0.56, L = S.L || d * 12;
+    const headLen = 1.80 * d, sBear = Math.min(tK, headLen * 0.45);
+    const bearing = (typeof v25ScrewBearingFace === 'function') ? v25ScrewBearingFace(blk, ent) : null;
+    const junction = (bearing != null) ? bearing : (axisIsU ? ent.u : ent.v);
+    const axisAt = (s) => junction + bodyDir * (s - sBear);
+    const a0 = axisAt(-2), aL = axisAt(L + 2);
+    return axisIsU ? { kind: 'seg', a: { u: a0, v: trans }, b: { u: aL, v: trans } }
+                   : { kind: 'seg', a: { u: trans, v: a0 }, b: { u: trans, v: aL } };
+  }
+  if (t === 'stud') {
+    const S = (typeof getStudSpec === 'function' && getStudSpec(ent.studSpec))
+            || (typeof CHEMSET_STUDS === 'object' && CHEMSET_STUDS[ent.studSpec])
+            || { size: 'M16', d: 16, L: 190, Le: 165 };
+    const nd = (typeof studDims === 'function') ? studDims(S.size, S.d || 16) : { washOD: (S.d || 16) * 2.1 };
+    const halfWO = (nd.washOD || (S.d || 16) * 2.1) / 2;
+    const orient = ent.studOrient || 'v-nutT';
+    if (orient === 'end') return { kind: 'pt', u: ent.u, v: ent.v, radMm: halfWO };
+    const axisIsU = (orient === 'h-nutL' || orient === 'h-nutR');
+    const trans = axisIsU ? ent.v : ent.u;
+    const bodyDir = (orient === 'h-nutL' || orient === 'v-nutB') ? 1 : -1;
+    const L = S.L || 190, Le = S.Le || 165;
+    const snap = (typeof v25StudBearingFace === 'function') ? v25StudBearingFace(blk, ent) : null;
+    const junction = snap ? snap.face : (axisIsU ? ent.u : ent.v);
+    const axisAt = (s) => junction + bodyDir * s;
+    const a0 = axisAt(-(L - Le) - 3), aL = axisAt(Le + 3);
+    return axisIsU ? { kind: 'seg', a: { u: a0, v: trans }, b: { u: aL, v: trans } }
+                   : { kind: 'seg', a: { u: trans, v: a0 }, b: { u: trans, v: aL } };
+  }
+  // bolt2
+  const b = (typeof BOLT_DB === 'object' && (BOLT_DB[ent.size] || BOLT_DB.M20))
+          || { d: 20, pitch: 2.5, headH: 13, nutH: 16, washOD: 44, washT: 4 };
+  const orient = ent.boltOrient || 'end';
+  if (orient === 'end' || !ent.boltOrient) return { kind: 'pt', u: ent.u, v: ent.v, radMm: (b.washOD || b.d * 1.85) / 2 };
+  let span = (typeof v25BoltClampSpan === 'function') ? v25BoltClampSpan(blk, ent) : null;
+  const horiz = (orient === 'h-nutR' || orient === 'h-nutL');
+  if (!span) span = { grip: 20, centre: (horiz ? ent.u : ent.v),
+    length: (typeof computeBoltLength === 'function') ? computeBoltLength(20, ent.size) : 60 };
+  const hG = span.grip / 2;
+  const dir = (orient === 'h-nutR' || orient === 'v-nutB') ? 1 : -1;
+  const gripHead = horiz ? (span.centre - dir * hG) : (span.centre + dir * hG);
+  const gripNut  = horiz ? (span.centre + dir * hG) : (span.centre - dir * hG);
+  const headOut = horiz ? -dir : dir, nutOut = -headOut;
+  const headOuter = gripHead + headOut * ((b.washT || 4) + (b.headH || 13));
+  const nutOuter  = gripNut  + nutOut  * ((b.washT || 4) + (b.nutH || 16));
+  const threadProt = (span.threadProt != null) ? span.threadProt
+    : Math.max(2 * (b.pitch || 2.5), (span.length || 0) - (span.grip + 2 * (b.washT || 4) + (b.nutH || 16)));
+  const threadTip = nutOuter + nutOut * threadProt;
+  const lo = Math.min(headOuter, threadTip) - 4, hi = Math.max(headOuter, threadTip) + 4;
+  const trans = horiz ? ent.v : ent.u;
+  return horiz ? { kind: 'seg', a: { u: lo, v: trans }, b: { u: hi, v: trans } }
+               : { kind: 'seg', a: { u: trans, v: lo }, b: { u: trans, v: hi } };
+}
+
+// World outline of any entity for the hover pre-highlight.
+// Returns { closed:[poly...], open:[polyline...], circles:[{u,v,rMm}...] }.
+function v25HoverOutline(blk, ent) {
+  const out = { closed: [], open: [], circles: [] };
+  if (!ent) return out;
+  const t = ent.type;
+  const bboxClosed = () => { const b = v25EntBounds(ent); if (b) out.closed.push([{ u: b.L, v: b.B }, { u: b.R, v: b.B }, { u: b.R, v: b.T }, { u: b.L, v: b.T }]); };
+  // v2 plate (synthetic ent) — real polygon from the v2 model.
+  if (ent._v2Plate) {
+    const model = (window.v2 && v2.appState && v2.appState.model) ? v2.appState.model : null;
+    const el = (model && model.elements && typeof model.elements.get === 'function') ? model.elements.get(ent._v2Id) : null;
+    const g = el && el.geometry;
+    if (g && Array.isArray(g.polygon) && g.polygon.length >= 3) out.closed.push(g.polygon.map(p => ({ u: (+p.x || 0), v: (+p.y || 0) })));
+    return out;
+  }
+  if (t === 'mem2') {
+    const oc = (typeof v25Mem2WorldOutline === 'function') ? v25Mem2WorldOutline(ent) : null;
+    if (oc && oc.length >= 3) out.closed.push(oc.map(p => ({ u: p[0], v: p[1] }))); else bboxClosed();
+    return out;
+  }
+  if (t === 'mat') { out.closed.push(v25MatPolyWorld(ent)); return out; }
+  if (t === 'blockWall') { out.closed.push(v25BlockWallPolyWorld(ent)); return out; }
+  if (t === 'lineSet' || t === 'line' || t === 'reoBar') {
+    if (ent.pts && ent.pts.length) { const poly = ent.pts.map(p => ({ u: p.u, v: p.v })); (ent.closed ? out.closed : out.open).push(poly); }
+    return out;
+  }
+  if (t === 'leader2') { out.open.push([{ u: ent.tipU, v: ent.tipV }, { u: ent.txtU, v: ent.txtV }]); return out; }
+  if (t === 'anchor') {
+    const def = (typeof V25_ANCHOR_DB === 'object' && (V25_ANCHOR_DB[ent.kind] || V25_ANCHOR_DB.chemset)) || {};
+    const totalLen = ent.embed || (def.defaults && def.defaults.embed) || 100;
+    const rot = (ent.rot || 0) * Math.PI / 180, s = Math.sin(rot), c = Math.cos(rot);
+    out.open.push([{ u: ent.u, v: ent.v }, { u: ent.u + totalLen * s, v: ent.v - totalLen * c }]);
+    return out;
+  }
+  if (t === 'screw' || t === 'bolt2' || t === 'stud') {
+    const cl = (typeof v25FastenerCentreline === 'function') ? v25FastenerCentreline(blk, ent) : null;
+    if (cl && cl.kind === 'seg') out.open.push([cl.a, cl.b]);
+    else if (cl && cl.kind === 'pt') out.circles.push({ u: cl.u, v: cl.v, rMm: cl.radMm });
+    else bboxClosed();
+    return out;
+  }
+  // mesh / txtBox / stiff2 / noteBox / frame / unknown → bbox rect.
+  bboxClosed();
+  return out;
+}
+
+// Stroke a px polyline/polygon as a soft glow under a crisp line. SOLID (vs the
+// DASHED selection outline) so hover and selection read as different states.
+function _v25HoverStrokePx(col, ptsPx, closed) {
+  if (!ptsPx || ptsPx.length < 2) return;
+  ctx.save();
+  ctx.setLineDash([]); ctx.lineJoin = 'round'; ctx.lineCap = 'round'; ctx.strokeStyle = col;
+  for (const pass of [{ w: 4.5, a: 0.16 }, { w: 1.4, a: 0.8 }]) {
+    ctx.globalAlpha = pass.a; ctx.lineWidth = pass.w;
+    ctx.beginPath();
+    ptsPx.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+    if (closed) ctx.closePath();
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+function _v25HoverStrokeCircle(col, x, y, r) {
+  ctx.save();
+  ctx.setLineDash([]); ctx.strokeStyle = col;
+  for (const pass of [{ w: 4.5, a: 0.16 }, { w: 1.4, a: 0.8 }]) {
+    ctx.globalAlpha = pass.a; ctx.lineWidth = pass.w;
+    ctx.beginPath(); ctx.arc(x, y, r, 0, 2 * Math.PI); ctx.stroke();
+  }
+  ctx.restore();
+}
+
+// Draw the hover pre-highlight for one entity (real ent or synthetic v2 plate).
+function v25DrawHoverPrehighlight(blk, cs, ent) {
+  if (!ent) return;
+  const col = cs.getPropertyValue('--selected-color').trim() || '#4a90e2';
+  // dim2 — px-space halo along the dim + witness lines (mirrors the selection
+  // halo; dim geometry is paper-mm and resolved straight to px by dim2DimLinePx).
+  if (ent.type === 'dim2' && typeof dim2DimLinePx === 'function') {
+    const g = dim2DimLinePx(blk, ent);
+    _v25HoverStrokePx(col, [g.d1, g.d2], false);
+    _v25HoverStrokePx(col, [g.w1, g.d1], false);
+    _v25HoverStrokePx(col, [g.w2, g.d2], false);
+    return;
+  }
+  const o = v25HoverOutline(blk, ent);
+  const toPx = (poly) => poly.map(p => real2px(blk, p.u, p.v));
+  o.closed.forEach(poly => _v25HoverStrokePx(col, toPx(poly), true));
+  o.open.forEach(poly => _v25HoverStrokePx(col, toPx(poly), false));
+  if (o.circles.length) {
+    const ppmm = viewport.zoom / drawingScale;
+    o.circles.forEach(cc => { const p = real2px(blk, cc.u, cc.v); _v25HoverStrokeCircle(col, p.x, p.y, Math.max(4, cc.rMm * ppmm)); });
   }
 }
 
@@ -947,6 +1697,14 @@ function v25HitHandle(blk, ent, u, v) {
     if (distPx(ent.tipU, ent.tipV) < 10) return 'tip';
     if (distPx(ent.txtU, ent.txtV) < 16) return 'txt';
   }
+  if (ent.type === 'dim2') {
+    if (distPx(ent.p1u, ent.p1v) < 10) return 'p1';
+    if (distPx(ent.p2u, ent.p2v) < 10) return 'p2';
+    if (typeof dim2DimLinePx === 'function') {
+      const g = dim2DimLinePx(blk, ent);
+      if (Math.hypot(g.mid.x - cursorPx.x, g.mid.y - cursorPx.y) < 12) return 'off';
+    }
+  }
   if (ent.type === 'anchor' && ent.txtU != null && ent.txtV != null) {
     if (distPx(ent.txtU, ent.txtV) < 16) return 'txt';
   }
@@ -956,6 +1714,10 @@ function v25HitHandle(blk, ent, u, v) {
     return 'body';
   }
   if (ent.type === 'screw') {
+    // Click anywhere on the glyph drags it (mirrors bolt2 — simple point move).
+    return 'body';
+  }
+  if (ent.type === 'stud') {
     // Click anywhere on the glyph drags it (mirrors bolt2 — simple point move).
     return 'body';
   }
@@ -1156,6 +1918,29 @@ function v25Move(ent, du, dv, handle) {
   if (handle === 'txt' && ent.type === 'leader2') { ent.txtU += du; ent.txtV += dv; return; }
   if (handle === 'txt' && ent.type === 'anchor') { ent.txtU += du; ent.txtV += dv; return; }
 
+  // Dimension grips: p1/p2 move endpoints; 'off' re-offsets the dim line (paper-mm);
+  // body translates both endpoints (the generic tail below never touches p1u..p2v).
+  if (ent.type === 'dim2') {
+    if (handle === 'p1') { ent.p1u += du; ent.p1v += dv; return; }
+    if (handle === 'p2') { ent.p2u += du; ent.p2v += dv; return; }
+    if (handle === 'off') {
+      const _blk = (typeof activeBlock !== 'undefined') ? activeBlock : null;
+      if (!_blk) return;
+      const cu = (typeof v25Drag === 'object' && v25Drag) ? (v25Drag.lastU + du) : null;
+      const cv = (typeof v25Drag === 'object' && v25Drag) ? (v25Drag.lastV + dv) : null;
+      if (cu == null) return;
+      const w1 = real2px(_blk, ent.p1u, ent.p1v), w2 = real2px(_blk, ent.p2u, ent.p2v);
+      const sx = (w1.x + w2.x) / 2, sy = (w1.y + w2.y) / 2;
+      const dx = w2.x - w1.x, dy = w2.y - w1.y, len = Math.hypot(dx, dy) || 1;
+      const nx = -dy / len, ny = dx / len;             // screen-space perpendicular unit
+      const cp = real2px(_blk, cu, cv);
+      const offPx = (cp.x - sx) * nx + (cp.y - sy) * ny;   // signed projection
+      ent.off = offPx / ((typeof _nbZoom === 'function') ? _nbZoom() : 1);
+      return;
+    }
+    ent.p1u += du; ent.p1v += dv; ent.p2u += du; ent.p2v += dv; return;
+  }
+
   // Member rotation handle — pitch around the midpoint, length preserved.
   // Default snaps to 0/45/90/135/180/225/270/315° (the AutoCAD/Revit muscle
   // memory). Hold Shift to bypass the snap and rotate freely; the live
@@ -1272,6 +2057,30 @@ function v25Move(ent, du, dv, handle) {
     let newAx = ax, newAy = ay, newBx = bx, newBy = by;
     if (handle === 'end-a') { newAx = ax + du; newAy = ay + dv; }
     else                    { newBx = bx + du; newBy = by + dv; }
+    // Shift → 45° angle-lock: snap the member onto the nearest eighth-angle
+    // (0/45/90/135/180/225/270/315) by projecting the dragged end onto the
+    // closest 45° line through the FIXED end. Generalises the old H/V-only
+    // lock — at 0/90/180/270 it reduces to the same horizontal/vertical
+    // projection, and diagonals now snap too (e.g. clean 1:1 braces). This is
+    // the shared mem2 end-handle path, so it applies to every member type
+    // (UB/UC/SHS/RHS/PFC/CHS/EA/UA/timber). Mirrors the 45° default of
+    // constrainUV (08-coords.js). Bare `shiftHeld` is the live modifier global
+    // (07-globals.js).
+    if (typeof shiftHeld !== 'undefined' && shiftHeld) {
+      const STEP = Math.PI / 4;
+      const fx = (handle === 'end-a') ? newBx : newAx;   // fixed end
+      const fy = (handle === 'end-a') ? newBy : newAy;
+      const px = (handle === 'end-a') ? newAx : newBx;   // raw dragged end
+      const py = (handle === 'end-a') ? newAy : newBy;
+      const wu = px - fx, wv = py - fy;
+      if (wu !== 0 || wv !== 0) {
+        const a = Math.round(Math.atan2(wv, wu) / STEP) * STEP;
+        const t = wu * Math.cos(a) + wv * Math.sin(a);   // project onto snapped dir
+        const sx = fx + t * Math.cos(a), sy = fy + t * Math.sin(a);
+        if (handle === 'end-a') { newAx = sx; newAy = sy; }
+        else                    { newBx = sx; newBy = sy; }
+      }
+    }
     const dx = newBx - newAx, dy = newBy - newAy;
     const newLen = Math.hypot(dx, dy);
     if (newLen < 1) return; // ignore zero-length collapses
@@ -1337,6 +2146,10 @@ function v25Move(ent, du, dv, handle) {
 function v25UpdateInspector() {
   const root = document.getElementById('inspectorRoot');
   if (!root) return;
+  // member-size-from-top-bar (2026-06-04) — keep the top options bar in sync with
+  // selection (it surfaces a selected member's Section for editing). Safe in any
+  // mode: the bar self-hides outside 2D / when no editable selection applies.
+  if (typeof v25UpdateOptionsBar === 'function') v25UpdateOptionsBar();
   if (sheetMode !== '2d' || !v25Selected.length) return; // leave existing inspector
   const id = v25Selected[v25Selected.length - 1];
   const arr = entities2D[(activeBlock && activeBlock.viewKey) || 'elevation'] || [];
@@ -1400,6 +2213,23 @@ function v25UpdateInspector() {
     num('Width (mm)', 'w'); num('Height (mm)', 'h');
   } else if (ent.type === 'leader2') {
     txt('Text (use | for new line)', 'txt', true);
+  } else if (ent.type === 'dim2') {
+    sel('Font', 'style', (typeof DIM2_FONT_OPTS !== 'undefined') ? DIM2_FONT_OPTS
+      : ['plex', 'professional', 'engineer', 'draftsman', 'routed', 'routedWide', 'routedHalf']);
+    num('Text height (mm)', 'sz', 0.5);
+    sel('Terminator', 'term', ['tick', 'arrow', 'dot']);
+    sel('Precision', 'prec', ['0', '1', '2', '3']);
+    sel('Units', 'units', ['mm', 'm']);
+    num('Offset (mm, paper)', 'off');
+    txt('Override label (blank → measured)', 'textOverride');
+    fields.push({ kind: 'h', label: 'Dimension line' });
+    num('Width (mm)', 'dimLw', 0.05);
+    col('Line colour', 'dimColour');
+    sel('Line style', 'dimLs', ['solid', 'dashed', 'dotted']);
+    fields.push({ kind: 'h', label: 'Extension lines' });
+    num('Width (mm)', 'extLw', 0.05);
+    col('Line colour', 'extColour');
+    sel('Line style', 'extLs', ['solid', 'dashed', 'dotted']);
   } else if (ent.type === 'mem2') {
     sel('Type', 'memberType', ['ub','uc','wb','pfc','shs','rhs']);
     let secNames = ent.memberType === 'ub' ? Object.keys(UB_DB).filter(n => n.includes('UB'))
@@ -1432,6 +2262,31 @@ function v25UpdateInspector() {
     if (ent.memberType === 'shs' || ent.memberType === 'rhs' || ent.memberType === 'chs') {
       fields.push({ kind:'stepper', label:'Wall line', key:'hidLwLevel',
         ramp: MEM2_HID_LW, labels: MEM2_HID_LW_LABEL, defaultLvl: MEM2_HID_LW_DEFAULT });
+    }
+    // weld-priority-truss — N-member truss joint priority. Shown only when this
+    // member is welded into >=1 joint. "Rank" maps to its connected weld group
+    // (Mitre for a plain corner, else Priority 1..N) and is applied via the
+    // insert-shift writer in the input listener below; "Resolved" shows the
+    // rendered state (SOLID / MITRE / CUT).
+    {
+      const _wvk = (activeBlock && activeBlock.viewKey) || 'elevation';
+      if (typeof v25IsMemberWelded === 'function' && v25IsMemberWelded(ent, _wvk)) {
+        fields.push({ kind:'h', label: 'Weld priority' });
+        const _comp = (typeof v25WeldComponent === 'function') ? v25WeldComponent(ent, _wvk) : [ent];
+        const _opts = [];
+        if (typeof v25IsPlain2MemberCorner === 'function' && v25IsPlain2MemberCorner(ent, _wvk)) {
+          _opts.push({ v: 'mitre', l: 'Mitre (corner)' });
+        }
+        for (let _i = 1; _i <= _comp.length; _i++) {
+          _opts.push({ v: String(_i), l: 'Priority ' + _i + (_i === 1 ? ' (solid / through)' : '') });
+        }
+        const _curVal = (typeof v25WeldPriorityCurrentValue === 'function')
+          ? v25WeldPriorityCurrentValue(ent, _wvk) : '';
+        fields.push({ kind:'sel', label: 'Rank', key: 'weldPriority', opts: _opts, value: _curVal });
+        if (typeof v25MemberCutState === 'function') {
+          fields.push({ kind:'ro', label: 'Resolved', value: v25MemberCutState(ent, _wvk) });
+        }
+      }
     }
     // Auto-mitre / weld read-outs and controls when a join exists.
     if (ent.endAJoin || ent.endBJoin) {
@@ -1502,6 +2357,17 @@ function v25UpdateInspector() {
     sel('Orientation', 'screwOrient',
       (typeof V25_SCREW_ORIENT === 'object' && V25_SCREW_ORIENT)
         ? V25_SCREW_ORIENT.map(o => o.id) : ['end','h-headL','h-headR','v-headT','v-headB']);
+  } else if (ent.type === 'stud') {
+    // ChemSet anchor stud (js/72j-v25-stud.js). studSpec is the 02g catalogue
+    // size key; changing it / the orientation re-renders via the generic apply.
+    let studIds = (typeof CHEMSET_SIZES !== 'undefined' && CHEMSET_SIZES)
+      ? CHEMSET_SIZES.slice()
+      : ((typeof CHEMSET_STUDS === 'object') ? Object.keys(CHEMSET_STUDS) : []);
+    if (ent.studSpec && !studIds.includes(ent.studSpec)) studIds = [ent.studSpec, ...studIds];
+    sel('Size', 'studSpec', studIds);
+    sel('Orientation', 'studOrient',
+      (typeof V25_STUD_ORIENT === 'object' && V25_STUD_ORIENT)
+        ? V25_STUD_ORIENT.map(o => o.id) : ['end','h-nutL','h-nutR','v-nutT','v-nutB']);
   }
 
   // V25-layout-overhaul Phase 7 — common per-entity display overrides.
@@ -1545,7 +2411,10 @@ function v25UpdateInspector() {
       }
       return o;
     };
-    const _val = _resolveKey(ent, f.key);
+    // weld-priority-truss — a field may carry an explicit `value` override so a
+    // select can show a computed current value (e.g. the resolved 1..N rank)
+    // rather than the raw stored field.
+    const _val = (f.value !== undefined) ? f.value : _resolveKey(ent, f.key);
     const val = (_val !== undefined && _val !== null) ? String(_val) : '';
     const id = `v25-fld-${(f.key || 'ro').replace(/\./g, '_')}`;
     if (f.kind === 'ro') {
@@ -1581,7 +2450,11 @@ function v25UpdateInspector() {
         `</div></div>`;
     } else if (f.kind === 'sel') {
       html += `<div class="ins-row"><label for="${id}">${f.label}</label><select id="${id}" data-key="${f.key}">` +
-        f.opts.map(o => `<option value="${o}"${o === val ? ' selected' : ''}>${o || '(default)'}</option>`).join('') +
+        f.opts.map(o => {
+          const ov = (o && typeof o === 'object') ? o.v : o;
+          const ol = (o && typeof o === 'object') ? o.l : (o || '(default)');
+          return `<option value="${ov}"${ov === val ? ' selected' : ''}>${ol}</option>`;
+        }).join('') +
         `</select></div>`;
     } else if (f.kind === 'area') {
       const v2 = val.replace(/\n/g, '|');
@@ -1650,6 +2523,17 @@ function v25UpdateInspector() {
       }
       if (inp.tagName === 'TEXTAREA') val = val.replace(/\|/g, '\n');
       if (val === 'true') val = true; else if (val === '' && k && (k === 'cogStart' || k === 'cogEnd' || k === 'hookEnd' || k === 'hookStart')) val = false;
+      // weld-priority-truss — the "Rank" dropdown maps a 1..N position (or
+      // 'mitre') to the insert-shift / mitre writers. Never write the raw select
+      // string onto weldPriority (that would corrupt rankKey). Handle + return
+      // BEFORE the generic ent[k] = val below.
+      if (k === 'weldPriority' && ent.type === 'mem2') {
+        const vk = (activeBlock && activeBlock.viewKey) || 'elevation';
+        if (val === 'mitre') { if (typeof v25SetCornerMitre === 'function') v25SetCornerMitre(ent, vk); }
+        else { const r = parseInt(val, 10); if (r >= 1 && typeof v25AssignRankInsertShift === 'function') v25AssignRankInsertShift(ent, vk, r); }
+        if (typeof v25UpdateInspector === 'function') v25UpdateInspector();
+        return;
+      }
       // Dotted keys (e.g. "endAJoin.weld.size") walk into nested objects,
       // creating missing intermediates so the user can edit a nested value
       // even when the parent didn't exist yet.
@@ -1746,6 +2630,9 @@ function v25DeleteSelected() {
   v25Selected = [];
   const root = document.getElementById('inspectorRoot');
   if (root) root.innerHTML = '';
+  // member-size-from-top-bar (2026-06-04) — drop the selected-member size editor
+  // from the top bar now that nothing is selected.
+  if (typeof v25UpdateOptionsBar === 'function') v25UpdateOptionsBar();
   requestRender();
 }
 // Clone a set of v25 entity ids IN PLACE (zero offset) into the active view's

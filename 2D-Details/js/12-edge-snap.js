@@ -221,6 +221,7 @@ function drawEdgeSnapLines(cs) {
   ctx.setLineDash(DASH.SNAP);
 
   activeEdgeSnaps.forEach(snap => {
+    if (snap.isFixingConnector) return;   // drawn as a faint dotted connector below
     if (snap.axis === 'u') {
       // Vertical line at this U coordinate across the block area
       const bbox = getBlockSheetBounds(activeBlock);
@@ -235,17 +236,44 @@ function drawEdgeSnapLines(cs) {
     }
   });
 
-  // Label
-  if (activeEdgeSnaps.length > 0) {
+  // Fixing→fixing connector (Ask B): a very faint, fine-dotted ORANGE segment
+  // from the dragged fixing to the exact fixing it locked onto, so the user
+  // sees the alignment partner. Only fixing→fixing snaps carry these fields.
+  const _connSnaps = activeEdgeSnaps.filter(s => s.isFixingConnector
+    && s.dragFixingU != null && s.targetFixingU != null);
+  if (_connSnaps.length) {
+    ctx.save();
+    ctx.strokeStyle = colorAlpha('#f29f1d', 0.5);            // orange, faint but visible
+    // This is on-screen UI chrome (never printed / exported → not an AS-1100
+    // lineweight), so floor the width at 1 device-px: LW.CL*ppm() goes sub-pixel
+    // at normal detail zoom (ppm is px-per-real-mm) and the hint would vanish.
+    ctx.lineWidth = Math.max(1, LW.CL * (typeof ppm === 'function' ? ppm() : 1));
+    ctx.setLineDash([2, 3]);                                  // fine dotted (raw px)
+    _connSnaps.forEach(s => {
+      const a = real2px(activeBlock, s.dragFixingU, s.dragFixingV);
+      const b = real2px(activeBlock, s.targetFixingU, s.targetFixingV);
+      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+    });
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
+
+  // Label — only for an edge/centreline guide (it names the caught face, e.g.
+  // "UB flange inner"). A fixing→fixing connector is self-explanatory from the
+  // orange line, and a blue "BOLT centre" caption beside it would clash in
+  // colour and add clutter (STP 6011 details carry no floating snap text), so
+  // skip those: pick the first NON-connector snap, and if every active snap is
+  // a connector, draw no label at all.
+  const _lblSnap = activeEdgeSnaps.find(s => !s.isFixingConnector);
+  if (_lblSnap) {
     const fs = Math.max(7, sheetLen(2));
     ctx.font = `${fs}px system-ui`;
     ctx.fillStyle = colorAlpha(selCol, 0.7);
     ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
-    const snap = activeEdgeSnaps[0];
-    const p = snap.axis === 'u'
-      ? real2px(activeBlock, snap.value, 0)
-      : real2px(activeBlock, 0, snap.value);
-    ctx.fillText(snap.label, p.x + 6, p.y - 4);
+    const p = _lblSnap.axis === 'u'
+      ? real2px(activeBlock, _lblSnap.value, 0)
+      : real2px(activeBlock, 0, _lblSnap.value);
+    ctx.fillText(_lblSnap.label, p.x + 6, p.y - 4);
     ctx.textAlign = 'start'; ctx.textBaseline = 'alphabetic';
   }
 

@@ -360,13 +360,15 @@
     }
     const selCol = cs.getPropertyValue('--selected-color').trim() || '#3b82f6';
     ctx.save();
-    // plate-selection-visibility (2026-06-01) — bold, unmistakable selection
-    // treatment matching the other members: a heavy solid accent outline, a
-    // translucent accent fill so the whole plate reads as "picked", and square
-    // corner grips. (Previously only a thin dashed line + tiny dots, which Dan
-    // couldn't see.) Collect the screen-space vertices once for reuse.
+    // selection-highlight-consistency (2026-06-04) — match the V25 member /
+    // fixing highlight (v25DrawSelectionHighlight): a subtle translucent accent
+    // fill + a clean solid accent outline + small accent corner grips. The
+    // 2026-06-01 "bold, unmistakable" pass (heavy 2.25px outline + big white
+    // 12px grips) over-corrected and read far heavier than a selected member;
+    // dialled back here so plate / member / fixing all look the same. Collect
+    // the screen-space vertices once for reuse.
     const selPx = pts.map(function (p) { return real2px(blk, p.u, p.v); });
-    // Translucent fill across the plate body.
+    // Subtle translucent fill across the plate body.
     if (selPx.length >= 3) {
       ctx.beginPath();
       for (let i = 0; i < selPx.length; i++) {
@@ -374,12 +376,12 @@
         else         ctx.lineTo(selPx[i].x, selPx[i].y);
       }
       ctx.closePath();
-      ctx.fillStyle = (typeof colorAlpha === 'function') ? colorAlpha(selCol, 0.14) : selCol;
+      ctx.fillStyle = (typeof colorAlpha === 'function') ? colorAlpha(selCol, 0.12) : selCol;
       ctx.fill();
     }
-    // Heavy solid selection outline (on top of the plate's own outline).
+    // Clean solid selection outline (on top of the plate's own outline).
     ctx.strokeStyle = selCol;
-    ctx.lineWidth = 2.25;
+    ctx.lineWidth = 1.5;
     ctx.lineJoin = 'round';
     ctx.setLineDash([]);
     ctx.beginPath();
@@ -389,19 +391,20 @@
     }
     ctx.closePath();
     ctx.stroke();
-    // Square corner grips — white fill + accent border, the standard CAD
-    // "this is selected, drag a corner" affordance.
-    const GS = 6;   // grip half-size in screen px
+    // Small accent corner grips (solid fill + accent border) — same look and
+    // size as the V25 member / fixing handles (~7px square).
+    const GS = 3.5;   // grip half-size in screen px
     for (let i = 0; i < selPx.length; i++) {
-      ctx.fillStyle = '#ffffff';
+      ctx.fillStyle = selCol;
       ctx.fillRect(selPx[i].x - GS, selPx[i].y - GS, GS * 2, GS * 2);
       ctx.strokeStyle = selCol;
-      ctx.lineWidth = 1.5;
+      ctx.lineWidth = 1.4;
       ctx.strokeRect(selPx[i].x - GS, selPx[i].y - GS, GS * 2, GS * 2);
     }
-    // Rotation handle — small circle floated above the top of the bounding
-    // box, connected by a thin line. Position in the SAME polygon-space as
-    // `pts` so it tracks the preview during body / rotation drag.
+    // Rotation handle — small accent circle floated above the plate, connected
+    // by a dashed stem (matches the V25 member rotate handle). Position in the
+    // SAME polygon-space as `pts` so it tracks the preview during body / rotation
+    // drag.
     const polyAsXY = pts.map(function (p) { return { x: p.u, y: p.v }; });
     const handlePos = ep.rotationHandlePos(polyAsXY);
     if (handlePos) {
@@ -410,27 +413,24 @@
       cx /= polyAsXY.length;
       const topPx = real2px(blk, cx, maxV);
       const hPx   = real2px(blk, handlePos.u, handlePos.v);
-      // Stem from plate top to handle.
+      // Dashed stem from plate top to handle.
       ctx.strokeStyle = selCol;
-      ctx.lineWidth = 1;
+      ctx.lineWidth = 0.8;
+      ctx.setLineDash([2, 2]);
       ctx.beginPath();
       ctx.moveTo(topPx.x, topPx.y);
       ctx.lineTo(hPx.x, hPx.y);
       ctx.stroke();
-      // Handle: filled white circle with a coloured ring (so it's visible on any background).
-      ctx.fillStyle = '#ffffff';
+      ctx.setLineDash([]);
+      // Handle: solid accent circle with accent border.
+      ctx.fillStyle = selCol;
       ctx.beginPath();
-      ctx.arc(hPx.x, hPx.y, 6, 0, Math.PI * 2);
+      ctx.arc(hPx.x, hPx.y, 4.5, 0, Math.PI * 2);
       ctx.fill();
       ctx.strokeStyle = selCol;
-      ctx.lineWidth = 1.5;
+      ctx.lineWidth = 1.4;
       ctx.beginPath();
-      ctx.arc(hPx.x, hPx.y, 6, 0, Math.PI * 2);
-      ctx.stroke();
-      // Tiny arc inside the handle to hint at "rotate" semantics.
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.arc(hPx.x, hPx.y, 3, -Math.PI * 0.75, Math.PI * 0.25);
+      ctx.arc(hPx.x, hPx.y, 4.5, 0, Math.PI * 2);
       ctx.stroke();
     }
     ctx.restore();

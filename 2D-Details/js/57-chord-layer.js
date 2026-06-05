@@ -91,6 +91,14 @@ function _chordOnKeydown(e) {
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
   if (e.ctrlKey || e.metaKey || e.altKey) return;
   const k = e.key.toUpperCase();
+  // 'm' / 'M' is now the Measure / Dimension tool (js/82) + the Shift+M mode
+  // toggle, so the M chord-prefix is retired here — otherwise it would pop the
+  // Model menu over the measure tool and a stale "next key" capture could hijack
+  // a typed dimension label (e.g. a leading 'U'). Members remain on the palette.
+  // CHORD_BINDINGS.M is left intact in case the chord is relocated to another key.
+  // If another chord overlay is already open, close it (don't orphan it) before
+  // bailing — and never preventDefault, so 'm' still bubbles to the Measure tool.
+  if (k === 'M') { if (_chordActive) _chordClose(); return; }
   if (_chordActive) {
     if (k === 'ESCAPE' || e.key === 'Escape') { _chordClose(); e.preventDefault(); return; }
     _chordHandleSecondKey(k);

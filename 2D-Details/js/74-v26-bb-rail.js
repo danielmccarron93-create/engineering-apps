@@ -36,6 +36,20 @@
   // they double-click an entity. Kept namespaced to avoid global pollution.
   window.bbRailSwitchToSettings = function() { switchTab('settings'); };
   window.bbRailSwitchTab = switchTab;
+  // multi-file-workspace — expose the Pages-tab renderer so the workspace repoint
+  // (js/04-workspace.js workspaceSwitchFile/etc.) can refresh the rail after it
+  // swaps `project` to a different file. `renderPagesTab` is hoisted within this
+  // IIFE, so this assignment is safe at module top. Exposing it on `window` also
+  // makes the bare-global `typeof renderPagesTab === 'function'` guard true for
+  // callers outside the IIFE.
+  window.renderPagesTab = renderPagesTab;
+  // multi-file-workspace polish — expose the cheap active-page highlighter so the
+  // fast shift-scroll page-nav path (js/39-events.js wheel handler) can move the
+  // accent class WITHOUT rebuilding every thumbnail card on each notch (the click
+  // path already uses it). Returns true if it updated in place, false if the grid
+  // is stale → the caller then does a full renderPagesTab(). Hoisted within this
+  // IIFE, so safe to publish here at module top.
+  window.setActivePageHighlight = _setActivePageHighlight;
   function bindTabs() {
     document.querySelectorAll('#bbRail .bb-rail__tab').forEach(t => {
       t.addEventListener('click', () => switchTab(t.dataset.bbtab));
@@ -43,28 +57,149 @@
   }
 
   // ---- Pages tab ----
+  // multi-file-workspace polish (Item 2b) — a 2-COLUMN GRID of small page-preview
+  // cards (was a single column of text rows). Each card carries a thumbnail box
+  // (aspect from page.size) filled lazily via window.pageThumbRequest (js/85),
+  // a page-number badge + size tag, and the active-page accent border.
+  //
+  // PERF: switching pages must NOT regenerate thumbnails or flicker. The cache in
+  // js/85 returns an already-rendered canvas as the SYNCHRONOUS return value on a
+  // hit, so a full rebuild re-attaches the same bitmap with no visible flash; and
+  // a plain page switch routes through _setActivePageHighlight() (move the accent
+  // class only — no DOM rebuild, no thumbnail churn) rather than a full render.
+
+  // Per-page-size token for the badge / meta (e.g. "A3"). Prefers the classified
+  // paper label; falls back to rounded mm for a custom/unclassified size.
+  function _pagePaperTok(s) {
+    if (s && s.paper && s.paper !== 'custom') return s.paper;
+    if (s && s.size && typeof s.size.w === 'number' && typeof s.size.h === 'number') {
+      return Math.round(s.size.w) + '×' + Math.round(s.size.h);
+    }
+    return '';
+  }
+
+  // Move the active-page accent without rebuilding the grid (no thumbnail churn /
+  // flicker). Returns true if it found the grid + updated in place, false if the
+  // grid isn't built yet (caller then does a full renderPagesTab()).
+  function _setActivePageHighlight() {
+    const host = document.getElementById('bbPagesList');
+    if (!host || typeof project === 'undefined' || !Array.isArray(project.sheets)) return false;
+    const grid = host.querySelector('.bb-page-grid');
+    if (!grid) return false;
+    const cards = grid.querySelectorAll('.bb-page-thumb');
+    if (cards.length !== project.sheets.length) return false; // stale → full rebuild
+    cards.forEach((card, i) => {
+      card.classList.toggle('active', i === project.activeSheetIdx);
+    });
+    return true;
+  }
+
   function renderPagesTab() {
+    // multi-file-workspace — keep the empty-file landing overlay (owned by
+    // js/49a-file-tabs.js) in sync. renderPagesTab fires on every file switch
+    // and page add/delete (via the repoint + the Pages-tab buttons), so this is
+    // the natural place to show/hide the landing when the active file's page
+    // count crosses zero. Guarded: a no-op until 49a defines the hook.
+    if (typeof window.updateFileLandingVisibility === 'function') {
+      window.updateFileLandingVisibility();
+    }
     const host = document.getElementById('bbPagesList');
     if (!host || typeof project === 'undefined' || !Array.isArray(project.sheets)) return;
     host.innerHTML = '';
+    const grid = document.createElement('div');
+    grid.className = 'bb-page-grid';
+    const file = (typeof workspaceActiveFile === 'function') ? workspaceActiveFile() : null;
+
     project.sheets.forEach((s, i) => {
       const card = document.createElement('div');
-      card.className = 'bb-page-card' + (i === project.activeSheetIdx ? ' active' : '');
-      const dno = (s.sheetInfo && s.sheetInfo.drawingNo) || '';
+      card.className = 'bb-page-thumb' + (i === project.activeSheetIdx ? ' active' : '');
+      // multi-file-workspace Phase 5 — a PDF-background page (page.bg.type==='pdf',
+      // set at import by js/83) is title-block-free and carries no real S-4xx
+      // drawing number, so prefer its clean "Page N" label over the (usually empty/
+      // stale) dno. Native pages get their drawing-no chip in the title attr.
+      const isPdfPage = !!(s.bg && s.bg.type === 'pdf');
+      const dno = isPdfPage ? '' : ((s.sheetInfo && s.sheetInfo.drawingNo) || '');
       const name = s.name || `Sheet ${i+1}`;
       const mode = (s.mode || '3d').toUpperCase();
-      const scale = s.drawingScale ? `1:${s.drawingScale}` : '';
-      // V25 — split drawing-number and sheet name into separate spans so the
-      // mono dno can size independently of the sans name. CSS .bb-page-card
-      // grid (56px | 1fr) lays them out; if dno is empty, name spans both cols
-      // via the .bb-page-card__title fallback rule.
-      card.innerHTML = (dno
-        ? `<span class="bb-page-card__dno">${escapeForRail(dno)}</span><span class="bb-page-card__name">${escapeForRail(name)}</span>`
-        : `<div class="bb-page-card__title">${escapeForRail(name)}</div>`) +
-        `<div class="bb-page-card__meta">${mode} mode${scale ? ' · ' + scale : ''}</div>`;
+      const paperTok = _pagePaperTok(s);
+      // Hover tooltip carries the full identity (dno · name · paper · mode) that
+      // no longer fits on the compact card.
+      const titleBits = [];
+      if (dno) titleBits.push(dno);
+      titleBits.push(name);
+      if (paperTok) titleBits.push(paperTok);
+      titleBits.push(mode + ' mode');
+      card.title = titleBits.join(' · ');
+
+      // --- thumbnail preview box (aspect from page.size) ---
+      const box = document.createElement('div');
+      box.className = 'bb-page-thumb__box';
+      // Drive the box aspect from the page size so portrait vs landscape reads
+      // right before the bitmap lands. CSS aspect-ratio takes w/h directly.
+      if (s.size && typeof s.size.w === 'number' && s.size.w > 0
+          && typeof s.size.h === 'number' && s.size.h > 0) {
+        box.style.aspectRatio = s.size.w + ' / ' + s.size.h;
+      }
+      // Faint page-number placeholder shown until the thumbnail fills in.
+      const ph = document.createElement('span');
+      ph.className = 'bb-page-thumb__ph';
+      ph.textContent = String(i + 1);
+      box.appendChild(ph);
+
+      // Request the thumbnail. A cache hit returns the canvas synchronously (we
+      // attach it now, no flicker); otherwise the cb fills it in when ready —
+      // WITHOUT rebuilding the rail. We close over THIS card's box so a late
+      // callback after a rebuild lands in a detached node harmlessly.
+      if (typeof window.pageThumbRequest === 'function') {
+        const fill = (thumb) => {
+          if (!thumb) return;                 // generation failed → keep placeholder
+          if (!box.isConnected) return;       // card was rebuilt → drop stale fill
+          // Re-attaching the SAME canvas element across rebuilds is fine; clear any
+          // prior preview first so we never stack two.
+          const prev = box.querySelector('.bb-page-thumb__img');
+          if (prev && prev !== thumb) prev.remove();
+          if (thumb instanceof HTMLCanvasElement || thumb instanceof HTMLImageElement) {
+            thumb.classList.add('bb-page-thumb__img');
+            // Detach from any previous box (a shared cached canvas can only live in
+            // one DOM slot at a time) before re-homing it here.
+            if (thumb.parentNode && thumb.parentNode !== box) thumb.parentNode.removeChild(thumb);
+            box.appendChild(thumb);
+          } else if (typeof thumb === 'string') {
+            // dataURL fallback path (js/85 returns canvases today, but stay tolerant).
+            let img = box.querySelector('img.bb-page-thumb__img');
+            if (!img) { img = document.createElement('img'); img.className = 'bb-page-thumb__img'; box.appendChild(img); }
+            img.src = thumb;
+          }
+          box.classList.add('has-thumb');
+        };
+        let returned = null;
+        try { returned = window.pageThumbRequest(file, s, fill); } catch (_) { returned = null; }
+        // Synchronous cache hit — attach immediately so a rebuild shows no blank
+        // frame (the cb will ALSO fire on a microtask; fill() is idempotent).
+        if (returned) fill(returned);
+      }
+      card.appendChild(box);
+
+      // --- footer: page-number badge + size tag ---
+      const foot = document.createElement('div');
+      foot.className = 'bb-page-thumb__foot';
+      const num = document.createElement('span');
+      num.className = 'bb-page-thumb__num';
+      num.textContent = String(i + 1);
+      foot.appendChild(num);
+      if (paperTok) {
+        const tag = document.createElement('span');
+        tag.className = 'bb-page-thumb__tag';
+        tag.textContent = paperTok;
+        foot.appendChild(tag);
+      }
+      card.appendChild(foot);
+
+      // Click → switch page. Move the highlight in place (no rebuild → no thumb
+      // flicker); fall back to a full rebuild only if the grid is somehow stale.
       card.addEventListener('click', () => {
         if (typeof projectSwitchSheet === 'function') projectSwitchSheet(i);
-        renderPagesTab();
+        if (!_setActivePageHighlight()) renderPagesTab();
       });
       card.addEventListener('dblclick', (e) => {
         e.stopPropagation();
@@ -73,10 +208,10 @@
           projectRenameSheet(i, n); renderPagesTab();
         }
       });
-      // close (delete) button
+      // close (delete) button — keep the never-zero guard + confirm.
       if (project.sheets.length > 1) {
         const close = document.createElement('button');
-        close.className = 'bb-page-card__close';
+        close.className = 'bb-page-thumb__close';
         close.title = 'Delete sheet';
         close.textContent = '×';
         close.addEventListener('click', (e) => {
@@ -87,8 +222,14 @@
         });
         card.appendChild(close);
       }
-      host.appendChild(card);
+      grid.appendChild(card);
     });
+    host.appendChild(grid);
+    // multi-file-workspace — keep the bottom-ribbon page navigator (‹ N / total ›)
+    // in sync: every page/file change funnels through renderPagesTab via the
+    // renderSheetBrowser hook, so this one call covers shift-scroll, thumbnail
+    // clicks, page add/delete, and file switches. Guarded (js/49a owns it).
+    if (typeof window.updatePageNav === 'function') window.updatePageNav();
   }
   function bindPagesActions() {
     const add = document.getElementById('bbPagesAdd');
@@ -252,6 +393,19 @@
               setStatus('HBS screw: switch to 2D paper-space mode to place (3D coming soon)');
             }
           } },
+        { id: 'd-stud', kind: 'tool', label: 'Stud',
+          sub: 'CHEMSET', icon: 'icon-stud',
+          onClick: () => {
+            // 2D mode → V25 ChemSet anchor-stud fixing (stud entity) via
+            //   v25PickAndSetStud (js/72j-v25-stud.js). 3D-mode stud is a
+            //   planned follow-on, so other modes just hint.
+            if (sheetMode === '2d' && typeof v25PickAndSetStud === 'function') {
+              v25PickAndSetStud(lastUsedSection.stud
+                || (typeof V25_STUD_DEFAULT_SPEC !== 'undefined' ? V25_STUD_DEFAULT_SPEC : 'M16'));
+            } else if (typeof setStatus === 'function') {
+              setStatus('ChemSet stud: switch to 2D paper-space mode to place (3D coming soon)');
+            }
+          } },
         { id: 'd-bolt-group', kind: 'tool', label: 'Bolt grp',
           sub: 'BOLT GRP', icon: 'icon-bolt-group', onClick: openBoltDialog },
         { id: 'plate', kind: 'tool', label: 'Plate',
@@ -321,11 +475,16 @@
           onClick: () => v25SetHatch('earth') },
       ]},
       { title: 'Measure', tiles: [
-        { id: 'a-aligned', kind: 'tool', label: 'Dim line',
-          icon: 'icon-dim-chain',
-          onClick: () => { dimType = 'aligned'; setTool('dimension'); } },
-        { id: 'a-dimH',    kind: 'tool', label: 'Dim',
+        // Primary Bluebeam/Revit-style dimension tool (key 'm', js/82). Two
+        // clicks → dim line; type to set the exact length or a label; drag to
+        // re-offset; double-click to edit.
+        { id: 'v25-measure', kind: 'tool', label: 'Measure',
           icon: 'icon-dim-h',
+          onClick: () => { if (typeof v25SetTool === 'function') v25SetTool('v25-measure'); } },
+        // Legacy aligned/horizontal dimension (V22-era 3-click) kept as a
+        // secondary access point.
+        { id: 'a-dimH',    kind: 'tool', label: 'Dim (old)',
+          icon: 'icon-dim-chain',
           onClick: () => { dimType = 'horizontal'; setTool('dimension'); } },
         { id: 'd-area',  kind: 'soon', label: 'Area',
           icon: 'icon-polygon', soonTag: 'soon',

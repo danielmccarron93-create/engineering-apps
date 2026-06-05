@@ -17,6 +17,41 @@ function v25BuildOptionsBar() {
   }
   return bar;
 }
+
+// member-size-from-top-bar (2026-06-04) — section-name list for a member type,
+// mirroring the catalogue wiring so the placement bar and the selected-member
+// size editor below never drift. curSec (optional) is prepended when it isn't in
+// the catalogue so the dropdown can always show the member's actual section.
+function v25MemberSectionNames(mt, curSec) {
+  const dbS = mt === 'ub' ? UB_DB
+            : mt === 'uc' ? (typeof UC_DB === 'object' ? UC_DB : UB_DB)
+            : mt === 'wb' ? (typeof WB_DB === 'object' ? WB_DB : UB_DB)
+            : mt === 'shs' ? SHS_DB
+            : mt === 'rhs' ? (typeof RHS_DB === 'object' ? RHS_DB : {})
+            : mt === 'chs' ? (typeof CHS_DB === 'object' ? CHS_DB : {})
+            : mt === 'pfc' ? (typeof PFC_DB === 'object' ? PFC_DB : {})
+            : {};
+  let names = Object.keys(dbS || {});
+  if (mt === 'ub') names = names.filter(n => n.includes('UB'));
+  if (mt === 'uc') names = (typeof UC_DB === 'object') ? Object.keys(UC_DB) : names.filter(n => n.includes('UC'));
+  if (mt === 'wb') names = (typeof WB_DB === 'object') ? Object.keys(WB_DB) : names.filter(n => n.includes('WB'));
+  if (curSec && !names.includes(curSec)) names = [curSec, ...names];
+  return names;
+}
+
+// member-size-from-top-bar (2026-06-04) — the single selected 2D member (mem2),
+// or null. Lets the options bar surface a selected member's Section (size) for
+// editing from the top bar as well as the Settings tab. Requires exactly one
+// selection so editing one member's size is never ambiguous.
+function v25SelectedSingleMem2() {
+  if (typeof sheetMode === 'undefined' || sheetMode !== '2d') return null;
+  if (typeof v25Selected === 'undefined' || !Array.isArray(v25Selected) || v25Selected.length !== 1) return null;
+  const view = (typeof activeBlock !== 'undefined' && activeBlock && activeBlock.viewKey) || 'elevation';
+  const arr = (typeof entities2D !== 'undefined' && entities2D[view]) || [];
+  const ent = arr.find(e => e && e.id === v25Selected[0]);
+  return (ent && ent.type === 'mem2') ? ent : null;
+}
+
 function v25UpdateOptionsBar() {
   const bar = v25BuildOptionsBar();
   // plate-orientation-presets (2026-05-31): v2 PlacePlateTool — Thickness select
@@ -79,6 +114,58 @@ function v25UpdateOptionsBar() {
     }
     return;
   }
+
+  // member-size-from-top-bar (2026-06-04) — when the Select tool is active and a
+  // single 2D member is selected, surface its Section (size) in the top options
+  // bar so the size can be changed from here as well as from the Settings tab
+  // (mirrors the inspector Section dropdown in 71-v25-selection.js). Scoped to the
+  // Select tool so arming a placement tool always shows placement options. The
+  // bar is kept in sync on select / deselect / tool-switch via v25UpdateInspector,
+  // setTool, and the v25Delete / empty-click hooks.
+  const selMem = (typeof v25SelectedSingleMem2 === 'function') ? v25SelectedSingleMem2() : null;
+  if (sheetMode === '2d' && tool === 'select' && selMem) {
+    bar.style.display = 'flex';
+    const mt = selMem.memberType || 'ub';
+    const curSec = selMem.section || '';
+    const secNames = v25MemberSectionNames(mt, curSec);
+    bar.innerHTML =
+      `<strong>${mt.toUpperCase()}</strong>` +
+      `<span style="color:var(--text-mute);font-size:11px">selected</span>` +
+      `<label style="display:flex;align-items:center;gap:4px">` +
+        `<span style="color:var(--text-mute);font-size:11px">Section</span>` +
+        `<select id="v25o-selsect" style="width:160px">` +
+          secNames.map(s => `<option value="${s}"${s === curSec ? ' selected' : ''}>${s}</option>`).join('') +
+        `</select>` +
+        ` <button id="v25o-selsect-pick" type="button" style="padding:2px 8px;font-size:11px;border:1px solid var(--border);background:var(--surface-3);color:var(--text);border-radius:4px;cursor:pointer">Pick…</button>` +
+      `</label>` +
+      `<span style="color:var(--text-mute);margin-left:4px;font-size:11px">Changes the selected member · also editable in the Settings tab</span>`;
+    const applySel = (name) => {
+      if (!name) return;
+      selMem.section = name;
+      if (typeof lastUsedSection !== 'undefined' && selMem.memberType) lastUsedSection[selMem.memberType] = name;
+      if (typeof v3dMarkDirty === 'function') v3dMarkDirty();
+      if (typeof invalidateWeldCache === 'function') invalidateWeldCache();
+      if (typeof v25UpdateInspector === 'function') v25UpdateInspector();
+      if (typeof requestRender === 'function') requestRender();
+    };
+    const selSel = bar.querySelector('#v25o-selsect');
+    if (selSel) selSel.addEventListener('change', (e) => applySel(e.target.value));
+    const selPick = bar.querySelector('#v25o-selsect-pick');
+    if (selPick) selPick.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      // UB picker lists only UB; a UC member opens the UC picker (mirrors the
+      // inspector Pick… mapping in 71-v25-selection.js).
+      let kind = mt;
+      if (kind === 'ub' && /UC/.test(curSec)) kind = 'uc';
+      if (typeof openSizePicker === 'function') openSizePicker(kind, 'v25-selmem-' + kind, {
+        centered: true,
+        title: 'Pick ' + kind.toUpperCase() + ' size',
+        onChoose: (name) => applySel(name),
+      });
+    });
+    return;
+  }
+
   if (sheetMode !== '2d' || !tool || !tool.startsWith('v25-')) {
     bar.style.display = 'none'; return;
   }
@@ -124,18 +211,9 @@ function v25UpdateOptionsBar() {
   } else if (tool === 'v25-mem') {
     const mt = v25State.memberType || 'ub';
     const memberLabel = mt.toUpperCase();
-    const dbS = mt === 'ub' ? UB_DB
-              : mt === 'uc' ? (typeof UC_DB === 'object' ? UC_DB : UB_DB)
-              : mt === 'wb' ? (typeof WB_DB === 'object' ? WB_DB : UB_DB)
-              : mt === 'shs' ? SHS_DB
-              : mt === 'rhs' ? (typeof RHS_DB === 'object' ? RHS_DB : {})
-              : mt === 'chs' ? (typeof CHS_DB === 'object' ? CHS_DB : {})
-              : mt === 'pfc' ? (typeof PFC_DB === 'object' ? PFC_DB : {})
-              : {};
-    let sectionNames = Object.keys(dbS || {});
-    if (mt === 'ub') sectionNames = sectionNames.filter(n => n.includes('UB'));
-    if (mt === 'uc') sectionNames = (typeof UC_DB === 'object') ? Object.keys(UC_DB) : sectionNames.filter(n => n.includes('UC'));
-    if (mt === 'wb') sectionNames = (typeof WB_DB === 'object') ? Object.keys(WB_DB) : sectionNames.filter(n => n.includes('WB'));
+    // member-size-from-top-bar (2026-06-04) — section list via the shared helper
+    // so the placement bar and the selected-member editor never drift.
+    const sectionNames = v25MemberSectionNames(mt);
     const curSec = v25State.section || '';
     html += `<strong>${memberLabel}</strong>`;
     html += fld('Section',
@@ -192,9 +270,35 @@ function v25UpdateOptionsBar() {
     html += `<strong>Screw</strong>`;
     html += fld('Size', `<select id="v25o-screw-size" style="width:120px">${sizeOpts}</select>`);
     html += fld('Orientation', `<span id="v25OrientSlot"></span>`);
+  } else if (tool === 'v25-stud') {
+    // ChemSet anchor stud — Size (from the 02g catalogue) + the live orientation
+    // row (swapped in below, like the bolt/screw). (72j-v25-stud.js)
+    const SDB = (typeof CHEMSET_STUDS === 'object' && CHEMSET_STUDS) ? CHEMSET_STUDS : {};
+    const ssizes = (typeof CHEMSET_SIZES !== 'undefined' && CHEMSET_SIZES) ? CHEMSET_SIZES : Object.keys(SDB);
+    const curStud = v25State.studSpec
+      || (typeof lastUsedSection !== 'undefined' && lastUsedSection.stud)
+      || (typeof V25_STUD_DEFAULT_SPEC !== 'undefined' ? V25_STUD_DEFAULT_SPEC : 'M16');
+    const studOpts = ssizes.map(id => {
+      const s = SDB[id];
+      const lab = s ? (s.size + ' × ' + s.L) : id;
+      return `<option value="${id}"${id === curStud ? ' selected' : ''}>${lab}</option>`;
+    }).join('');
+    html += `<strong>Stud</strong>`;
+    html += fld('Size', `<select id="v25o-stud-size" style="width:120px">${studOpts}</select>`);
+    html += fld('Orientation', `<span id="v25OrientSlot"></span>`);
   } else if (tool === 'v25-leader') {
     html += `<strong>Leader</strong>`;
     html += fld('Default text', `<input id="v25o-leadertxt" value="${(v25Last.leaderText || 'CALLOUT').replace(/"/g, '&quot;')}" style="width:200px"/>`);
+  } else if (tool === 'v25-measure') {
+    html += `<strong>Dimension</strong>`;
+    const _dimFonts = (typeof DIM2_FONT_OPTS !== 'undefined') ? DIM2_FONT_OPTS : [{ v: 'plex', l: 'Plex' }];
+    html += fld('Font', `<select id="v25o-dimstyle">${_dimFonts.map(o => `<option value="${o.v}"${(v25Last.dimStyle || 'plex') === o.v ? ' selected' : ''}>${o.l}</option>`).join('')}</select>`);
+    html += fld('Text height (mm)', `<input id="v25o-dimtexth" type="number" step="0.5" value="${(typeof v25Last.dimTextH === 'number' ? v25Last.dimTextH : 2.5)}" style="width:60px"/>`);
+    html += fld('Terminator', `<select id="v25o-dimterm">${['tick','arrow','dot'].map(t => `<option value="${t}"${(v25Last.dimTerm||'tick')===t?' selected':''}>${t}</option>`).join('')}</select>`);
+    html += fld('Precision', `<select id="v25o-dimprec">${['0','1','2','3'].map(p => `<option value="${p}"${String(v25Last.dimPrec!=null?v25Last.dimPrec:0)===p?' selected':''}>${p}</option>`).join('')}</select>`);
+    html += fld('Units', `<select id="v25o-dimunits">${['mm','m'].map(u => `<option value="${u}"${(v25Last.dimUnits||'mm')===u?' selected':''}>${u}</option>`).join('')}</select>`);
+    html += fld('Offset (mm)', `<input id="v25o-dimoffset" type="number" step="1" value="${(typeof v25Last.dimOffset === 'number' ? v25Last.dimOffset : 12)}" style="width:60px"/>`);
+    html += `<span style="color:var(--text-mute);font-size:11px">Click two points · type a length or label · drag to re-offset · Shift = free angle</span>`;
   } else if (tool === 'v25-frame') {
     html += `<strong>Detail frame</strong> — drag two corners`;
   } else if (tool === 'v25-line') {
@@ -253,6 +357,14 @@ function v25UpdateOptionsBar() {
       slot.replaceWith(v25BuildScrewOrientationRow());
     }
   }
+  // Swap the stud orientation-row placeholder for the live element (the row
+  // builder reads/writes v25State.studOrient itself). (72j-v25-stud.js)
+  if (tool === 'v25-stud') {
+    const slot = bar.querySelector('#v25OrientSlot');
+    if (slot && typeof v25BuildStudOrientationRow === 'function') {
+      slot.replaceWith(v25BuildStudOrientationRow());
+    }
+  }
   // Swap the blockwork View placeholder for the live Section/Elevation row.
   if (tool === 'v25-wall' || tool === 'v25-wall-sec') {
     const slot = bar.querySelector('#v25WallModeSlot');
@@ -299,6 +411,12 @@ function v25UpdateOptionsBar() {
     if (typeof highlightActiveTile === 'function') highlightActiveTile();
     if (typeof requestRender === 'function') requestRender();
   });
+  wire('v25o-stud-size', e => {
+    v25State.studSpec = e.target.value;
+    if (typeof lastUsedSection !== 'undefined') lastUsedSection.stud = v25State.studSpec;
+    if (typeof highlightActiveTile === 'function') highlightActiveTile();
+    if (typeof requestRender === 'function') requestRender();
+  });
   // v25o-aspect / v25o-openside wires retired — orientation is now set through
   // the orientation row (v25BuildOrientationRow → v25SetOrientation), which
   // writes v25State.aspect / rot / openSide and refreshes the bar itself.
@@ -320,6 +438,13 @@ function v25UpdateOptionsBar() {
   wireInput('v25o-linels', e => { v25Last.lineLs = e.target.value; });
   wireInput('v25o-textdef', e => { v25Last.textDefault = e.target.value; });
   wireInput('v25o-textsz', e => { v25Last.textSize = parseFloat(e.target.value) || 3; });
+  // Dimension / Measure tool defaults (js/82).
+  wire('v25o-dimstyle', e => { v25Last.dimStyle = e.target.value; });
+  wireInput('v25o-dimtexth', e => { v25Last.dimTextH = parseFloat(e.target.value) || 2.5; });
+  wire('v25o-dimterm', e => { v25Last.dimTerm = e.target.value; });
+  wire('v25o-dimprec', e => { v25Last.dimPrec = parseInt(e.target.value) || 0; });
+  wire('v25o-dimunits', e => { v25Last.dimUnits = e.target.value; });
+  wireInput('v25o-dimoffset', e => { v25Last.dimOffset = parseFloat(e.target.value) || 12; });
 }
 
 // Update v25TryHandleClick to use the latest options-bar values for anchors

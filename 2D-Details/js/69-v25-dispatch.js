@@ -12,6 +12,7 @@ function v25DrawEnt(blk, ent, cs) {
   if (ent.type === 'anchor') { drawAnchor2D(blk, ent, cs); return true; }
   if (ent.type === 'bolt2' && typeof drawBolt2D === 'function') { drawBolt2D(blk, ent, cs); return true; }
   if (ent.type === 'screw' && typeof drawScrew2D === 'function') { drawScrew2D(blk, ent, cs); return true; }
+  if (ent.type === 'stud' && typeof drawStud2D === 'function') { drawStud2D(blk, ent, cs); return true; }
   if (ent.type === 'reoBar') { drawReoBar2D(blk, ent, cs); return true; }
   if (ent.type === 'mesh') { drawMesh2D(blk, ent, cs); return true; }
   if (ent.type === 'leader2') { drawLeader2D(blk, ent, cs); return true; }
@@ -21,6 +22,7 @@ function v25DrawEnt(blk, ent, cs) {
   if (ent.type === 'noteBox' && typeof drawNoteBox2D === 'function') { drawNoteBox2D(blk, ent, cs); return true; }
   if (ent.type === 'stiff2' && typeof drawStiff2D === 'function') { drawStiff2D(blk, ent, cs); return true; }
   if (ent.type === 'jweld' && typeof drawJWeld2D === 'function') { drawJWeld2D(blk, ent, cs); return true; }
+  if (ent.type === 'dim2' && typeof drawDim2_2D === 'function') { drawDim2_2D(blk, ent, cs); return true; }
   return false;
 }
 
@@ -146,6 +148,7 @@ function v25SetTool(t) {
   dimStep = 0; dimP1 = null; dimP2 = null; dimType = 'horizontal';
   placing = null; drawMember = null; drawStart = null; drawPreviewEnd = null;
   platePts = []; plateBlock = null; plateDimInput = ''; plateDimActive = false;
+  measureP1 = null; measureDimInput = ''; measureDimActive = false; measureAwaitId = null; measureClickLen = 0;
   boltGroupConfig = null; weldStep = 0; weldP1 = null;
   cycleHits = []; cycleIndex = 0;
   v25CycleIds = []; v25CycleIndex = 0; v25CycleLastPx = null;
@@ -552,6 +555,25 @@ function v25TryHandleClick(blk, cu, cv, e) {
     return true;
   }
 
+  if (tool === 'v25-stud') {
+    // Single-click drops a ChemSet anchor stud. Spec / orientation come from
+    // v25State (set by v25PickAndSetStud + the options-bar orientation row in
+    // 72j-v25-stud.js). The glyph self-orients via ent.studOrient; section
+    // orientations snap the washer underside to a detected plate/member outside
+    // face at draw time (v25StudBearingFace), so the placed u,v is just the click.
+    const ent = v25Add('stud', {
+      studSpec: v25State.studSpec
+        || (typeof lastUsedSection !== 'undefined' && lastUsedSection.stud)
+        || (typeof V25_STUD_DEFAULT_SPEC !== 'undefined' ? V25_STUD_DEFAULT_SPEC : 'M16'),
+      studOrient: v25State.studOrient
+        || (typeof lastUsedOrientation !== 'undefined' && lastUsedOrientation.stud) || 'v-nutT',
+      u: cu, v: cv, rot: 0,
+    });
+    v25Selected = [ent.id];
+    if (typeof v25UpdateInspector === 'function') v25UpdateInspector();
+    return true;
+  }
+
   if (tool === 'v25-bar') {
     // Polyline bar: each click adds a vertex; Enter or right-click finishes
     v25State.polyPts.push({ u: cu, v: cv });
@@ -574,6 +596,52 @@ function v25TryHandleClick(blk, cu, cv, e) {
         v25Add('mesh', { meshKey: v25Last.mesh, shape: 'rect', u, v, w, h, position: 'BTM' });
       }
       v25State.dragStart = null;
+    }
+    return true;
+  }
+
+  if (tool === 'v25-measure') {
+    // Two-click dimension. cu/cv arrive already snapped + ortho-constrained
+    // (getCursor uses v25State.dragStart as the 45°/ortho origin). First click
+    // anchors P1; second click drops the dim2 and arms keyboard type-to-set.
+    if (!v25State.dragStart) {
+      v25State.dragStart = { u: cu, v: cv, blk };
+      measureP1 = { u: cu, v: cv };
+      measureDimInput = ''; measureDimActive = false; measureAwaitId = null;
+    } else {
+      const a = v25State.dragStart;
+      // Discard a degenerate span (double-click in place / snap-back onto P1),
+      // staying armed for a fresh first click — mirrors the sibling two-click
+      // tools' guards (v25-frame w>50&&h>50, v25-mem length>5, …).
+      if (!(Math.hypot(cu - a.u, cv - a.v) > 5)) {
+        v25State.dragStart = null; measureP1 = null;
+        measureDimInput = ''; measureDimActive = false; measureAwaitId = null;
+        requestRender();
+        return true;
+      }
+      const seed = (typeof v25Last === 'object' && v25Last) ? v25Last : {};
+      const ent = v25Add('dim2', {
+        p1u: a.u, p1v: a.v, p2u: cu, p2v: cv,
+        off: (typeof dim2DefaultOff === 'function')
+          ? dim2DefaultOff(blk, a.u, a.v, cu, cv, seed.dimOffset)
+          : ((typeof seed.dimOffset === 'number') ? seed.dimOffset : 12),
+        textOverride: null,
+        style: seed.dimStyle || 'plex',
+        sz:    (typeof seed.dimTextH === 'number') ? seed.dimTextH : 2.5,
+        term:  seed.dimTerm  || 'tick',
+        prec:  (typeof seed.dimPrec === 'number') ? seed.dimPrec : 0,
+        units: seed.dimUnits || 'mm',
+        // Independently-editable line properties (Properties tab); colours stay
+        // unset → theme default until the user overrides them.
+        dimLw: 0.18, dimLs: 'solid',
+        extLw: 0.13, extLs: 'dashed',
+      });
+      v25Selected = [ent.id];
+      if (typeof v25UpdateInspector === 'function') v25UpdateInspector();
+      v25State.dragStart = null;
+      measureP1 = null;
+      measureAwaitId = ent.id; measureDimInput = ''; measureDimActive = false;
+      measureClickLen = (typeof dim2Length === 'function') ? dim2Length(ent) : 0;
     }
     return true;
   }
@@ -704,6 +772,21 @@ function v25DrawPreview(blk, cs) {
     };
     ctx.save();
     drawScrew2D(blk, _gs, cs);
+    ctx.restore();
+  }
+  // Stud ghost — faded preview of the ChemSet anchor stud in the chosen
+  // orientation under the (snapped) cursor (mirrors the screw ghost above).
+  // (72j-v25-stud.js)
+  if (tool === 'v25-stud' && typeof drawStud2D === 'function') {
+    const _gst = {
+      type: 'stud',
+      studSpec: (typeof v25State !== 'undefined' && v25State.studSpec)
+        || (typeof V25_STUD_DEFAULT_SPEC !== 'undefined' ? V25_STUD_DEFAULT_SPEC : 'M16'),
+      studOrient: (typeof v25State !== 'undefined' && v25State.studOrient) || 'v-nutT',
+      u: cu, v: cv, rot: 0, opacity: 0.45, _preview: true,
+    };
+    ctx.save();
+    drawStud2D(blk, _gst, cs);
     ctx.restore();
   }
   const col = cs.getPropertyValue('--selected-color').trim();
@@ -857,6 +940,7 @@ function v25DrawPreview(blk, cs) {
 // Tool-name → tile-id for active highlight (called from highlightActiveTile)
 function v25ActiveTileId() {
   if (tool === 'v25-frame') return 'v25-frame';
+  if (tool === 'v25-measure') return 'v25-measure';
   // V25-layout-overhaul — Phase 4 — map active hatch material to the new
   // Draw-tab tile id so the active tile highlights while drawing.
   if (tool === 'v25-hatch') {
@@ -893,6 +977,7 @@ function v25ActiveTileId() {
   if (tool === 'v25-bar-dot') return 'v25-bar-dot';
   if (tool === 'v25-mesh') return 'v25-mesh-' + (v25Last.mesh.replace('SL', '').replace('RL', ''));
   if (tool === 'v25-screw') return 'd-screw';
+  if (tool === 'v25-stud') return 'd-stud';
   if (tool === 'v25-leader') return 'v25-leader';
   if (tool === 'v25-text') return 'v25-text';
   if (tool === 'v25-notebox') return 'v25-notebox';

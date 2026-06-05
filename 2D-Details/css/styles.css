@@ -579,6 +579,97 @@
     }
     .sheet-tab__add:hover { background: var(--hover-bg); color: var(--text); }
 
+    /* ---- File tabs (multi-file-workspace) ----
+       Browser-style tabs in the top bar: one per OPEN FILE (a project / page set).
+       Distinct from .sheet-tabs (pages live in the left rail now). Mirrors the
+       .sheet-tab visual language so it themes across all five palettes. */
+    .file-tabs {
+      display: flex; align-items: center; gap: 2px;
+      min-width: 0; overflow-x: auto; flex: 0 1 auto;
+      margin-left: 10px;
+    }
+    .file-tabs::-webkit-scrollbar { height: 4px; }
+    .file-tabs::-webkit-scrollbar-thumb { background: var(--border-2); border-radius: 2px; }
+    .file-tab {
+      display: flex; align-items: center; gap: 8px;
+      height: 28px; padding: 0 10px;
+      background: var(--surface-3);
+      border: 1px solid var(--border);
+      border-radius: var(--r-2);
+      font-size: var(--fs-sm); color: var(--text-mute);
+      white-space: nowrap; max-width: 200px;
+      cursor: pointer; position: relative;
+      transition: background var(--t-fast), color var(--t-fast);
+    }
+    .file-tab:hover { background: var(--surface-2); color: var(--text); }
+    .file-tab.active {
+      background: var(--paper, var(--surface-2));
+      color: var(--text);
+      border-color: var(--accent);
+      z-index: 1;
+    }
+    .file-tab__name {
+      overflow: hidden; text-overflow: ellipsis; max-width: 150px;
+      letter-spacing: var(--tracking-tight);
+    }
+    /* unsaved-to-disk indicator (dot before the name) */
+    .file-tab__dot {
+      width: 6px; height: 6px; flex: 0 0 auto;
+      border-radius: 50%; background: var(--accent);
+    }
+    .file-tab__close {
+      width: 16px; height: 16px; display: grid; place-items: center;
+      border-radius: var(--r-1); color: var(--text-subtle); font-size: 12px; line-height: 1;
+      opacity: 0; transition: opacity var(--t-fast), background var(--t-fast), color var(--t-fast);
+    }
+    .file-tab:hover .file-tab__close,
+    .file-tab.active .file-tab__close { opacity: 1; }
+    .file-tab__close:hover { background: var(--danger); color: var(--accent-ink, #fff); }
+    .file-tab__add {
+      display: grid; place-items: center; width: 26px; height: 28px; flex: 0 0 auto;
+      background: transparent; border: 1px solid transparent;
+      border-radius: var(--r-2);
+      color: var(--text-mute); cursor: pointer; font-size: 17px; line-height: 1;
+      margin-left: 2px;
+    }
+    .file-tab__add:hover { background: var(--hover-bg); color: var(--text); }
+
+    /* ---- New-file landing overlay (multi-file-workspace) ----
+       Centred over the drawing area when the active file has zero pages. */
+    .file-landing {
+      position: absolute; inset: 0; z-index: 40;
+      display: grid; place-items: center;
+      background: var(--surface, #ece7df);
+    }
+    .file-landing__card {
+      display: flex; flex-direction: column; align-items: center; gap: 6px;
+      padding: 40px 56px;
+      background: var(--surface-2); border: 1px solid var(--border);
+      border-radius: var(--r-3, 10px);
+      box-shadow: var(--shadow-2, 0 8px 30px rgba(0,0,0,0.10));
+      text-align: center;
+    }
+    .file-landing__title {
+      font-size: var(--fs-lg, 17px); font-weight: 600; color: var(--text);
+      letter-spacing: var(--tracking-tight);
+    }
+    .file-landing__sub {
+      font-size: var(--fs-sm); color: var(--text-mute); margin-bottom: 14px;
+    }
+    .file-landing__actions { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
+    .file-landing__btn {
+      padding: 9px 16px; border-radius: var(--r-2);
+      border: 1px solid var(--border); background: var(--surface-3);
+      color: var(--text); font-size: var(--fs-sm); cursor: pointer;
+      transition: background var(--t-fast), border-color var(--t-fast);
+    }
+    .file-landing__btn:hover { background: var(--hover-bg); border-color: var(--accent); }
+    .file-landing__btn--primary {
+      background: var(--accent); color: var(--accent-ink, #fff); border-color: var(--accent);
+    }
+    .file-landing__btn--primary:hover { filter: brightness(1.05); background: var(--accent); }
+    .file-landing__btn--soon { opacity: 0.55; }
+
     /* ---- Mode switcher (V25 — segmented, mono caps) ----
        Holds the Model / Draw / Annotate tabs. Restyled to match the design's
        .seg pill: smaller, mono-caps labels, paper-on-active. */
@@ -1038,6 +1129,24 @@
       letter-spacing: var(--tracking-caps); text-transform: uppercase;
     }
     .status-bar .sb-flex { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+    /* Page navigator (‹ N / total ›) — multi-file-workspace. Click arrows to step
+       pages; mirrors Shift+scroll. Sits left of the right-aligned status chips. */
+    .status-bar .sb-pagenav { gap: 3px; }
+    .sb-pagenav__btn {
+      display: grid; place-items: center;
+      width: 18px; height: 18px; padding: 0;
+      border: 1px solid var(--border); border-radius: var(--r-1);
+      background: var(--surface-3); color: var(--text);
+      font-size: 13px; line-height: 1; cursor: pointer;
+      transition: background var(--t-fast), color var(--t-fast), border-color var(--t-fast);
+    }
+    .sb-pagenav__btn:hover:not(:disabled) { background: var(--hover-bg); border-color: var(--accent); color: var(--accent); }
+    .sb-pagenav__btn:disabled { opacity: 0.35; cursor: default; }
+    .sb-pagenav__label {
+      min-width: 46px; text-align: center;
+      font-family: var(--font-mono); font-size: 9px; font-weight: 600;
+      color: var(--text); letter-spacing: var(--tracking-wide);
+    }
     /* Status chips (statusTool, count chips, statusScale) — still semantically
        chips but now as quiet mono pills aligned to the design vocabulary. */
     .status-bar .sb-chip {
@@ -1274,64 +1383,11 @@
       margin: 6px 0 8px;
     }
 
-    /* Pages list — design's .page row (mono ID + sans title + optional meta).
-       Renderer (renderPagesTab in JS) emits the existing class names; CSS
-       repaints them to the row pattern instead of the boxy card. */
-    .bb-page-card {
-      display: grid;
-      grid-template-columns: 56px 1fr;
-      gap: 8px; align-items: baseline;
-      padding: 6px 6px; margin-bottom: 0;
-      background: transparent;
-      border: 0;
-      border-radius: var(--r-1);
-      cursor: pointer;
-      color: var(--text);
-      position: relative;
-      transition: background var(--t-fast);
-    }
-    .bb-page-card:hover { background: var(--hover-bg); border-color: transparent; }
-    .bb-page-card.active {
-      background: var(--accent-bg);
-      box-shadow: inset 2px 0 0 var(--accent);
-      border-color: transparent;
-    }
-    /* The renderer currently puts "S-101 — Sheet 1" inside a single .__title span.
-       We split that into two spans (V25 renderer change below) so the mono drawing
-       number can size separately from the sans sheet title. Fallback rule keeps
-       the unified title readable if any cached caller still emits the old shape. */
-    .bb-page-card__dno {
-      font-family: var(--font-mono); font-size: var(--fs-xs);
-      color: var(--text-mute); letter-spacing: var(--tracking-wide);
-      text-transform: uppercase;
-    }
-    .bb-page-card.active .bb-page-card__dno { color: var(--accent-press, var(--accent)); }
-    .bb-page-card__name {
-      font-size: var(--fs-sm); color: var(--text);
-      letter-spacing: var(--tracking-tight);
-      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    }
-    .bb-page-card__title {
-      grid-column: 1 / -1; font-weight: 500; font-size: var(--fs-sm);
-      letter-spacing: var(--tracking-tight);
-    }
-    .bb-page-card__meta {
-      grid-column: 1 / -1;
-      font-family: var(--font-mono); font-size: 10px;
-      color: var(--text-subtle); letter-spacing: var(--tracking-wide);
-      text-transform: uppercase;
-      margin-top: 2px;
-    }
-    .bb-page-card__close {
-      position: absolute; right: 6px; top: 4px;
-      font-size: 14px; line-height: 1; color: var(--text-subtle);
-      background: transparent; border: none; cursor: pointer;
-      padding: 0 4px;
-      opacity: 0; transition: opacity var(--t-fast), color var(--t-fast);
-    }
-    .bb-page-card:hover .bb-page-card__close,
-    .bb-page-card.active .bb-page-card__close { opacity: 1; }
-    .bb-page-card__close:hover { color: var(--danger); }
+    /* Pages list — the page-preview cards are styled by the .bb-page-grid /
+       .bb-page-thumb* block below (multi-file-workspace polish Item 2b). The old
+       single-column .bb-page-card text-row rules were removed when renderPagesTab
+       moved to the 2-column thumbnail grid (they were orphaned — the renderer no
+       longer emits any bb-page-card* class). */
     .bb-page-actions {
       display: flex; gap: 6px; padding: 4px 0 10px;
       border-bottom: 1px solid var(--border); margin-bottom: 10px;
@@ -1347,6 +1403,102 @@
     .bb-page-actions button:hover {
       background: var(--surface-3); border-color: var(--border-2);
     }
+
+    /* multi-file-workspace polish (Item 2b) — 2-column thumbnail grid.
+       Replaces the old single-column .bb-page-card text rows with compact
+       page-preview cards (thumbnail box + number badge + size tag). Thumbnails
+       come from js/85 via window.pageThumbRequest; cards are placeholder-first
+       and fill in progressively. Themes across all 5 palettes via the tokens. */
+    .bb-page-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 8px;
+      align-content: start;
+    }
+    .bb-page-thumb {
+      position: relative;
+      display: flex; flex-direction: column;
+      padding: 4px;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: var(--r-2);
+      cursor: pointer;
+      transition: background var(--t-fast), border-color var(--t-fast), box-shadow var(--t-fast);
+    }
+    .bb-page-thumb:hover {
+      background: var(--surface-3);
+      border-color: var(--border-2);
+    }
+    .bb-page-thumb.active {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 1px var(--accent), 0 1px 4px rgba(0,0,0,0.18);
+      background: var(--accent-bg);
+    }
+    /* Preview box — aspect set inline (page.size w/h) so portrait vs landscape
+       reads before the bitmap lands; default A1-ish landscape fallback. */
+    .bb-page-thumb__box {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 841 / 594;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--r-1);
+      overflow: hidden;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .bb-page-thumb__img {
+      display: block;
+      width: 100%; height: 100%;
+      object-fit: contain;
+    }
+    /* Faint page-number shown until the thumbnail fills in. Hidden once a real
+       preview is attached (box gets .has-thumb). */
+    .bb-page-thumb__ph {
+      font-family: var(--font-mono); font-size: var(--fs-md);
+      color: var(--text-faint);
+      letter-spacing: var(--tracking-wide);
+      pointer-events: none;
+    }
+    .bb-page-thumb__box.has-thumb .bb-page-thumb__ph { display: none; }
+    /* Footer — page-number badge + optional size tag. */
+    .bb-page-thumb__foot {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 4px; padding: 4px 2px 1px;
+    }
+    .bb-page-thumb__num {
+      font-family: var(--font-mono); font-size: 10px; font-weight: 600;
+      color: var(--text-mute);
+      min-width: 14px; height: 14px;
+      display: inline-flex; align-items: center; justify-content: center;
+      padding: 0 4px;
+      background: var(--surface-3);
+      border-radius: var(--r-1);
+      letter-spacing: var(--tracking-wide);
+    }
+    .bb-page-thumb.active .bb-page-thumb__num {
+      color: var(--accent-ink, #fff);
+      background: var(--accent);
+    }
+    .bb-page-thumb__tag {
+      font-family: var(--font-mono); font-size: 9px;
+      color: var(--text-subtle);
+      letter-spacing: var(--tracking-wide); text-transform: uppercase;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .bb-page-thumb__close {
+      position: absolute; right: 2px; top: 2px;
+      width: 16px; height: 16px;
+      font-size: 13px; line-height: 1;
+      display: inline-flex; align-items: center; justify-content: center;
+      color: var(--text-subtle);
+      background: var(--surface-2); border: 1px solid var(--border);
+      border-radius: var(--r-1);
+      cursor: pointer; padding: 0;
+      opacity: 0; transition: opacity var(--t-fast), color var(--t-fast), border-color var(--t-fast);
+    }
+    .bb-page-thumb:hover .bb-page-thumb__close,
+    .bb-page-thumb.active .bb-page-thumb__close { opacity: 1; }
+    .bb-page-thumb__close:hover { color: var(--danger); border-color: var(--danger); }
 
     /* Layers list — design's .layer row spec.
        Existing renderer emits inline style.cssText; the V25 renderer drops

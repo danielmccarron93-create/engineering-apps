@@ -23,14 +23,28 @@ function render() {
   ctx.fillStyle = cs.getPropertyValue('--workspace-bg').trim();
   ctx.fillRect(0, 0, W, H);
 
-  // Draw A1 sheet
+  // Draw the page rectangle (size follows the active page via activePageSize()).
   drawSheet(cs);
+
+  // multi-file-workspace: PDF-backed pages paint their source page here —
+  // under all markup, after the page fill. Guarded so it's a no-op until the
+  // PDF pipeline (later phase) defines drawPdfBackground + sets page.bg.
+  if (typeof drawPdfBackground === 'function') {
+    const _pg = (typeof activePage === 'function') ? activePage() : null;
+    if (_pg && _pg.bg) drawPdfBackground(ctx, _pg);
+  }
 
   // Draw grid on sheet (if enabled)
   if (gridOn) drawSheetGrid(cs);
 
-  // Draw drawing frame and title block
-  drawDrawingFrame(cs);
+  // Draw drawing frame and title block — only for pages that carry one.
+  // Imported PDF pages set hasTitleBlock:false (PDF + markup only), so they get
+  // no title-block strip and no drawing-area margins, just the page rect.
+  // Native pages default to true, so this stays byte-identical.
+  if (typeof pageHasTitleBlock !== 'function'
+      || pageHasTitleBlock(typeof activePage === 'function' ? activePage() : null)) {
+    drawDrawingFrame(cs);
+  }
 
   // Draw projection lines between views
   drawProjectionLines(cs);

@@ -653,15 +653,22 @@ function drawMem2D(blk, ent, cs) {
       };
       const xA = (y) => trims && trims.a ? trims.a.uAtV(y) : capX(y, 0, capA);
       const xB = (y) => trims && trims.b ? trims.b.uAtV(y) : capX(y, len, capB);
-      fillPoly([[xA(T), T], [xB(T), T], [xB(B), B], [xA(B), B]]);
+      // weld-priority-truss — poly-cap (kinked multi-cutter face). See SHS branch.
+      const aPts = _v25CapPts(xA, T, trims && trims.a ? trims.a.kinks : null);
+      const bPts = _v25CapPts(xB, T, trims && trims.b ? trims.b.kinks : null);
+      // Per-segment strokeLine so the cap goes through the AS 1100 depth-occlusion
+      // clip (solid → dashed hidden where a front member covers it), like the
+      // single-line cap it replaces — while still drawing the kink.
+      const strokeCapPts = (pts) => { for (let i = 0; i < pts.length - 1; i++) strokeLine(pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1]); };
+      fillPoly([aPts[0], ...bPts, ...aPts.slice(1).reverse()]);
       ctx.lineWidth = cutLW;
       strokeLine(xA(T), T, xB(T), T);   // flange tip (top edge)
       strokeLine(xA(B), B, xB(B), B);   // flange tip (bottom edge)
       if (capA) strokeLine(capA.topLocalX, T, capA.botLocalX, B);
-      else if (trims && trims.a) strokeLine(xA(T), T, xA(B), B);
+      else if (trims && trims.a) strokeCapPts(aPts);
       else drawEndCap(0, T, B, ent.endA || 'normal', -1);
       if (capB) strokeLine(capB.topLocalX, T, capB.botLocalX, B);
-      else if (trims && trims.b) strokeLine(xB(T), T, xB(B), B);
+      else if (trims && trims.b) strokeCapPts(bPts);
       else drawEndCap(len, T, B, ent.endB || 'normal', +1);
       // Hidden web — two dashed lines at ±tw/2 sitting behind the flange.
       ctx.strokeStyle = hidCol; ctx.lineWidth = hidLW; ctx.setLineDash(hidDashPx);
@@ -673,9 +680,9 @@ function drawMem2D(blk, ent, cs) {
       strokeLine(clMinF, 0, clMaxF, 0);
       ctx.setLineDash([]); ctx.strokeStyle = col;
       const weldAf = capA || (trims && trims.a
-        ? { topLocalX: xA(T), botLocalX: xA(B), weldSize: trims.a.weldSize || 6 } : null);
+        ? { topLocalX: xA(T), botLocalX: xA(B), weldSize: trims.a.weldSize || 6, pts: aPts } : null);
       const weldBf = capB || (trims && trims.b
-        ? { topLocalX: xB(T), botLocalX: xB(B), weldSize: trims.b.weldSize || 6 } : null);
+        ? { topLocalX: xB(T), botLocalX: xB(B), weldSize: trims.b.weldSize || 6, pts: bPts } : null);
       _drawCapWeld(weldAf, T, project);
       _drawCapWeld(weldBf, T, project);
     } else {
@@ -702,13 +709,15 @@ function drawMem2D(blk, ent, cs) {
       // end face so both flange edges land flush on the host.
       const xA = (y) => trims && trims.a ? trims.a.uAtV(y) : capX(y, 0, capA);
       const xB = (y) => trims && trims.b ? trims.b.uAtV(y) : capX(y, len, capB);
-      // Fill polygon — straight cap on each end (the cut is linear, no kink).
-      const fillPts = [];
-      fillPts.push([xA(T), T]);
-      fillPts.push([xB(T), T]);
-      fillPts.push([xB(B), B]);
-      fillPts.push([xA(B), B]);
-      fillPoly(fillPts);
+      // weld-priority-truss — poly-cap (kinked multi-cutter face). See SHS branch.
+      // The flange edge lines stay at fixed y (they meet the cut at xA/xB(y)).
+      const aPts = _v25CapPts(xA, T, trims && trims.a ? trims.a.kinks : null);
+      const bPts = _v25CapPts(xB, T, trims && trims.b ? trims.b.kinks : null);
+      // Per-segment strokeLine so the cap goes through the AS 1100 depth-occlusion
+      // clip (solid → dashed hidden where a front member covers it), like the
+      // single-line cap it replaces — while still drawing the kink.
+      const strokeCapPts = (pts) => { for (let i = 0; i < pts.length - 1; i++) strokeLine(pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1]); };
+      fillPoly([aPts[0], ...bPts, ...aPts.slice(1).reverse()]);
       ctx.lineWidth = cutLW;
       strokeLine(xA(T),     T,     xB(T),     T);      // top flange (top edge)
       strokeLine(xA(ftBot), ftBot, xB(ftBot), ftBot);  // top flange (under-edge)
@@ -717,14 +726,14 @@ function drawMem2D(blk, ent, cs) {
       if (capA) {
         strokeLine(capA.topLocalX, T, capA.botLocalX, B);
       } else if (trims && trims.a) {
-        strokeLine(xA(T), T, xA(B), B);
+        strokeCapPts(aPts);
       } else {
         drawEndCap(0, T, B, ent.endA || 'normal', -1);
       }
       if (capB) {
         strokeLine(capB.topLocalX, T, capB.botLocalX, B);
       } else if (trims && trims.b) {
-        strokeLine(xB(T), T, xB(B), B);
+        strokeCapPts(bPts);
       } else {
         drawEndCap(len, T, B, ent.endB || 'normal', +1);
       }
@@ -738,10 +747,10 @@ function drawMem2D(blk, ent, cs) {
       // Fillet weld hatching along each mitre cap. Auto-joint trims need a
       // synthesised cap so the hatch follows the cut line — see SHS branch.
       const weldA_ub = capA || (trims && trims.a
-        ? { topLocalX: xA(T), botLocalX: xA(B), weldSize: trims.a.weldSize || 6 }
+        ? { topLocalX: xA(T), botLocalX: xA(B), weldSize: trims.a.weldSize || 6, pts: aPts }
         : null);
       const weldB_ub = capB || (trims && trims.b
-        ? { topLocalX: xB(T), botLocalX: xB(B), weldSize: trims.b.weldSize || 6 }
+        ? { topLocalX: xB(T), botLocalX: xB(B), weldSize: trims.b.weldSize || 6, pts: bPts }
         : null);
       _drawCapWeld(weldA_ub, T, project);
       _drawCapWeld(weldB_ub, T, project);
@@ -824,7 +833,14 @@ function drawMem2D(blk, ent, cs) {
       };
       const xA = (y) => trims && trims.a ? trims.a.uAtV(y) : capX(y, 0, capA);
       const xB = (y) => trims && trims.b ? trims.b.uAtV(y) : capX(y, len, capB);
-      fillPoly([[xA(T), T], [xB(T), T], [xB(B), B], [xA(B), B]]);
+      // weld-priority-truss — poly-cap (kinked multi-cutter face). See SHS branch.
+      const aPts = _v25CapPts(xA, T, trims && trims.a ? trims.a.kinks : null);
+      const bPts = _v25CapPts(xB, T, trims && trims.b ? trims.b.kinks : null);
+      // Per-segment strokeLine so the cap goes through the AS 1100 depth-occlusion
+      // clip (solid → dashed hidden where a front member covers it), like the
+      // single-line cap it replaces — while still drawing the kink.
+      const strokeCapPts = (pts) => { for (let i = 0; i < pts.length - 1; i++) strokeLine(pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1]); };
+      fillPoly([aPts[0], ...bPts, ...aPts.slice(1).reverse()]);
       ctx.lineWidth = cutLW;
       strokeLine(xA(T), T, xB(T), T);   // top flange tip (outer — always solid)
       strokeLine(xA(B), B, xB(B), B);   // bottom flange tip (outer — always solid)
@@ -837,14 +853,14 @@ function drawMem2D(blk, ent, cs) {
       if (capA) {
         strokeLine(capA.topLocalX, T, capA.botLocalX, B);
       } else if (trims && trims.a) {
-        strokeLine(xA(T), T, xA(B), B);
+        strokeCapPts(aPts);
       } else {
         drawEndCap(0, T, B, ent.endA || 'normal', -1);
       }
       if (capB) {
         strokeLine(capB.topLocalX, T, capB.botLocalX, B);
       } else if (trims && trims.b) {
-        strokeLine(xB(T), T, xB(B), B);
+        strokeCapPts(bPts);
       } else {
         drawEndCap(len, T, B, ent.endB || 'normal', +1);
       }
@@ -854,10 +870,10 @@ function drawMem2D(blk, ent, cs) {
       strokeLine(clMinPfc, 0, clMaxPfc, 0);
       ctx.setLineDash([]); ctx.strokeStyle = col;
       const weldA_pfc = capA || (trims && trims.a
-        ? { topLocalX: xA(T), botLocalX: xA(B), weldSize: trims.a.weldSize || 6 }
+        ? { topLocalX: xA(T), botLocalX: xA(B), weldSize: trims.a.weldSize || 6, pts: aPts }
         : null);
       const weldB_pfc = capB || (trims && trims.b
-        ? { topLocalX: xB(T), botLocalX: xB(B), weldSize: trims.b.weldSize || 6 }
+        ? { topLocalX: xB(T), botLocalX: xB(B), weldSize: trims.b.weldSize || 6, pts: bPts }
         : null);
       _drawCapWeld(weldA_pfc, T, project);
       _drawCapWeld(weldB_pfc, T, project);
@@ -923,30 +939,34 @@ function drawMem2D(blk, ent, cs) {
       // already worked this way; the auto-joint pathway now matches.
       const xA = (y) => trims && trims.a ? trims.a.uAtV(y) : capX(y, 0, capA);
       const xB = (y) => trims && trims.b ? trims.b.uAtV(y) : capX(y, len, capB);
-      // Fill polygon — straight cap on each end (no kink; the cut is linear,
-      // so a midpoint vertex would just be collinear noise).
-      const fillPts = [];
-      fillPts.push([xA(hB), hB]);
-      fillPts.push([xB(hB), hB]);
-      fillPts.push([xB(-hB), -hB]);
-      fillPts.push([xA(-hB), -hB]);
-      fillPoly(fillPts);
+      // weld-priority-truss — poly-cap. A multi-cutter cut face is kinked (a
+      // brace nestling into a corner), so sample the trim's uAtV at +hB, the
+      // interior kink heights, then -hB. A single-cutter / mitre cut yields just
+      // the two corner points (visually identical to the old straight cap).
+      const aPts = _v25CapPts(xA, hB, trims && trims.a ? trims.a.kinks : null);
+      const bPts = _v25CapPts(xB, hB, trims && trims.b ? trims.b.kinks : null);
+      // Per-segment strokeLine so the cap goes through the AS 1100 depth-occlusion
+      // clip (solid → dashed hidden where a front member covers it) while still
+      // drawing the kink.
+      const strokeCapPts = (pts) => { for (let i = 0; i < pts.length - 1; i++) strokeLine(pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1]); };
+      // Fill polygon — top edge A→B, B cap (top→bottom incl. kinks), bottom edge
+      // B→A, A cap (bottom→top incl. kinks).
+      fillPoly([aPts[0], ...bPts, ...aPts.slice(1).reverse()]);
       ctx.lineWidth = cutLW;
       strokeLine(xA(hB),  hB,  xB(hB),  hB);   // top outer
       strokeLine(xA(-hB), -hB, xB(-hB), -hB);  // bottom outer
-      // End caps: straight sloped line for any joint cut, otherwise the
-      // original endA/endB end-cap glyph.
+      // End caps: poly-cap for a joint cut, otherwise the original end-cap glyph.
       if (capA) {
         strokeLine(capA.topLocalX, hB, capA.botLocalX, -hB);
       } else if (trims && trims.a) {
-        strokeLine(xA(hB), hB, xA(-hB), -hB);
+        strokeCapPts(aPts);
       } else {
         drawEndCap(0, hB, -hB, ent.endA || 'normal', -1);
       }
       if (capB) {
         strokeLine(capB.topLocalX, hB, capB.botLocalX, -hB);
       } else if (trims && trims.b) {
-        strokeLine(xB(hB), hB, xB(-hB), -hB);
+        strokeCapPts(bPts);
       } else {
         drawEndCap(len, hB, -hB, ent.endB || 'normal', +1);
       }
@@ -983,10 +1003,10 @@ function drawMem2D(blk, ent, cs) {
       // along it without caring whether the cut came from the legacy explicit
       // join (capA/capB) or the auto-joint detector (trims.a/trims.b).
       const weldA = capA || (trims && trims.a
-        ? { topLocalX: xA(hB), botLocalX: xA(-hB), weldSize: trims.a.weldSize || 6 }
+        ? { topLocalX: xA(hB), botLocalX: xA(-hB), weldSize: trims.a.weldSize || 6, pts: aPts }
         : null);
       const weldB = capB || (trims && trims.b
-        ? { topLocalX: xB(hB), botLocalX: xB(-hB), weldSize: trims.b.weldSize || 6 }
+        ? { topLocalX: xB(hB), botLocalX: xB(-hB), weldSize: trims.b.weldSize || 6, pts: bPts }
         : null);
       _drawCapWeld(weldA, hB, project);
       _drawCapWeld(weldB, hB, project);
@@ -995,33 +1015,54 @@ function drawMem2D(blk, ent, cs) {
   } finally { ctx.globalAlpha = _opacityWas; }
 }
 
-// Render fillet-weld hatching (45° tick marks) along an auto-mitre cap line.
-// Drawn in the BRACE's local frame; `project` maps local→pixel coords. Small
-// no-op when no cap is present.
+// weld-priority-truss — cap polyline (member-local) from +hd to -hd along a
+// trim's cut face, inserting interior kink vertices (in descending y) so a
+// multi-cutter cap follows the true kinked face (a brace nestling into a
+// corner). xFn maps local-y → local-x (= the trim's uAtV).
+function _v25CapPts(xFn, hd, kinks) {
+  const ys = [hd];
+  if (kinks && kinks.length) {
+    for (const k of kinks.slice().sort((a, b) => b - a)) {
+      if (k < hd - 1e-4 && k > -hd + 1e-4) ys.push(k);
+    }
+  }
+  ys.push(-hd);
+  return ys.map(y => [xFn(y), y]);
+}
+
+// Render fillet-weld hatching (45° tick marks) along a cap. Drawn in the BRACE's
+// local frame; `project` maps local→pixel coords. Accepts either a straight cap
+// (cap.topLocalX/botLocalX) or a kinked poly-cap (cap.pts = [[x,y],...]); the
+// hatch follows every segment. No-op when no cap is present.
 function _drawCapWeld(cap, hd, project) {
   if (!cap) return;
   const ws = Math.max(3, cap.weldSize || 6);
-  const x1 = cap.topLocalX, y1 = hd;
-  const x2 = cap.botLocalX, y2 = -hd;
-  const capLen = Math.hypot(x2 - x1, y2 - y1);
-  if (capLen < ws * 0.5) return;
-  const nx = (x2 - x1) / capLen, ny = (y2 - y1) / capLen;
-  // Tick direction: cap unit vector rotated -45°.
+  const pts = (cap.pts && cap.pts.length >= 2)
+    ? cap.pts
+    : [[cap.topLocalX, hd], [cap.botLocalX, -hd]];
   const c45 = Math.SQRT1_2;
-  const tnx = nx * c45 + ny * c45;
-  const tny = ny * c45 - nx * c45;
-  const tickStep = Math.max(ws * 1.4, capLen / 8);
-  const tickLen = ws * 1.6;
   ctx.save();
   ctx.lineWidth = Math.max(0.5, ws * 0.18 * ppm());
   ctx.setLineDash([]);
   ctx.beginPath();
-  for (let s = tickStep / 2; s < capLen; s += tickStep) {
-    const cx = x1 + s * nx, cy = y1 + s * ny;
-    const ax = cx - 0.5 * tickLen * tnx, ay = cy - 0.5 * tickLen * tny;
-    const bx = cx + 0.5 * tickLen * tnx, by = cy + 0.5 * tickLen * tny;
-    const a = project(ax, ay), b = project(bx, by);
-    ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
+  for (let seg = 0; seg < pts.length - 1; seg++) {
+    const x1 = pts[seg][0], y1 = pts[seg][1];
+    const x2 = pts[seg + 1][0], y2 = pts[seg + 1][1];
+    const segLen = Math.hypot(x2 - x1, y2 - y1);
+    if (segLen < ws * 0.5) continue;
+    const nx = (x2 - x1) / segLen, ny = (y2 - y1) / segLen;
+    // Tick direction: segment unit vector rotated -45°.
+    const tnx = nx * c45 + ny * c45;
+    const tny = ny * c45 - nx * c45;
+    const tickStep = Math.max(ws * 1.4, segLen / 8);
+    const tickLen = ws * 1.6;
+    for (let d = tickStep / 2; d < segLen; d += tickStep) {
+      const cx = x1 + d * nx, cy = y1 + d * ny;
+      const ax = cx - 0.5 * tickLen * tnx, ay = cy - 0.5 * tickLen * tny;
+      const bx = cx + 0.5 * tickLen * tnx, by = cy + 0.5 * tickLen * tny;
+      const a = project(ax, ay), b = project(bx, by);
+      ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
+    }
   }
   ctx.stroke();
   ctx.restore();
@@ -1077,27 +1118,51 @@ function v25ResetSnapState() {
 function v25ApplySnap(blk, draggedEnts) {
   const snaps = [];
   if (!blk || !Array.isArray(draggedEnts) || draggedEnts.length === 0) return snaps;
-  const tol = 2;       // mm — catch zone (matches 3D)
-  const breakTol = 3;  // mm — release zone
+  // Catch/break in SCREEN px (converted to the mm the edge-compare below uses),
+  // so the magnet feels the same at any zoom instead of vanishing when zoomed
+  // out / grabbing when zoomed in (the old fixed 2 mm was sub-pixel at normal
+  // detail zoom, so it effectively never caught). px-per-real-mm = zoom/scale.
+  const _pxPerMM = (typeof viewport !== 'undefined' && viewport.zoom && drawingScale)
+    ? viewport.zoom / drawingScale : 1;
+  const tol = 3 / _pxPerMM;       // mm — catch zone (~3 px on screen, subtle)
+  const breakTol = 5 / _pxPerMM;  // mm — release zone (~5 px, 2px hysteresis)
   const arr = entities2D[blk.viewKey] || [];
   const draggedIds = new Set(draggedEnts.map(e => e && e.id).filter(id => id != null));
 
-  // Edge collection — only mem2 participates after Phase 2 retired the v1
-  // V25 plate path. v2 plates body-snap will land when Phase 3+ wires v2
-  // grip handles into v25ApplySnap (or its v2 successor).
+  // Edge collection. mem2 → its centreline/ends/faces (v25Mem2Edges). Fixings
+  // (bolt2/screw/stud) → the two centre lines through their placement point: a
+  // vertical line (axis 'u', value = ent.u) and a horizontal line (axis 'v',
+  // value = ent.v). Aligning a fixing's u onto another fixing's u puts the two
+  // shafts in the same vertical plane — the common detailing case. (v1 V25
+  // plates were retired here in Phase 2; v2 plates ride their own pipeline.)
+  const FASTENER_TYPES = { bolt2: 1, screw: 1, stud: 1 };
   const edgesFor = (ent) => {
     if (!ent) return [];
     if (ent.type === 'mem2') return v25Mem2Edges(ent);
+    if (FASTENER_TYPES[ent.type]) {
+      const lbl = (ent.type === 'bolt2' ? 'BOLT' : ent.type.toUpperCase()) + ' centre';
+      return [
+        { axis: 'u', value: ent.u, label: lbl, srcU: ent.u, srcV: ent.v, srcId: ent.id, srcType: ent.type },
+        { axis: 'v', value: ent.v, label: lbl, srcU: ent.u, srcV: ent.v, srcId: ent.id, srcType: ent.type },
+      ];
+    }
     return [];
   };
 
-  // Collect target edges from every other mem2 in this view.
+  // Collect target edges. Member edges are always targets. Other fixings'
+  // centre lines are targets only when the thing being dragged is itself a
+  // fixing — so dragging a member still snaps member-to-member only (Dan's
+  // spec: a member aligns to similar members / member edges), while a dragged
+  // fixing also aligns to other fixings.
+  const draggedIsFastener = draggedEnts.some(e => e && FASTENER_TYPES[e.type]);
   const targets = [];
   for (const e of arr) {
     if (!e) continue;
-    if (e.type !== 'mem2') continue;
     if (draggedIds.has(e.id)) continue;
-    for (const edge of edgesFor(e)) targets.push(edge);
+    if (e.type === 'mem2') { for (const edge of edgesFor(e)) targets.push(edge); }
+    else if (draggedIsFastener && FASTENER_TYPES[e.type]) {
+      for (const edge of edgesFor(e)) targets.push(edge);
+    }
   }
   if (targets.length === 0) {
     v25ResetSnapState();
@@ -1108,7 +1173,8 @@ function v25ApplySnap(blk, draggedEnts) {
   let bestU = null, bestDistU = Infinity;
   let bestV = null, bestDistV = Infinity;
   for (const ent of draggedEnts) {
-    if (!ent || ent.type !== 'mem2') continue;
+    if (!ent) continue;
+    if (ent.type !== 'mem2' && !FASTENER_TYPES[ent.type]) continue;
     const myEdges = edgesFor(ent);
     for (const me of myEdges) {
       for (const te of targets) {
@@ -1116,10 +1182,10 @@ function v25ApplySnap(blk, draggedEnts) {
         const d = Math.abs(me.value - te.value);
         if (me.axis === 'u' && d < bestDistU) {
           bestDistU = d;
-          bestU = { delta: te.value - me.value, target: te };
+          bestU = { delta: te.value - me.value, target: te, dragEnt: ent };
         } else if (me.axis === 'v' && d < bestDistV) {
           bestDistV = d;
-          bestV = { delta: te.value - me.value, target: te };
+          bestV = { delta: te.value - me.value, target: te, dragEnt: ent };
         }
       }
     }
@@ -1139,31 +1205,58 @@ function v25ApplySnap(blk, draggedEnts) {
     if (Array.isArray(e.pts)) e.pts.forEach(p => { p.v += delta; });
   });
 
+  // Build a snap descriptor; when both the dragged thing and the target are
+  // fixings, attach the two fixing points so drawEdgeSnapLines() can paint a
+  // faint dotted connector instead of the loud full-canvas guide (Ask B).
+  const _mkSnap = (axis, best) => {
+    const d = { axis, value: best.target.value, label: best.target.label };
+    const de = best.dragEnt;
+    if (best.target.srcId != null && FASTENER_TYPES[best.target.srcType]
+        && de && FASTENER_TYPES[de.type]) {
+      d.isFixingConnector = true;
+      d.dragFixingU = de.u; d.dragFixingV = de.v;          // refreshed post-apply below
+      d.targetFixingU = best.target.srcU; d.targetFixingV = best.target.srcV;
+      d._dragEnt = de;                                     // live ref; stripped after both axes apply
+    }
+    return d;
+  };
+
   // U-axis soft-snap state machine.
   if (_v25SnappedAxisU) {
     if (bestU && bestDistU < breakTol) {
       applyU(bestU.delta);
-      snaps.push({ axis: 'u', value: bestU.target.value, label: bestU.target.label });
+      snaps.push(_mkSnap('u', bestU));
     } else {
       _v25SnappedAxisU = false;
     }
   } else if (bestU && bestDistU < tol) {
     applyU(bestU.delta);
-    snaps.push({ axis: 'u', value: bestU.target.value, label: bestU.target.label });
+    snaps.push(_mkSnap('u', bestU));
     _v25SnappedAxisU = true;
   }
   // V-axis soft-snap state machine.
   if (_v25SnappedAxisV) {
     if (bestV && bestDistV < breakTol) {
       applyV(bestV.delta);
-      snaps.push({ axis: 'v', value: bestV.target.value, label: bestV.target.label });
+      snaps.push(_mkSnap('v', bestV));
     } else {
       _v25SnappedAxisV = false;
     }
   } else if (bestV && bestDistV < tol) {
     applyV(bestV.delta);
-    snaps.push({ axis: 'v', value: bestV.target.value, label: bestV.target.label });
+    snaps.push(_mkSnap('v', bestV));
     _v25SnappedAxisV = true;
+  }
+  // Re-read the connector's dragged endpoint AFTER both axes have applied, so on
+  // the rare simultaneous both-axes catch the U-connector (built before applyV)
+  // doesn't sit a few px off in V — and vice versa. Single-axis is already exact;
+  // this just makes it exact in every case. Strip the live ref so the descriptor
+  // stays plain data for drawEdgeSnapLines().
+  for (const s of snaps) {
+    if (s.isFixingConnector && s._dragEnt) {
+      s.dragFixingU = s._dragEnt.u; s.dragFixingV = s._dragEnt.v;
+      delete s._dragEnt;
+    }
   }
   return snaps;
 }
@@ -1755,6 +1848,85 @@ function v25OpenEndCapPopup(ent, which, clientX, clientY) {
   setTimeout(() => {
     document.addEventListener('mousedown', _v25EndCapPopupOutside, true);
     document.addEventListener('keydown', _v25EndCapPopupKey, true);
+  }, 0);
+}
+
+// ============================================================
+// weld-priority-truss — weld-priority dropdown popup
+// ============================================================
+// Floating popup (mirrors v25OpenEndCapPopup) for setting a welded member's
+// priority in a truss/multi-member joint. Opened by double-clicking a welded
+// member's body (js/39-events.js) or its joint node (showJointPopupV25, js/23a).
+// Shows: a one-click "Run through" (= priority 1), a Mitre/1..N dropdown, and a
+// live list of every member in the connected weld group badged SOLID/MITRE/CUT.
+let _v25WeldPriPopup = null;
+function _v25WeldPriPopupOutside(e) {
+  if (_v25WeldPriPopup && !_v25WeldPriPopup.contains(e.target)) v25CloseWeldPriPopup();
+}
+function _v25WeldPriPopupKey(e) {
+  if (e.key === 'Escape') { v25CloseWeldPriPopup(); e.preventDefault(); }
+}
+function v25CloseWeldPriPopup() {
+  if (_v25WeldPriPopup) { _v25WeldPriPopup.remove(); _v25WeldPriPopup = null; }
+  document.removeEventListener('mousedown', _v25WeldPriPopupOutside, true);
+  document.removeEventListener('keydown', _v25WeldPriPopupKey, true);
+}
+function v25OpenWeldPriorityPopup(ent, viewKey, clientX, clientY) {
+  v25CloseWeldPriPopup();
+  if (typeof v25CloseEndCapPopup === 'function') v25CloseEndCapPopup();
+  if (typeof closeJointPopup === 'function') closeJointPopup();
+  if (!ent || ent.type !== 'mem2') return;
+  const pop = document.createElement('div');
+  pop.style.cssText = 'position:fixed;z-index:1700;min-width:236px;max-width:300px;padding:10px 12px;display:flex;flex-direction:column;gap:8px;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;box-shadow:var(--shadow-md, 0 4px 16px rgba(0,0,0,.18));font:12px var(--font-sans, system-ui);color:var(--text)';
+  document.body.appendChild(pop);
+  _v25WeldPriPopup = pop;
+
+  const secLabel = (e) => (((e.memberType ? e.memberType.toUpperCase() : '') + ' ' + (e.section || '')).trim()) || ('#' + e.id);
+  const badgeColour = (st) => st === 'SOLID' ? '#2e8b57' : (st === 'MITRE' ? 'var(--text-mute, #888)' : 'var(--accent, #c0392b)');
+
+  const render = () => {
+    const comp = v25WeldComponent(ent, viewKey);
+    const N = comp.length;
+    const cur = v25WeldPriorityCurrentValue(ent, viewKey);
+    const isCorner = v25IsPlain2MemberCorner(ent, viewKey);
+    let opts = '';
+    if (isCorner) opts += `<option value="mitre"${cur === 'mitre' ? ' selected' : ''}>Mitre (corner)</option>`;
+    for (let i = 1; i <= N; i++) {
+      opts += `<option value="${i}"${cur === String(i) ? ' selected' : ''}>Priority ${i}${i === 1 ? ' (solid / through)' : ''}</option>`;
+    }
+    const rows = comp.map(e => {
+      const st = v25MemberCutState(e, viewKey);
+      const me = e.id === ent.id;
+      return `<div style="display:flex;align-items:center;gap:6px;padding:2px 0;${me ? 'font-weight:700;' : 'opacity:.75;'}">`
+        + `<span style="flex:1;font-family:var(--font-mono, monospace);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${me ? '▸ ' : ''}#${e.id} · ${secLabel(e)}</span>`
+        + `<span style="font-size:10px;font-weight:700;color:${badgeColour(st)}">${st}</span></div>`;
+    }).join('');
+    pop.innerHTML =
+      `<div style="font-weight:700;font-size:10px;letter-spacing:.06em;color:var(--text-mute);text-transform:uppercase">Weld priority — #${ent.id}</div>`
+      + `<button id="v25wp-through" type="button" style="padding:5px 8px;border:1px solid var(--border);border-radius:5px;background:var(--surface-3);color:var(--text);cursor:pointer;font:12px var(--font-sans, system-ui);text-align:left">▲ Run through (make solid)</button>`
+      + `<select id="v25wp-sel" style="padding:4px 6px;border:1px solid var(--border);border-radius:4px;background:var(--surface-2);color:var(--text);font:12px system-ui">${opts}</select>`
+      + `<div style="border-top:1px solid var(--border);padding-top:6px;display:flex;flex-direction:column;gap:1px;max-height:240px;overflow:auto">${rows}</div>`;
+    const sel = pop.querySelector('#v25wp-sel');
+    sel.addEventListener('change', () => {
+      if (sel.value === 'mitre') { if (typeof v25SetCornerMitre === 'function') v25SetCornerMitre(ent, viewKey); }
+      else { const r = parseInt(sel.value, 10); if (r >= 1 && typeof v25AssignRankInsertShift === 'function') v25AssignRankInsertShift(ent, viewKey, r); }
+      if (typeof v25UpdateInspector === 'function') v25UpdateInspector();
+      render();   // keep the popup open; refresh the live badges
+    });
+    pop.querySelector('#v25wp-through').addEventListener('click', () => {
+      if (typeof v25MakeMemberThrough === 'function') v25MakeMemberThrough(ent, viewKey);
+      if (typeof v25UpdateInspector === 'function') v25UpdateInspector();
+      render();
+    });
+  };
+  render();
+
+  const W = 260, H = 96 + (v25WeldComponent(ent, viewKey).length + 1) * 20;
+  pop.style.left = Math.min(clientX + 12, window.innerWidth  - W - 8) + 'px';
+  pop.style.top  = Math.min(clientY + 12, window.innerHeight - H - 8) + 'px';
+  setTimeout(() => {
+    document.addEventListener('mousedown', _v25WeldPriPopupOutside, true);
+    document.addEventListener('keydown', _v25WeldPriPopupKey, true);
   }, 0);
 }
 

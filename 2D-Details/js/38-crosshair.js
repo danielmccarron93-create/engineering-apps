@@ -352,6 +352,45 @@ function drawClickPreview(blk, cs) {
   else if (tool === 'v25-stiffener' && typeof v25PreviewStiffener === 'function') {
     v25PreviewStiffener(blk, cu, cv);
   }
+  // Dimension / measure placement preview (v25 'dim2' entity — see js/82)
+  else if (tool === 'v25-measure' && blk) {
+    const seed = (typeof v25Last === 'object' && v25Last) ? v25Last : {};
+    if (!v25State.dragStart) {
+      // armed, awaiting first point — a small marker rides the snapped cursor
+      const p = real2px(blk, cu, cv);
+      ctx.setLineDash([]); ctx.strokeStyle = '#00aaff'; ctx.lineWidth = 1.2;
+      ctx.beginPath(); ctx.arc(p.x, p.y, 4, 0, Math.PI * 2); ctx.stroke();
+    } else {
+      // rubber-band: render a ghost dimension with the real drawer (pixel-identical)
+      const a = v25State.dragStart;
+      const ghost = {
+        type: 'dim2', _v25: true, _preview: true,
+        p1u: a.u, p1v: a.v, p2u: cu, p2v: cv,
+        off: (typeof dim2DefaultOff === 'function') ? dim2DefaultOff(blk, a.u, a.v, cu, cv, seed.dimOffset) : 12,
+        term: seed.dimTerm || 'tick',
+        style: seed.dimStyle || 'plex',
+        sz: (typeof seed.dimTextH === 'number') ? seed.dimTextH : 2.5,
+        prec: (typeof seed.dimPrec === 'number') ? seed.dimPrec : 0,
+        units: seed.dimUnits || 'mm',
+        opacity: 0.55,
+      };
+      if (typeof drawDim2_2D === 'function') drawDim2_2D(blk, ghost, cs);
+      // live length readout pill near the cursor
+      const rubberLen = Math.hypot(cu - a.u, cv - a.v);
+      if (rubberLen > 0.5) {
+        const pCur = real2px(blk, cu, cv);
+        const dimText = Math.round(rubberLen) + ' mm';
+        ctx.font = `bold 11px 'Segoe UI', sans-serif`;
+        const tw = ctx.measureText(dimText).width + 16, th = 20;
+        const rx = pCur.x + 15, ry = pCur.y - th - 5;
+        ctx.setLineDash([]); ctx.fillStyle = 'rgba(30,30,30,0.85)';
+        ctx.beginPath(); ctx.roundRect(rx, ry, tw, th, 4); ctx.fill();
+        ctx.fillStyle = '#fff'; ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+        ctx.fillText(dimText, rx + 6, ry + 5);
+        ctx.textAlign = 'start'; ctx.textBaseline = 'alphabetic';
+      }
+    }
+  }
   ctx.setLineDash([]);
 }
 

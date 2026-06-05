@@ -14,12 +14,21 @@ function setTool(t) {
   boltGroupConfig = null; weldStep = 0; weldP1 = null;
   cycleHits = []; cycleIndex = 0;
   v25CycleIds = []; v25CycleIndex = 0; v25CycleLastPx = null;
+  // Tear down v25 transient state so leaving a v25 tool (e.g. measure) via a v1
+  // setTool route (letter shortcut / Draw-tab tile) doesn't leak its first-click
+  // origin into the next tool's ortho, mirroring v25SetTool's reset.
+  if (typeof v25State === 'object' && v25State) { v25State.dragStart = null; v25State.polyPts = []; }
+  if (typeof measureAwaitId !== 'undefined') { measureP1 = null; measureDimInput = ''; measureDimActive = false; measureAwaitId = null; measureClickLen = 0; }
   tool = t;
   canvas.style.cursor = t === 'select' ? 'default' : 'crosshair';
   document.querySelectorAll('.tool-btn').forEach(b => b.classList.remove('active'));
   const map = { select:'toolSelect', line:'toolLine', rect:'toolRect',
     circle:'toolCircle', polyline:'toolPolyline', dimension:'toolDim', text:'toolText' };
   if (map[t]) document.getElementById(map[t])?.classList.add('active');
+  // member-size-from-top-bar (2026-06-04) — refresh the 2D options bar so
+  // switching into the Select tool surfaces a selected member's size editor (and
+  // switching out of it hides the bar again).
+  if (typeof v25UpdateOptionsBar === 'function') v25UpdateOptionsBar();
   requestRender();
 }
 

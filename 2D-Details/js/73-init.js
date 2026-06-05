@@ -44,7 +44,11 @@ window.addEventListener('DOMContentLoaded', () => {
 
   // V19.5 initialise the multi-sheet project model with the current state
   // as the first sheet, then render the sheet-browser sidebar.
-  projectInit();
+  // multi-file-workspace — workspaceInit() supersedes the bare projectInit()
+  // call: it runs projectInit() internally (seeding project.sheets[0] exactly as
+  // before) and then adopts the resulting `project` as workspace.files[0], so a
+  // clean launch is byte-identical to the single-project app.
+  workspaceInit();
   renderSheetBrowser();
   wireSheetBrowser();
 

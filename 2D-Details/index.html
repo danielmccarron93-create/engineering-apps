@@ -6,6 +6,20 @@
   <title>StructDraw V24.A3 — A1 Sheet Detail Editor</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <!-- multi-file-workspace Phase 3 — pdf.js (pdfjs-dist UMD) for importing a PDF
+       as a file of correctly-sized pages. Pinned to 3.11.174 (same cdnjs host as
+       three.js/jspdf). The worker URL must match the library version exactly.
+       Everything that uses pdfjsLib is guarded (if (!window.pdfjsLib) …) so a CDN
+       miss disables PDF import only — native files are unaffected. -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script>
+    // Point pdf.js at its matching worker (same version) once the UMD build has
+    // loaded. Guarded so a failed CDN fetch (no pdfjsLib) degrades silently.
+    if (window.pdfjsLib && pdfjsLib.GlobalWorkerOptions) {
+      pdfjsLib.GlobalWorkerOptions.workerSrc =
+        'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    }
+  </script>
   <link rel="stylesheet" href="css/styles.css">
 </head>
 <body class="theme-warm-light">
@@ -234,6 +248,53 @@
       <path d="M6 14 L14 14 L14 17.5 L6 17.5 Z" stroke-width="0.85"/>
       <path d="M8 14 L9.2 4 L10 2 L10.8 4 L12 14 Z" stroke-width="0.8"/>
       <path d="M8.1 11.5 H11.9 M8.4 9 H11.6 M8.8 6.5 H11.2" stroke-width="0.5" opacity="0.7"/>
+      <line x1="10" y1="1.5" x2="10" y2="18.5" stroke-dasharray="2 1.5" stroke-width="0.5" opacity="0.55"/>
+    </symbol>
+    <!-- ===== ChemSet anchor-stud icons (tile + orientation row, 72j-v25-stud.js) ===== -->
+    <!-- Tile: side-on stud — hex nut + washer + threaded rod + 45° chisel tip -->
+    <symbol id="icon-stud" viewBox="0 0 20 20">
+      <path d="M2 7 L3.5 6 L5 7 L5 13 L3.5 14 L2 13 Z" stroke-width="0.8"/>
+      <rect x="5.2" y="5.8" width="0.9" height="8.4"/>
+      <path d="M6.3 8 L16 8 L18.5 12 L6.3 12 Z" stroke-width="0.8"/>
+      <path d="M8 8 V12 M10 8 V12 M12 8 V12 M14 8 V12" stroke-width="0.5" opacity="0.7"/>
+    </symbol>
+    <!-- Stud end-on (plan / nut-on): washer ring + hex nut + rod circle -->
+    <symbol id="icon-orient-stud-end" viewBox="0 0 20 20">
+      <circle cx="10" cy="10" r="7" stroke-dasharray="2 1.5" stroke-width="0.5" opacity="0.55" fill="none"/>
+      <path d="M10 3.7 L15.5 6.85 L15.5 13.15 L10 16.3 L4.5 13.15 L4.5 6.85 Z" stroke-width="0.8" fill="none"/>
+      <circle cx="10" cy="10" r="2.6"/>
+      <path d="M10 6 V14 M6 10 H14" stroke-width="0.5" opacity="0.7"/>
+    </symbol>
+    <!-- Stud horizontal section, nut left: nut + washer L, threaded rod + chisel R -->
+    <symbol id="icon-orient-stud-h-nutl" viewBox="0 0 20 20">
+      <path d="M2 7 L3.5 6 L5 7 L5 13 L3.5 14 L2 13 Z" stroke-width="0.8"/>
+      <rect x="5.2" y="5.8" width="0.9" height="8.4"/>
+      <path d="M6.3 8 L16 8 L18.5 12 L6.3 12 Z" stroke-width="0.8"/>
+      <path d="M8 8 V12 M10 8 V12 M12 8 V12 M14 8 V12" stroke-width="0.5" opacity="0.7"/>
+      <line x1="1.5" y1="10" x2="18.5" y2="10" stroke-dasharray="2 1.5" stroke-width="0.5" opacity="0.55"/>
+    </symbol>
+    <!-- Stud horizontal section, nut right: nut + washer R, chisel L -->
+    <symbol id="icon-orient-stud-h-nutr" viewBox="0 0 20 20">
+      <path d="M18 7 L16.5 6 L15 7 L15 13 L16.5 14 L18 13 Z" stroke-width="0.8"/>
+      <rect x="13.9" y="5.8" width="0.9" height="8.4"/>
+      <path d="M13.7 8 L4 8 L1.5 12 L13.7 12 Z" stroke-width="0.8"/>
+      <path d="M12 8 V12 M10 8 V12 M8 8 V12 M6 8 V12" stroke-width="0.5" opacity="0.7"/>
+      <line x1="1.5" y1="10" x2="18.5" y2="10" stroke-dasharray="2 1.5" stroke-width="0.5" opacity="0.55"/>
+    </symbol>
+    <!-- Stud vertical section, nut top: nut + washer T, chisel B -->
+    <symbol id="icon-orient-stud-v-nutt" viewBox="0 0 20 20">
+      <path d="M7 2 L6 3.5 L7 5 L13 5 L14 3.5 L13 2 Z" stroke-width="0.8"/>
+      <rect x="5.8" y="5.2" width="8.4" height="0.9"/>
+      <path d="M8 6.3 L8 16 L12 18.5 L12 6.3 Z" stroke-width="0.8"/>
+      <path d="M8 8 H12 M8 10 H12 M8 12 H12 M8 14 H12" stroke-width="0.5" opacity="0.7"/>
+      <line x1="10" y1="1.5" x2="10" y2="18.5" stroke-dasharray="2 1.5" stroke-width="0.5" opacity="0.55"/>
+    </symbol>
+    <!-- Stud vertical section, nut bottom: nut + washer B, chisel T -->
+    <symbol id="icon-orient-stud-v-nutb" viewBox="0 0 20 20">
+      <path d="M7 18 L6 16.5 L7 15 L13 15 L14 16.5 L13 18 Z" stroke-width="0.8"/>
+      <rect x="5.8" y="13.9" width="8.4" height="0.9"/>
+      <path d="M8 13.7 L8 4 L12 1.5 L12 13.7 Z" stroke-width="0.8"/>
+      <path d="M8 12 H12 M8 10 H12 M8 8 H12 M8 6 H12" stroke-width="0.5" opacity="0.7"/>
       <line x1="10" y1="1.5" x2="10" y2="18.5" stroke-dasharray="2 1.5" stroke-width="0.5" opacity="0.55"/>
     </symbol>
     <symbol id="icon-orient-i-sec-h" viewBox="0 0 20 20">
@@ -833,6 +894,13 @@
     <button class="menubar__item" data-menu="menuWindows">Windows</button>
   </nav>
 
+  <!-- multi-file-workspace — FILE tabs (one per open file). Distinct from the
+       hidden #sheetList below (which is the legacy per-sheet strip, now driven
+       by the rail's Pages tab). renderFileTabs() in js/49a-file-tabs.js fills
+       #fileTabs; #btnAddFile opens the New/Open/Import-PDF menu. -->
+  <div class="file-tabs" id="fileTabs"></div>
+  <button class="file-tab__add" id="btnAddFile" title="New / open file">+</button>
+
   <!-- V25-layout-overhaul — sheet tabs live ONLY in the rail's Pages tab now.
        Container kept (display:none) so renderSheetBrowser() and #btnAddSheet
        handlers keep working without throwing. -->
@@ -909,6 +977,16 @@
      and click-through is suppressed by the menubar click handler. -->
 
 <div class="menu" id="menuFile" style="top:48px">
+  <div class="menu-item" data-action="newFile">
+    <span>New file…</span>
+  </div>
+  <div class="menu-item" data-action="openFile">
+    <span>Open file…</span>
+  </div>
+  <div class="menu-item" data-action="importPDF">
+    <span>Import PDF…</span>
+  </div>
+  <div class="menu-sep"></div>
   <div class="menu-item" data-action="newSheet">
     <span>New sheet…</span><span class="shortcut">Ctrl+Shift+N</span>
   </div>
@@ -1220,8 +1298,8 @@
     <label style="display:flex;align-items:center;gap:4px">
       <span>Grid</span>
       <select id="gridSizeSelect">
-        <option value="1">1</option><option value="5">5</option>
-        <option value="10" selected>10</option>
+        <option value="1">1</option><option value="5" selected>5</option>
+        <option value="10">10</option>
         <option value="25">25</option><option value="100">100</option>
       </select>
     </label>
@@ -1236,6 +1314,14 @@
   <!-- V25 — Snap / Ortho / Grid moved to the top bar (see top-bar markup
        above). The original sbSnap/sbOrtho/sbGrid IDs live there now; this
        row is intentionally absent. -->
+
+  <div class="sb-divider"></div>
+  <!-- Page navigator: ‹ current / total › — click to step pages (mirrors Shift+scroll). -->
+  <div class="sb-group sb-pagenav" id="pageNavGroup" title="Previous / next page (or Shift+scroll)">
+    <button class="sb-pagenav__btn" id="pageNavPrev" type="button" title="Previous page" aria-label="Previous page">‹</button>
+    <span class="sb-pagenav__label" id="pageNavLabel">1 / 1</span>
+    <button class="sb-pagenav__btn" id="pageNavNext" type="button" title="Next page" aria-label="Next page">›</button>
+  </div>
 
   <div class="sb-flex">
     <span class="sb-chip" id="statusTool">Select</span>
@@ -1449,7 +1535,9 @@
 <script src="js/02e-catalogue-lookups.js"></script>
 <!-- Engineering spell-check term database (added 2026-06-01). See PlannedBuilds/notebox-spellcheck/. -->
 <script src="js/02f-data-spell-terms.js"></script>
+<script src="js/02g-data-anchor-studs.js"></script>
 <script src="js/03-data-bolts.js"></script>
+<script src="js/04-workspace.js"></script>
 <script src="js/05-state.js"></script>
 <script src="js/06-detail-block.js"></script>
 <script src="js/07-globals.js"></script>
@@ -1496,6 +1584,7 @@
 <script src="js/47-status-bar.js"></script>
 <script src="js/48-connection-builders.js"></script>
 <script src="js/49-sheet-browser.js"></script>
+<script src="js/49a-file-tabs.js"></script>
 <script src="js/50-project.js"></script>
 <script src="js/51-multi-page-pdf.js"></script>
 <script src="js/52-cmd-palette.js"></script>
@@ -1527,6 +1616,24 @@
 <script src="js/72g-v25-joint.js"></script>
 <script src="js/72h-v25-depth-order.js"></script>
 <script src="js/72i-v25-screw.js"></script>
+<script src="js/72j-v25-stud.js"></script>
+<!-- multi-file-workspace Phase 2 — IndexedDB session autosave/restore. Loads
+     after js/49a-file-tabs.js (renderFileTabs) and before js/73-init.js so its
+     window.sessionInit/sessionRestore hooks exist when workspaceInit() runs. -->
+<script src="js/84-session-store.js"></script>
+<!-- multi-file-workspace Phase 3 — PDF import: pdfImportFile/pdfImportPick build
+     a file of correctly-sized, title-block-free pages with a bg descriptor (the
+     crisp background RENDER lands in a later batch). Loads before js/73-init.js;
+     every cross-module call (workspaceAddFile, _projectMakeSheet, renderFileTabs,
+     renderPagesTab, markSessionDirty) is resolved at CALL time. -->
+<script src="js/83-pdf-document.js"></script>
+<!-- multi-file-workspace polish — page-thumbnail generator (window.pageThumbRequest
+     / pageThumbInvalidate) feeding the Pages rail's preview grid. Loads after
+     js/84 (none of its hooks are needed at load) and before js/73-init.js; every
+     cross-module call (renderPdfPageToCanvas, activePage, render, the live render
+     globals) is resolved at CALL time, so load order only needs the window hooks
+     to exist before the rail first renders (js/74, which loads after init). -->
+<script src="js/85-page-thumbnails.js"></script>
 <script src="js/73-init.js"></script>
 <script src="js/74-v26-bb-rail.js"></script>
 <script src="js/96-stroke-font.js"></script>
@@ -1537,6 +1644,9 @@
 <script src="lib/typo.js"></script>
 <script src="js/80-spellcheck.js"></script>
 <script src="js/81-spellcheck-ui.js"></script>
+<!-- V25 Dimension / Measure tool (key 'm'), 2D paper-space. Loads after the
+     stroke font (96) + noteBox (97/98) whose helpers it reuses at render time. -->
+<script src="js/82-v25-dimension.js"></script>
 <!-- Timber-screw connection feature — Phase 2 entity types (added 2026-05-18).
      Note: number 76 was originally js/76-v25-plate.js (the v1 V25 plate path),
      deleted by architecture-v2 Phase 2 on 2026-05-22 once plates became

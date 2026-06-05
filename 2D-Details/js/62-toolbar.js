@@ -235,6 +235,20 @@ function initToolbar() {
     },
     saveProject: () => exportProject(),
     loadProject: () => importProject(),
+    // File — multi-file-workspace
+    newFile:   () => {
+      const name = prompt('New file name:', 'Untitled');
+      if (typeof workspaceAddFile === 'function') {
+        workspaceAddFile(name || 'Untitled', 'native', { seedPage: false });
+      }
+    },
+    openFile:  () => { if (typeof importProject === 'function') importProject(); },
+    importPDF: () => {
+      // multi-file-workspace Phase 3 — open the PDF file picker (js/83). Guarded
+      // on window.pdfImportPick so a missing PDF layer (CDN miss / file absent)
+      // degrades to a no-op instead of erroring.
+      if (typeof window.pdfImportPick === 'function') window.pdfImportPick();
+    },
     // Edit
     undo:      () => { if (typeof undo  === 'function') undo();  },
     redo:      () => { if (typeof redo  === 'function') redo();  },

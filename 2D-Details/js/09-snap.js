@@ -18,7 +18,7 @@ function snapUV(block, u, v) {
   const v2PlateActive = !!(window.v2 && v2.engine &&
     typeof v2.engine.activeTool === 'function' &&
     v2.engine.activeTool() && v2.engine.activeTool().id === 'place-plate');
-  if (tool === 'draw-plate' || tool === 'draw-member' || tool === 'v25-screw' || v2PlateActive) {
+  if (tool === 'draw-plate' || tool === 'draw-member' || tool === 'v25-screw' || tool === 'v25-stud' || v2PlateActive) {
     let bestU = null, bestUDist = tol;
     let bestV = null, bestVDist = tol;
     for (const obj of objects3D) {

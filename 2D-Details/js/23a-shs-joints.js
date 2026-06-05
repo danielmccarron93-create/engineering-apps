@@ -87,6 +87,9 @@ function invalidateJointCache() {
   // unchanged via 23-auto-weld's invalidateWeldCache hook.
   _v25JointCacheDirty = true;
   _v25JointCache = {};
+  // weld-priority-truss — the connected-component / precedence cache rides the
+  // same generation as the joint cache (declared in the V25 section below).
+  _v25CompCache = {};
 }
 
 // ---- Vector helpers (3D) ----
@@ -668,8 +671,288 @@ function _comparePriorityDescV25(a, b) {
 
 let _v25JointCacheDirty = true;
 let _v25JointCache = {};
+// weld-priority-truss — per-(viewKey) cache of connected weld components plus a
+// per-component precedence mode ('rank' | 'legacy' | 'default'). Rebuilt lazily
+// by _v25BuildComponents and cleared alongside the joint cache so any rank or
+// legacy edit recomputes.
+let _v25CompCache = {};
 
-function invalidateV25JointCache() { _v25JointCacheDirty = true; _v25JointCache = {}; }
+function invalidateV25JointCache() { _v25JointCacheDirty = true; _v25JointCache = {}; _v25CompCache = {}; }
+
+// ============================================================
+// WELD PRIORITY (per-member rank) — truss N-member cascade
+// ============================================================
+// Each mem2 entity may carry an integer `weldPriority` (1 = highest priority =
+// solid / runs through; lower number wins). Absent = an implicit draw-order rank
+// (lower id == drawn earlier == higher priority — matches "the chord drawn first
+// is the through-member"). At any joint a member is cut by every neighbour that
+// STRICTLY out-ranks it; a through-chord (a member crossing the node mid-span)
+// is ALWAYS a cutter because it has no endpoint here and cannot be split. This
+// drives _computeEndCutV25's cutter selection. The legacy per-pair maps
+// (priorityForPairV25 / mitrePairs) stay readable for old saves but are IGNORED
+// for any component that has an explicit weldPriority — see _v25NodePriorityMode.
+
+// rankKey — the single source of truth for cut decisions. LOWER = more solid.
+function v25WeldRankKey(ent) {
+  const wp = ent && ent.weldPriority;
+  if (typeof wp === 'number' && isFinite(wp) && wp >= 1) return Math.floor(wp);
+  return 1e6 + ((ent && ent.id) || 0);   // implicit draw-order fallback
+}
+
+// Build (and cache) the connected weld components for a view, plus each
+// component's precedence mode. Components are the connected components of the
+// joint graph (members sharing a joint are adjacent; through-members included so
+// a chord links all its panels into one component). Union-find, O(joints·members).
+function _v25BuildComponents(viewKey) {
+  if (_v25CompCache[viewKey]) return _v25CompCache[viewKey];
+  const joints = computeShsJointsV25(viewKey);
+  const arr = (typeof entities2D !== 'undefined' && entities2D[viewKey]) ? entities2D[viewKey] : [];
+  const byId = new Map();
+  for (const e of arr) if (e && e.type === 'mem2' && (e.aspect || 'elev') === 'elev') byId.set(e.id, e);
+
+  const parent = new Map();
+  for (const id of byId.keys()) parent.set(id, id);
+  const find = (x) => { while (parent.get(x) !== x) { parent.set(x, parent.get(parent.get(x))); x = parent.get(x); } return x; };
+  const union = (a, b) => { const ra = find(a), rb = find(b); if (ra !== rb) parent.set(ra, rb); };
+  for (const j of joints) {
+    const ids = j.members.map(m => m.ent.id).filter(id => byId.has(id));
+    for (let i = 1; i < ids.length; i++) union(ids[0], ids[i]);
+  }
+
+  const compArrays = new Map();   // root id -> [ent, ...]
+  for (const id of byId.keys()) {
+    const r = find(id);
+    if (!compArrays.has(r)) compArrays.set(r, []);
+    compArrays.get(r).push(byId.get(id));
+  }
+
+  const compOf = new Map();   // member id -> component array
+  const modeOf = new Map();   // member id -> 'rank' | 'legacy' | 'default'
+  for (const members of compArrays.values()) {
+    let mode = 'default';
+    const hasRank = members.some(m => typeof m.weldPriority === 'number' && isFinite(m.weldPriority) && m.weldPriority >= 1);
+    if (hasRank) {
+      mode = 'rank';
+    } else {
+      // Legacy if any joint pair within this component carries a legacy entry.
+      const idSet = new Set(members.map(m => m.id));
+      let legacy = false;
+      for (const j of joints) {
+        const jids = j.members.map(m => m.ent.id).filter(id => idSet.has(id));
+        for (let i = 0; i < jids.length && !legacy; i++) {
+          for (let k = i + 1; k < jids.length && !legacy; k++) {
+            const key = _v25PairKey(jids[i], jids[k]);
+            if (priorityForPairV25[key] != null || mitrePairs[key]) legacy = true;
+          }
+        }
+        if (legacy) break;
+      }
+      if (legacy) mode = 'legacy';
+    }
+    for (const m of members) { compOf.set(m.id, members); modeOf.set(m.id, mode); }
+  }
+
+  const out = { compOf, modeOf };
+  _v25CompCache[viewKey] = out;
+  return out;
+}
+
+// All members transitively welded to `ent`, returned in stable priority order
+// (rankKey asc, then id). A member with no joints is its own component of one.
+function v25WeldComponent(ent, viewKey) {
+  if (!ent) return [];
+  const c = _v25BuildComponents(viewKey).compOf.get(ent.id);
+  const list = c ? [...c] : [ent];
+  return list.sort((a, b) => (v25WeldRankKey(a) - v25WeldRankKey(b)) || ((a.id || 0) - (b.id || 0)));
+}
+
+// Precedence mode for the component a joint belongs to. All members at a joint
+// share one component, so any member resolves it.
+function _v25NodePriorityMode(joint, viewKey) {
+  if (!joint || !joint.members || !joint.members.length) return 'default';
+  const modeOf = _v25BuildComponents(viewKey).modeOf;
+  for (const m of joint.members) { const md = modeOf.get(m.ent.id); if (md) return md; }
+  return 'default';
+}
+
+// Does this member participate in >=1 joint? (A solid/through member has no trim
+// but IS welded — so test joints, never jointTrimsForMem2 which is null for it.)
+function v25IsMemberWelded(ent, viewKey) {
+  if (!ent || ent.type !== 'mem2') return false;
+  return _jointsForMem2(ent, viewKey).length > 0;
+}
+
+// True iff at SOME joint this member meets exactly one other ENDPOINT member and
+// no through-chord — i.e. a plain corner where "Mitre" is a meaningful option.
+function v25IsPlain2MemberCorner(ent, viewKey) {
+  if (!ent) return false;
+  for (const ji of _jointsForMem2(ent, viewKey)) {
+    if (ji.role === 'through') continue;
+    const others = ji.joint.members.filter(m => m.ent.id !== ent.id);
+    const endpts = others.filter(m => m.role !== 'through');
+    const throughs = others.filter(m => m.role === 'through');
+    if (endpts.length === 1 && throughs.length === 0) return true;
+  }
+  return false;
+}
+
+// Dry-run the cut at each of this member's ends to report its rendered state.
+// 'SOLID' = runs through (no end trimmed); 'MITRE' = a mitred end; 'CUT' = a
+// butt cut welded to a higher-priority member. butt > mitre > solid in priority.
+function v25MemberCutState(ent, viewKey) {
+  if (!ent || ent.type !== 'mem2') return 'SOLID';
+  let mitre = false;
+  for (const ji of _jointsForMem2(ent, viewKey)) {
+    if (ji.role === 'through') continue;
+    const cut = _computeEndCutV25(ent, ji, ji.role === 'end+1' ? +1 : -1, viewKey);
+    if (cut) { if (cut.isMitre) mitre = true; else return 'CUT'; }
+  }
+  return mitre ? 'MITRE' : 'SOLID';
+}
+
+// Is this member's corner currently rendering as a mitre? (Used for the UI tick.)
+function v25CornerIsMitre(ent, viewKey) {
+  if (!v25IsPlain2MemberCorner(ent, viewKey)) return false;
+  return v25MemberCutState(ent, viewKey) === 'MITRE';
+}
+
+// The value the weld-priority dropdown should show as currently selected:
+// 'mitre' for a mitred corner, else the member's (explicit or implicit) rank.
+function v25WeldPriorityCurrentValue(ent, viewKey) {
+  if (v25CornerIsMitre(ent, viewKey)) return 'mitre';
+  // Always report the member's POSITION in the rank-sorted component (1..N) so
+  // the value is guaranteed to match one of the dropdown's options even if raw
+  // weldPriority values have gaps (e.g. after a member delete). The insert-shift
+  // writer re-materialises 1..N, so position == explicit rank in the common case.
+  const comp = v25WeldComponent(ent, viewKey);   // sorted by rankKey asc
+  const idx = comp.findIndex(e => e.id === ent.id);
+  return String((idx < 0 ? 0 : idx) + 1);
+}
+
+// ---- WRITE helpers (mutate weldPriority; atomic component-wide undo) ----
+// Push one undo record per call covering EVERY touched member so a single Ctrl+Z
+// reverts the whole re-rank. weldPriority snapshots only — legacy maps are left
+// inert (precedence in _v25NodePriorityMode ignores them once any rank is set),
+// so undoing a rank edit on an old save restores its exact legacy rendering.
+function _v25PushWeldUndo(viewKey, before, after, mitreBefore, mitreAfter) {
+  if (typeof undoStack === 'undefined' || !undoStack) return;
+  undoStack.push({ act: 'v25EntFields', view: viewKey, before, after,
+    mitreBefore: mitreBefore || null, mitreAfter: mitreAfter || null });
+  if (undoStack.length > 100) undoStack.shift();
+  if (typeof redoStack !== 'undefined' && redoStack) redoStack.length = 0;
+}
+
+function _v25SnapWeld(members) {
+  return members.map(e => ({ id: e.id, wp: (typeof e.weldPriority === 'number' ? e.weldPriority : null) }));
+}
+
+// Plain 2-member corners within `comp` that currently render as a MITRE (dry-run,
+// BEFORE any mutation). Returned as [{pk, a, b}] so the rank writer can preserve
+// the mitre on corners it materialises ranks across but did not target.
+function _v25ComponentMitrePairs(comp, viewKey) {
+  const ids = new Set(comp.map(e => e.id));
+  const seen = new Set(); const out = [];
+  for (const m of comp) {
+    for (const ji of _jointsForMem2(m, viewKey)) {
+      if (ji.role === 'through') continue;
+      const others = ji.joint.members.filter(x => x.ent.id !== m.id);
+      const endpts = others.filter(x => x.role !== 'through');
+      const throughs = others.filter(x => x.role === 'through');
+      if (endpts.length !== 1 || throughs.length) continue;
+      const partner = endpts[0].ent;
+      if (!ids.has(partner.id)) continue;
+      const pk = _v25PairKey(m.id, partner.id);
+      if (seen.has(pk)) continue; seen.add(pk);
+      const cut = _computeEndCutV25(m, ji, ji.role === 'end+1' ? +1 : -1, viewKey);
+      if (cut && cut.isMitre) out.push({ pk, a: m.id, b: partner.id });
+    }
+  }
+  return out;
+}
+
+// Assign `ent` the given 1-based rank within its connected weld component using
+// insert-and-shift: the member is spliced into position `rank`, every member is
+// then re-materialised 1..N in the resulting order (so ranks stay contiguous and
+// any mixed explicit/implicit state collapses to a clean total order).
+function v25AssignRankInsertShift(ent, viewKey, rank) {
+  if (!ent) return;
+  const comp = v25WeldComponent(ent, viewKey);   // sorted by current rankKey asc
+  const N = comp.length;
+  if (!N) return;
+  // Capture which plain corners are mitred RIGHT NOW (before we materialise ranks
+  // component-wide). Materialising 1..N flips the whole component to rank mode, so
+  // without this an untouched mitred corner elsewhere (e.g. a portal apex) would
+  // silently become a butt cut. We re-assert mitre via mitrePairs for every such
+  // corner EXCEPT the one the user is targeting (whose corner becomes a priority cut).
+  const mitreNow = _v25ComponentMitrePairs(comp, viewKey);
+  const before = _v25SnapWeld(comp);
+  const order = comp.filter(e => e.id !== ent.id);
+  const pos = Math.max(1, Math.min(N, Math.floor(rank))) - 1;
+  order.splice(pos, 0, ent);
+  order.forEach((e, i) => { e.weldPriority = i + 1; });
+  // Preserve / clear mitre flags (with an undo snapshot of each touched key).
+  const mitreBefore = {}, mitreAfter = {};
+  const setMitre = (pk, val) => {
+    if (!(pk in mitreBefore)) mitreBefore[pk] = (pk in mitrePairs) ? mitrePairs[pk] : undefined;
+    if (val) { mitrePairs[pk] = true; mitreAfter[pk] = true; }
+    else { delete mitrePairs[pk]; mitreAfter[pk] = undefined; }
+  };
+  for (const { pk, a, b } of mitreNow) {
+    setMitre(pk, !(a === ent.id || b === ent.id));   // keep mitre unless it's the target's corner
+  }
+  // Also clear any stale mitre flag on the TARGET's own plain corners so the new rank takes effect.
+  for (const ji of _jointsForMem2(ent, viewKey)) {
+    if (ji.role === 'through') continue;
+    const others = ji.joint.members.filter(x => x.ent.id !== ent.id);
+    const endpts = others.filter(x => x.role !== 'through');
+    if (endpts.length === 1 && !others.some(x => x.role === 'through')) {
+      const pk = _v25PairKey(ent.id, endpts[0].ent.id);
+      if (mitrePairs[pk]) setMitre(pk, false);
+    }
+  }
+  _v25PushWeldUndo(viewKey, before, _v25SnapWeld(order), mitreBefore, mitreAfter);
+  if (typeof invalidateWeldCache === 'function') invalidateWeldCache();
+  if (typeof requestRender === 'function') requestRender();
+  if (typeof workspaceTouchActive === 'function') workspaceTouchActive();
+}
+
+// Make `ent` the highest-priority (rank 1) member of its component. (A member
+// whose end lands on a through-chord is still trimmed to that chord — it "runs
+// through" only relative to the other end-meeting members. The UI badge shows
+// the resolved SOLID/CUT state so this is never misleading.)
+function v25MakeMemberThrough(ent, viewKey) {
+  v25AssignRankInsertShift(ent, viewKey, 1);
+}
+
+// Restore a plain 2-member corner to the mitre default by clearing the explicit
+// weldPriority on the corner pair (mode falls back to 'default' → bisector mitre).
+function v25SetCornerMitre(ent, viewKey) {
+  if (!ent || !v25IsPlain2MemberCorner(ent, viewKey)) return;
+  const partners = new Set([ent]);
+  const pks = [];
+  for (const ji of _jointsForMem2(ent, viewKey)) {
+    if (ji.role === 'through') continue;
+    const others = ji.joint.members.filter(m => m.ent.id !== ent.id);
+    const endpts = others.filter(m => m.role !== 'through');
+    const throughs = others.filter(m => m.role === 'through');
+    if (endpts.length === 1 && throughs.length === 0) { partners.add(endpts[0].ent); pks.push(_v25PairKey(ent.id, endpts[0].ent.id)); }
+  }
+  const affected = [...partners];
+  const before = _v25SnapWeld(affected);
+  affected.forEach(e => { delete e.weldPriority; });
+  // Set an explicit mitre flag on the corner pair so the mitre holds even when a
+  // SIBLING elsewhere in the component is ranked (which would otherwise keep the
+  // component in rank mode and let the cascade override this corner).
+  const mitreBefore = {}, mitreAfter = {};
+  for (const pk of pks) {
+    mitreBefore[pk] = (pk in mitrePairs) ? mitrePairs[pk] : undefined;
+    mitrePairs[pk] = true; mitreAfter[pk] = true;
+  }
+  _v25PushWeldUndo(viewKey, before, _v25SnapWeld(affected), mitreBefore, mitreAfter);
+  if (typeof invalidateWeldCache === 'function') invalidateWeldCache();
+  if (typeof requestRender === 'function') requestRender();
+  if (typeof workspaceTouchActive === 'function') workspaceTouchActive();
+}
 
 function computeShsJointsV25(viewKey) {
   if (!_v25JointCacheDirty && _v25JointCache[viewKey]) return _v25JointCache[viewKey];
@@ -732,6 +1015,10 @@ function computeShsJointsV25(viewKey) {
   }
 
   _v25JointCache[viewKey] = joints;
+  // weld-priority-truss — mark the joint cache clean so repeated calls within one
+  // render frame reuse it (every mutation routes through invalidateWeldCache →
+  // invalidateJointCache, which re-dirties + clears, so this can't go stale).
+  _v25JointCacheDirty = false;
   return joints;
 }
 
@@ -778,65 +1065,89 @@ function _projectV25OutlineIntoLocal(O, M) {
 
 // Compute end cut info for a V25 mem2 ent. sign=-1 = end A (local x=0),
 // sign=+1 = end B (local x=length). Returns { uAtV(y) → x, isMitre } or null.
-function _computeEndCutV25(M, jointInfo, sign) {
+function _computeEndCutV25(M, jointInfo, sign, viewKey) {
   const len = M.length || 0;
   if (len < 1) return null;
   const jointX = sign > 0 ? len : 0;
 
   const allOtherMembers = jointInfo.joint.members.filter(m => m.ent.id !== M.id);
+  // weld-priority-truss — precedence for THIS node's component:
+  //   'rank'    → any member has an explicit weldPriority; cut purely by rank.
+  //   'legacy'  → an old save's priorityForPairV25 / mitrePairs entry exists
+  //               and no explicit rank → run the original per-pair logic so the
+  //               file renders byte-identically.
+  //   'default' → no rank, no legacy data → the new draw-order cascade.
+  const mode = _v25NodePriorityMode(jointInfo.joint, viewKey || M.view);
 
-  // If THIS member is the priority winner for any pair at this joint, it
-  // runs through unchanged — no cut at all (neither mitre nor butt). Bail
-  // before considering anything else.
-  if (jointInfo.role !== 'through') {
-    for (const m of allOtherMembers) {
-      const k = _v25PairKey(M.id, m.ent.id);
-      if (priorityForPairV25[k] === M.id) return null;
-    }
-  }
-
-  // Pick the dominant priority neighbour for THIS pair, if the user has set
-  // one explicitly via the joint menu. Fall back to "no override". Equal-
-  // priority endpoint-to-endpoint pairs default to mitre — see below.
-  let priorityNeighbour = null;
-  if (jointInfo.role !== 'through') {
-    for (const m of allOtherMembers) {
-      const k = _v25PairKey(M.id, m.ent.id);
-      const winnerId = priorityForPairV25[k];
-      if (winnerId != null && winnerId !== M.id) { priorityNeighbour = m; break; }
-    }
-  }
-
-  // Through-chord neighbours (joint at mid-span of another member). The chord
-  // always wins regardless of user choice, because trimming it would require
-  // splitting a member that has no endpoint at this joint.
+  // Through-chord neighbours (joint at this member's mid-span). A chord has no
+  // endpoint here so it can NEVER be split — it is an unconditional cutter for
+  // every endpoint member, regardless of mode or rank. Endpoint neighbours are
+  // the members that share an actual end at this node.
   const throughs = allOtherMembers.filter(m => m.role === 'through');
-
-  // Endpoint-to-endpoint partner for the default mitre. If exactly one
-  // non-through neighbour shares this node, mitre against it. With three or
-  // more (truss apex), default to no cut so the user can pick a priority via
-  // the menu — mitring three centrelines is geometrically ambiguous.
   const endpointNeighbours = allOtherMembers.filter(m => m.role !== 'through');
-  let mitrePartner = null;
-  if (jointInfo.role !== 'through' && !priorityNeighbour && endpointNeighbours.length === 1) {
-    mitrePartner = endpointNeighbours[0];
-  }
-  // Legacy mitre flag still honours pair-level mitre choice in multi-member
-  // nodes (so the existing 3-member apex workflow keeps working when the user
-  // explicitly checked "Mitre #5 ↔ #7" in older saves).
-  if (!mitrePartner && jointInfo.role !== 'through' && !priorityNeighbour) {
-    for (const m of endpointNeighbours) {
-      const k = _v25PairKey(M.id, m.ent.id);
-      if (mitrePairs[k]) { mitrePartner = m; break; }
-    }
-  }
 
-  // Combine: priority neighbour and through chords cut the body; mitre is the
-  // alternative. If none apply, no cut.
-  const cutters = [];
-  if (priorityNeighbour) cutters.push(priorityNeighbour);
-  for (const t of throughs) cutters.push(t);
-  if (!mitrePartner && !cutters.length) return null;
+  let mitrePartner = null;
+  let cutters = [];
+
+  if (mode === 'legacy') {
+    // ===== LEGACY per-pair behaviour (old saves), byte-identical to before. =====
+    if (jointInfo.role !== 'through') {
+      for (const m of allOtherMembers) {
+        if (priorityForPairV25[_v25PairKey(M.id, m.ent.id)] === M.id) return null;  // M wins → runs through
+      }
+    }
+    let priorityNeighbour = null;
+    if (jointInfo.role !== 'through') {
+      for (const m of allOtherMembers) {
+        const winnerId = priorityForPairV25[_v25PairKey(M.id, m.ent.id)];
+        if (winnerId != null && winnerId !== M.id) { priorityNeighbour = m; break; }
+      }
+    }
+    if (jointInfo.role !== 'through' && !priorityNeighbour && endpointNeighbours.length === 1) {
+      mitrePartner = endpointNeighbours[0];
+    }
+    if (!mitrePartner && jointInfo.role !== 'through' && !priorityNeighbour) {
+      for (const m of endpointNeighbours) {
+        if (mitrePairs[_v25PairKey(M.id, m.ent.id)]) { mitrePartner = m; break; }
+      }
+    }
+    if (priorityNeighbour) cutters.push(priorityNeighbour);
+    for (const t of throughs) cutters.push(t);
+    if (!mitrePartner && !cutters.length) return null;
+  } else {
+    // ===== RANK / DEFAULT cascade. 'rank' and 'default' share one rule —
+    //       v25WeldRankKey internally reads an explicit weldPriority or the
+    //       draw-order fallback, so the only behavioural difference is whether
+    //       the plain-corner mitre default is allowed (default mode only). =====
+
+    // (a) Plain 2-member corner → mitre. CORNER-LOCAL (NOT gated on component
+    //     mode): a corner mitres when an explicit mitre flag is set for its pair,
+    //     OR neither of its two members carries an explicit weldPriority. So
+    //     ranking a member at one corner of a multi-corner component (e.g. a
+    //     portal frame) never silently un-mitres an untouched corner elsewhere —
+    //     v25AssignRankInsertShift sets mitrePairs for the corners it materialises
+    //     but did not target, so they survive the component-wide rank materialise.
+    if (jointInfo.role !== 'through' && endpointNeighbours.length === 1 && throughs.length === 0) {
+      const _mp = endpointNeighbours[0];
+      const _pk = _v25PairKey(M.id, _mp.ent.id);
+      const _ranked = (e) => (typeof e.weldPriority === 'number' && isFinite(e.weldPriority) && e.weldPriority >= 1);
+      if (mitrePairs[_pk] || (!_ranked(M) && !_ranked(_mp.ent))) mitrePartner = _mp;
+    }
+
+    // (b) Rank cutters: every endpoint neighbour that STRICTLY out-ranks M
+    //     (lower rankKey = higher priority), plus every through-chord
+    //     unconditionally. A member can never run solid through a chord.
+    if (!mitrePartner) {
+      const myRank = v25WeldRankKey(M);
+      for (const n of endpointNeighbours) {
+        if (v25WeldRankKey(n.ent) < myRank) cutters.push(n);
+      }
+      for (const t of throughs) cutters.push(t);
+    }
+
+    // (c) M is the strict-min rank at this node (and not mitring) → runs through.
+    if (!mitrePartner && !cutters.length) return null;
+  }
 
   const fM = _v25Frame(M);
   if (mitrePartner && !cutters.length) {
@@ -967,23 +1278,44 @@ function _computeButtCutV25(M, neighbours, jointX, sign) {
     weldSize = autoWeldMinSize(tThin);
   }
 
-  return {
-    uAtV: (y) => {
-      // Per-v most-restrictive across all cutters. Initialise from the
-      // dominant cutter's first value so a single-cutter case returns the
-      // line's uAtV(y) verbatim — including extensions past the original
-      // end face (negative u for end A, u > len for end B).
-      let best = lines[0].uAtV(y);
-      for (let i = 1; i < lines.length; i++) {
-        const u = lines[i].uAtV(y);
-        if (sign > 0) { if (u < best) best = u; }
-        else          { if (u > best) best = u; }
-      }
-      return best;
-    },
-    isMitre: false,
-    weldSize,
+  const uAtV = (y) => {
+    // Per-v most-restrictive across all cutters. Initialise from the dominant
+    // cutter's first value so a single-cutter case returns the line's uAtV(y)
+    // verbatim — including extensions past the original end face (negative u for
+    // end A, u > len for end B).
+    let best = lines[0].uAtV(y);
+    for (let i = 1; i < lines.length; i++) {
+      const u = lines[i].uAtV(y);
+      if (sign > 0) { if (u < best) best = u; }
+      else          { if (u > best) best = u; }
+    }
+    return best;
   };
+
+  // weld-priority-truss — interior kink heights. With 2+ active cutters the cut
+  // face is piecewise-linear (the winning line changes where two faces cross).
+  // Expose those crossover v's so drawMem2D can draw a poly-cap that follows the
+  // true kinked face (a brace nestling into a corner), instead of a straight
+  // chord between the two corner samples. Empty for the single-cutter case.
+  const kinks = [];
+  if (lines.length > 1) {
+    const co = lines.map(ln => { const a0 = ln.uAtV(0); return { a: a0, b: ln.uAtV(1) - a0 }; });
+    for (let i = 0; i < co.length; i++) {
+      for (let j = i + 1; j < co.length; j++) {
+        const db = co[i].b - co[j].b;
+        if (Math.abs(db) < 1e-9) continue;            // parallel faces — no crossing
+        const vc = (co[j].a - co[i].a) / db;
+        if (vc <= -hBM + 1e-4 || vc >= hBM - 1e-4) continue;   // outside the section depth
+        // Keep only crossings that lie ON the envelope (where the winner flips).
+        if (Math.abs(uAtV(vc) - (co[i].a + co[i].b * vc)) < 1e-3) kinks.push(vc);
+      }
+    }
+    kinks.sort((p, q) => p - q);
+  }
+  const kinksDedup = [];
+  for (const k of kinks) if (!kinksDedup.length || Math.abs(kinksDedup[kinksDedup.length - 1] - k) > 1e-3) kinksDedup.push(k);
+
+  return { uAtV, isMitre: false, weldSize, kinks: kinksDedup };
 }
 
 // Public API consumed by drawMem2D in 68-v25-tools.js. Works for every mem2
@@ -997,8 +1329,8 @@ function jointTrimsForMem2(ent, viewKey) {
   if (!myJoints.length) return null;
   let a = null, b = null;
   for (const ji of myJoints) {
-    if (ji.role === 'end-1' && !a) a = _computeEndCutV25(ent, ji, -1);
-    else if (ji.role === 'end+1' && !b) b = _computeEndCutV25(ent, ji, +1);
+    if (ji.role === 'end-1' && !a) a = _computeEndCutV25(ent, ji, -1, viewKey);
+    else if (ji.role === 'end+1' && !b) b = _computeEndCutV25(ent, ji, +1, viewKey);
   }
   if (!a && !b) return null;
   return { a, b };
@@ -1019,164 +1351,20 @@ function hitTestJointV25(blk, px, py) {
   return best;
 }
 
-// V25 popup — small floating menu at cursor with two options:
-//   • Mitre joint           (default for two endpoints meeting)
-//   • Pick member priority  (next click sets the through-member; the other
-//                            gets butt-cut at the priority's outer face)
+// V25 node popup — the joint-NODE double-click now shares ONE editing surface
+// with the member-body double-click: it delegates to the per-member weld-priority
+// popup (js/68 v25OpenWeldPriorityPopup). Focus the first endpoint member at the
+// node — its connected weld component covers every member of the joint, so the
+// popup lists them all with live SOLID/MITRE/CUT badges and the [Mitre,1..N]
+// dropdown. (Replaces the old two-button "Mitre / Pick member priority" menu and
+// the transient click-to-pick mode, which wrote the legacy priorityForPairV25.)
 function showJointPopupV25(joint, clientX, clientY, viewKey) {
-  closeJointPopup();
-  const div = document.createElement('div');
-  div.id = 'shsJointPopup';
-  div.style.cssText = `
-    position: fixed; left: ${clientX + 8}px; top: ${clientY + 6}px;
-    background: var(--surface-2, #1e1e2e); border: 1px solid var(--border, #444);
-    border-radius: 6px; padding: 4px 0; z-index: 999;
-    font: 12px var(--font-sans, system-ui); color: var(--text, #ddd);
-    box-shadow: var(--shadow-pop, 0 4px 16px rgba(0,0,0,0.4)); min-width: 200px;
-  `;
-  document.body.appendChild(div);
-  _shsJointPopup = div;
-  _renderJointPopupV25(div, joint, viewKey);
-  document.removeEventListener('mousedown', _jointPopupOutsideClick);
-  setTimeout(() => {
-    document.addEventListener('mousedown', _jointPopupOutsideClick);
-  }, 50);
-}
-
-function _renderJointPopupV25(div, joint, viewKey) {
-  invalidateV25JointCache();
-  const fresh = computeShsJointsV25(viewKey);
-  let liveJoint = joint;
-  let bestD = Infinity;
-  for (const j of fresh) {
-    const dx = j.point.u - joint.point.u, dy = j.point.v - joint.point.v;
-    const d = Math.hypot(dx, dy);
-    if (d < bestD) { bestD = d; liveJoint = j; }
+  if (!joint || !joint.members || !joint.members.length) return;
+  const ep = joint.members.find(m => m.role !== 'through') || joint.members[0];
+  if (!ep || !ep.ent) return;
+  if (typeof v25OpenWeldPriorityPopup === 'function') {
+    v25OpenWeldPriorityPopup(ep.ent, viewKey, clientX, clientY);
   }
-  joint = liveJoint;
-
-  // Endpoint members at this joint (through-chords aren't choosable as
-  // priority — they're already "winning" by definition).
-  const endpointMembers = joint.members.filter(m => m.role !== 'through');
-
-  // Detect current state. If any pair at this joint has an explicit priority
-  // entry, treat the joint as "priority"; otherwise mitre.
-  let currentPriorityId = null;
-  for (let i = 0; i < endpointMembers.length && !currentPriorityId; i++) {
-    for (let j = i + 1; j < endpointMembers.length && !currentPriorityId; j++) {
-      const k = _v25PairKey(endpointMembers[i].ent.id, endpointMembers[j].ent.id);
-      if (priorityForPairV25[k] != null) currentPriorityId = priorityForPairV25[k];
-    }
-  }
-  const isMitre = currentPriorityId == null;
-
-  const itemStyle = `display:flex; align-items:center; gap:8px; width:100%; padding:8px 12px; background:transparent; color:inherit; border:none; cursor:pointer; text-align:left; font:inherit; box-sizing:border-box;`;
-  const tickHTML = (selected) => selected
-    ? '<span style="display:inline-block; width:14px; color:var(--accent, #c0392b); text-align:center;">✓</span>'
-    : '<span style="display:inline-block; width:14px;">&nbsp;</span>';
-  const subLabel = currentPriorityId != null ? ` <span style="opacity:0.55; font-size:11px;">#${currentPriorityId}</span>` : '';
-
-  div.innerHTML = `
-    <button id="sjMitre"   type="button" style="${itemStyle}">${tickHTML(isMitre)}<span>Mitre joint</span></button>
-    <button id="sjPickPri" type="button" style="${itemStyle}">${tickHTML(!isMitre)}<span>Pick member priority${subLabel}</span></button>
-  `;
-
-  // Hover affordance — done in JS so it picks up the live theme variable.
-  for (const btn of div.querySelectorAll('button')) {
-    btn.addEventListener('mouseenter', () => { btn.style.background = 'var(--surface-3, #333)'; });
-    btn.addEventListener('mouseleave', () => { btn.style.background = 'transparent'; });
-  }
-
-  div.querySelector('#sjMitre').addEventListener('click', () => {
-    // Clear any priority entries between any pair of endpoint members at this
-    // joint — restoring the default mitre behaviour.
-    for (let i = 0; i < endpointMembers.length; i++) {
-      for (let j = i + 1; j < endpointMembers.length; j++) {
-        delete priorityForPairV25[_v25PairKey(endpointMembers[i].ent.id, endpointMembers[j].ent.id)];
-      }
-    }
-    closeJointPopup();
-    if (typeof invalidateWeldCache === 'function') invalidateWeldCache();
-    if (typeof requestRender === 'function') requestRender();
-  });
-
-  div.querySelector('#sjPickPri').addEventListener('click', () => {
-    closeJointPopup();
-    _v25EnterPickPriority(joint, viewKey);
-  });
-}
-
-// ---- Transient "pick the priority member" mode ----
-// Triggered from the joint menu. The next canvas click chooses which member
-// of the joint runs through unchanged; the other member(s) get butt-cut at
-// that priority's outer face. Esc cancels.
-let _v25PickPriorityCleanup = null;
-function _v25EnterPickPriority(joint, viewKey) {
-  if (_v25PickPriorityCleanup) _v25PickPriorityCleanup();
-  if (typeof toast === 'function') toast('Click the priority member (Esc to cancel)', 3000);
-
-  const endpointMembers = joint.members.filter(m => m.role !== 'through');
-  if (endpointMembers.length < 2) return;
-
-  const onClick = (e) => {
-    if (!canvas) return;
-    if (e.target !== canvas) return; // ignore clicks on UI chrome
-    e.preventDefault();
-    e.stopPropagation();
-    cleanup();
-    const blk = activeBlock;
-    if (!blk) return;
-    const rect = canvas.getBoundingClientRect();
-    const px = e.clientX - rect.left;
-    const py = e.clientY - rect.top;
-    const real = (typeof px2real === 'function') ? px2real(blk, px, py) : null;
-    if (!real) return;
-    // Find which endpoint-member at this joint the click is closest to —
-    // distance from click to the member's centreline (in real-world mm).
-    let bestId = null, bestDist = Infinity;
-    for (const m of endpointMembers) {
-      const ent = (entities2D[viewKey] || []).find(x => x && x.id === m.ent.id);
-      if (!ent) continue;
-      const rot = (ent.rot || 0) * Math.PI / 180;
-      const len = ent.length || 0;
-      const ax = ent.u, ay = ent.v;
-      const bx = ent.u + Math.cos(rot) * len, by = ent.v + Math.sin(rot) * len;
-      const dx = bx - ax, dy = by - ay;
-      const lenSq = dx * dx + dy * dy;
-      let t = lenSq < 1e-9 ? 0 : ((real.u - ax) * dx + (real.v - ay) * dy) / lenSq;
-      t = Math.max(0, Math.min(1, t));
-      const cu = ax + t * dx, cv = ay + t * dy;
-      const d = Math.hypot(real.u - cu, real.v - cv);
-      if (d < bestDist) { bestDist = d; bestId = ent.id; }
-    }
-    if (bestId == null) return;
-    // Set this member as priority over every other endpoint member at the
-    // joint (handles 2-member L-corners and N-member apexes consistently).
-    for (const m of endpointMembers) {
-      if (m.ent.id === bestId) continue;
-      priorityForPairV25[_v25PairKey(bestId, m.ent.id)] = bestId;
-    }
-    if (typeof invalidateWeldCache === 'function') invalidateWeldCache();
-    if (typeof requestRender === 'function') requestRender();
-    if (typeof toast === 'function') toast(`Priority: #${bestId}`, 1500);
-  };
-
-  const onKey = (e) => {
-    if (e.key === 'Escape') {
-      cleanup();
-      if (typeof toast === 'function') toast('Cancelled', 1000);
-    }
-  };
-
-  const cleanup = () => {
-    document.removeEventListener('mousedown', onClick, true);
-    document.removeEventListener('keydown', onKey, true);
-    _v25PickPriorityCleanup = null;
-  };
-  _v25PickPriorityCleanup = cleanup;
-  // Capture phase so we beat the V25 select handler on the next click.
-  document.addEventListener('mousedown', onClick, true);
-  document.addEventListener('keydown', onKey, true);
 }
 
 // ============================================================

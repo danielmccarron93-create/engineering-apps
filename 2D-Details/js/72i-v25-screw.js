@@ -59,6 +59,21 @@ const V25_SCREW_ORIENT = [
 
 const V25_SCREW_DEFAULT_SPEC = 'HBSPL8120';   // friendly first pick: Ø8 × 120
 
+/* ---- DXF-derived section-profile constants --------------------------------
+ * Traced from HBS-PLATE_wd04-rothoblaas.dxf (the manufacturer geometry). Shape
+ * proportions are normalised to nominal d1; the load-bearing diameters (crest d1,
+ * root d2, neck dUK, shank dS, head dK) are pinned to the catalogue at draw time
+ * so every size is exact. See PlannedBuilds/hbs-plate-screw/. ----------------- */
+const SCREW_GEOM = {
+  headLenNorm: 1.80,   // head-top → smooth-shank start (≈1.80·d1). REPLACES t1
+                       //   (t1 is the TX-recess depth, not a side-profile length).
+  neckEndNorm: 0.95,   // under-head neck (dUK) ends here, then cones down to dS.
+  tipLenNorm:  1.48,   // tip-cone length from thread-end to apex (≈1.48·d1; 28° point).
+};
+// Catalogue thread pitch (mm) per nominal d1. Exaggerated to a min-legible value
+// at coarse drawing scales so the teeth read (see drawScrewThread).
+const HBS_THREAD_PITCH = { 8: 4.0, 10: 4.2, 12: 4.5 };
+
 /* ----------------------------------------------------------------------------
  * v25BuildScrewOrientationRow() → HTMLDivElement
  * Live element (carries click handlers, so it can't be serialised into the
@@ -246,87 +261,158 @@ function drawScrew2D(blk, ent, cs) {
   return true;
 }
 
-/* ---- Section profile (h-headL / h-headR / v-headT / v-headB) ---------------
- * Local axis s runs head-top (s=0) -> tip (s=L). The head-to-shank junction
- * (s=t1) lands on the detected bearing face (or the click point), so the head
- * sits proud on the outside face and the shank+thread drive into the material.
+/* ---- Section profile (h-headL / h-headR / v-headT / v-headB) ----------------
+ * Faithful to the Rothoblaas geometry diagram (DXF-traced): pan head + integral
+ * washer collar (full dK — the widest feature) → bearing underside → under-head
+ * neck (dUK) → cone to the smooth shank (dS) → threaded zone with DISTINCT teeth
+ * (crest d1, root d2, two rows offset half a pitch = the helix) → 28° point.
+ * Local axis s runs head-top (s=0) → tip apex (s=L); the COLLAR UNDERSIDE
+ * (s=tK, the bearing plane) lands on the detected plate/member face, so the head
+ * protrudes ~tK outside and the body embeds into the timber. Everything is built
+ * in local (s,t) and mapped through P(s,t), so all four orientations share one
+ * code path and the bearing-face snap keeps working.
  * -------------------------------------------------------------------------- */
 function drawScrew2D_Section(blk, ent, S, col, pm, orient) {
-  const horiz = (orient === 'h-headL' || orient === 'h-headR');
-  const axisIsU = horiz;
-  const trans = axisIsU ? ent.v : ent.u;              // transverse (centreline) coord
+  const axisIsU = (orient === 'h-headL' || orient === 'h-headR');
+  const trans   = axisIsU ? ent.v : ent.u;            // transverse (centreline) coord
   const bodyDir = (orient === 'h-headL' || orient === 'v-headB') ? 1 : -1;
 
-  const bearing = v25ScrewBearingFace(blk, ent);
+  // Catalogue geometry (mm). Crest pinned to nominal d; root/shank/neck/head/collar
+  // come straight from the catalogue so each size is exact.
+  const d   = S.d   || 10;
+  const d2  = S.d2  || d * 0.74;
+  const dS  = S.dS  || d * 0.79;
+  const dK  = S.dK  || d * 1.69;
+  const dUK = S.dUK || d * 1.25;
+  const tK  = S.tK  || d * 0.56;
+  const L   = S.L   || d * 12;
+  const b   = S.b   || L * 0.78;
+  const dKh = dK / 2, dUKh = dUK / 2, dSh = dS / 2, d2h = d2 / 2, dh = d / 2;
+
+  const headLen = SCREW_GEOM.headLenNorm * d;                 // head-top → shank start
+  const neckEnd = Math.min(SCREW_GEOM.neckEndNorm * d, headLen - 0.5);
+  const tipLen  = SCREW_GEOM.tipLenNorm * d;
+  const sBear   = Math.min(tK, headLen * 0.45);               // collar underside = bearing plane
+
+  // s-stations (head-top origin).
+  const sThread  = Math.max(headLen, L - b);                  // thread start (catalogue b)
+  const sTipBase = Math.max(sThread + 0.5, L - tipLen);       // tip-cone base
+
+  // The collar underside (s=tK) lands on the detected bearing face (or the click).
+  const bearing  = v25ScrewBearingFace(blk, ent);
   const junction = (bearing != null) ? bearing : (axisIsU ? ent.u : ent.v);
+  const axisAt = (s) => junction + bodyDir * (s - sBear);
+  // NB: rPolygon/rFillPolygon (js/33) read points as [u,v] ARRAYS (pts[i][0/1]),
+  // so P must return arrays — not {u,v} objects (which silently NaN out).
+  const P = axisIsU ? (s, t) => [axisAt(s), trans + t]
+                    : (s, t) => [trans + t, axisAt(s)];
 
-  // Catalogue geometry → half-widths (mm).
-  const d   = S.d  || 10;
-  const d2  = S.d2 || d * 0.74;
-  const dS  = S.dS || d * 0.79;
-  const dK  = S.dK || d * 1.85;
-  const t1  = S.t1 || d * 1.6;
-  const tK  = S.tK || d * 0.55;
-  const L   = S.L  || d * 12;
-  const b   = S.b  || L * 0.78;
-
-  const dKh = dK / 2, dSh = dS / 2, d2h = d2 / 2, dh = d / 2;
-
-  // s-positions along the screw axis.
-  const capLen    = Math.min(t1 * 0.5, Math.max(tK, dK * 0.30));   // thick collar / pan cap
-  const sThread   = Math.max(t1, L - b);                            // thread starts here
-  const tipLen    = Math.min((L - sThread) * 0.6 + 0.001, Math.max(d * 1.2, 4));
-  const sTipStart = Math.max(sThread, L - tipLen);
-
-  // Local (s,t) → real {u,v}. junction at s=t1; head (s<t1) sits on the -bodyDir side.
-  const axisAt = (s) => junction + bodyDir * (s - t1);
-  const P = axisIsU
-    ? (s, t) => ({ u: axisAt(s), v: trans + t })
-    : (s, t) => ({ u: trans + t, v: axisAt(s) });
+  // HEAD half-profile (top edge), catalogue-pinned: pan/collar (full dK) → bearing
+  // underside step → under-head neck (dUK) → cone to the shank (dS).
+  const headTop = [
+    { s: 0,       t: dKh },
+    { s: tK,      t: dKh },
+    { s: tK,      t: dUKh },     // bearing underside — the "head bears here" line
+    { s: neckEnd, t: dUKh },
+    { s: headLen, t: dSh },
+  ];
 
   ctx.setLineDash([]);
 
-  // 1) BODY (smooth shank + thread core + pointed tip) — one filled outline.
-  const bodyPts = [
-    P(t1,        dSh), P(sThread,    dSh), P(sTipStart,  d2h),
-    P(L,         0),
-    P(sTipStart,-d2h), P(sThread,   -dSh), P(t1,        -dSh),
-  ];
+  // (A) CENTRELINE first (under everything).
+  {
+    const a0 = axisAt(-2), aL = axisAt(L + 2);
+    ctx.strokeStyle = colorAlpha(col, 0.5);
+    ctx.lineWidth = Math.max(0.3, LW.CL * pm);
+    ctx.setLineDash((typeof DASH !== 'undefined' && DASH.CL_BOLT) ? DASH.CL_BOLT : [8, 3, 2, 3]);
+    if (axisIsU) rLine(blk, Math.min(a0, aL), trans, Math.max(a0, aL), trans);
+    else         rLine(blk, trans, Math.min(a0, aL), trans, Math.max(a0, aL));
+    ctx.setLineDash([]);
+  }
+
+  // (B) SOLID BODY ENVELOPE: head + smooth shank (dS) + thread core (d2) + tip cone.
+  const bodyTop = headTop.concat([
+    { s: sThread,  t: dSh },     // smooth shank at dS
+    { s: sThread,  t: d2h },     // step in to the thread root core
+    { s: sTipBase, t: d2h },     // root core to the tip base
+    { s: L,        t: 0 },       // sharp apex
+  ]);
+  const bodyPts = bodyTop.map(p => P(p.s, p.t))
+    .concat(bodyTop.slice().reverse().map(p => P(p.s, -p.t)));
+  ctx.fillStyle = colorAlpha(col, 0.55);
   ctx.strokeStyle = col;
-  ctx.lineWidth = Math.max(0.3, LW.VIS * pm);
-  ctx.fillStyle = colorAlpha(col, 0.40);
+  ctx.lineWidth = Math.max(0.4, LW.VIS * pm);
   rFillPolygon(blk, bodyPts);
   rPolygon(blk, bodyPts);
 
-  // 2) THREAD sawtooth (crest d/2, root d2/2) over the straight threaded zone —
-  //    crests stand proud of the smooth shank, exactly like the real screw.
-  if (sTipStart - sThread > 0.5) {
-    const pitch = Math.max(1.2, d * 0.42);
-    ctx.strokeStyle = colorAlpha(col, 0.85);
-    ctx.lineWidth = Math.max(0.3, LW.VIS * pm * 0.7);
-    if (axisIsU) drawThreadAlongU(blk, trans, axisAt(sThread), axisAt(sTipStart), dh, d2h, pitch);
-    else         drawThreadAlongV(blk, trans, axisAt(sThread), axisAt(sTipStart), dh, d2h, pitch);
-  }
+  // (C) THREAD TEETH — the structurally-critical embedment cue.
+  drawScrewThread(blk, P, sThread, sTipBase, L, dh, d2h, d, col, pm);
 
-  // 3) HEAD — flat-top pan + collar then a truncated-cone under-head down to the
-  //    shank. Drawn after the body so the head cleanly overlaps the shank start.
-  const headPts = [
-    P(0,       dKh), P(capLen,  dKh), P(t1,  dSh),
-    P(t1,     -dSh), P(capLen, -dKh), P(0,  -dKh),
-  ];
-  ctx.setLineDash([]);
+  // (D) HEAD overlay — heavier outline (the dominant feature) + the collar
+  //     bearing-underside line (the crispest line: where the head bears on steel).
+  const headPts = headTop.map(p => P(p.s, p.t))
+    .concat(headTop.slice().reverse().map(p => P(p.s, -p.t)));
+  ctx.fillStyle = colorAlpha(col, 0.55);
   ctx.strokeStyle = col;
-  ctx.lineWidth = Math.max(0.5, LW.VIS * pm);
-  ctx.fillStyle = colorAlpha(col, 0.14);
+  ctx.lineWidth = Math.max(0.5, LW.VIS_HEAVY * pm);
   rFillPolygon(blk, headPts);
   rPolygon(blk, headPts);
+  const ba = P(tK, dUKh), bb = P(tK, -dUKh);
+  ctx.lineWidth = Math.max(0.5, LW.VIS_HEAVY * pm);
+  rLine(blk, ba[0], ba[1], bb[0], bb[1]);
+}
 
-  // 4) Centreline — dashed, light, running the full length.
-  const a0 = axisAt(0), aL = axisAt(L);
-  ctx.strokeStyle = colorAlpha(col, 0.5);
-  ctx.lineWidth = Math.max(0.2, LW.CL * pm);
-  ctx.setLineDash((typeof DASH !== 'undefined' && DASH.CL_BOLT) ? DASH.CL_BOLT : [8, 2, 2, 2]);
-  if (axisIsU) rLine(blk, Math.min(a0, aL) - 4, trans, Math.max(a0, aL) + 4, trans);
-  else         rLine(blk, trans, Math.min(a0, aL) - 4, trans, Math.max(a0, aL) + 4);
+/* ---- drawScrewThread — distinct standing thread teeth -----------------------
+ * Crest at d1/2, root at d2/2. Two rows of FILLED triangular teeth, the bottom
+ * row offset half a pitch (the true-helix signature that reads as a screw, not a
+ * knurl), plus one subordinate helix diagonal per pitch leaning toward the tip.
+ * Teeth fade into the tip cone. Pitch is exaggerated to a min-legible value at
+ * coarse scales (mirrors the bolt-thread exaggeration) so the teeth never collapse
+ * to grey fuzz. Built in local (s,t) and mapped through P for every orientation.
+ * -------------------------------------------------------------------------- */
+function drawScrewThread(blk, P, sThread, sTipBase, sTip, crest, root, d, col, pm) {
+  if (sTipBase - sThread <= 0.5) return;
+  const cat = (typeof HBS_THREAD_PITCH === 'object' && HBS_THREAD_PITCH[Math.round(d)]) || 0.5 * d;
+  const ds = (typeof drawingScale !== 'undefined' && drawingScale) ? drawingScale : 1;
+  const pitch = Math.max(cat, 1.6 * ds);              // ≥1.6 mm on paper at any scale
+  const half = pitch / 2;
+  const nMax = Math.ceil((sTip - sThread) / pitch) + 4;
+  // crest/root taper linearly to 0 over the tip cone so teeth shrink into the point.
+  const hAt = (s, base) => (s <= sTipBase) ? base
+    : base * Math.max(0, (sTip - s) / Math.max(0.5, sTip - sTipBase));
+
   ctx.setLineDash([]);
+
+  // Two rows of filled triangular teeth (adjacent teeth share the root point →
+  // continuous sawtooth); bottom row offset half a pitch for the helix read.
+  const row = (sign, off) => {
+    ctx.fillStyle = colorAlpha(col, 0.55);
+    ctx.strokeStyle = col;
+    ctx.lineWidth = Math.max(0.4, LW.VIS * pm);
+    for (let n = 0; n <= nMax; n++) {
+      const sPk = sThread + off + n * pitch;
+      if (sPk >= sTip - 0.3) break;
+      const cr = hAt(sPk, crest), ro = hAt(sPk, root);
+      if (cr - ro < 0.2) continue;
+      // Asymmetric tooth leaning toward the tip (long head-side flank, short
+      // tip-side flank) — the coarse timber-screw look in the geometry diagram.
+      const f1 = Math.max(sThread, sPk - pitch * 0.6), f2 = Math.min(sTip, sPk + pitch * 0.4);
+      const tri = [P(f1, sign * ro), P(sPk, sign * cr), P(f2, sign * ro)];
+      rFillPolygon(blk, tri);
+      rPolygon(blk, tri);
+    }
+  };
+  row(1, 0);
+  row(-1, half);
+
+  // Helix diagonals — one per pitch, leaning toward the tip (subtle: the back of
+  // the helix seen through, subordinate to the teeth so it doesn't clutter).
+  ctx.strokeStyle = colorAlpha(col, 0.28);
+  ctx.lineWidth = Math.max(0.25, LW.HID * pm * 0.8);
+  for (let n = 0; n <= nMax; n++) {
+    const sd = sThread + half * 0.5 + n * pitch;
+    if (sd >= sTipBase - 0.3) break;
+    const p1 = P(sd, root), p2 = P(sd + half * 0.7, -root);
+    rLine(blk, p1[0], p1[1], p2[0], p2[1]);
+  }
 }

@@ -118,6 +118,13 @@ const v25Last = {
   // Show grout fill in the section-strip cores (reinforced/grouted cells).
   wallGrouted: false,
   material: 'concrete',
+  // Dimension / Measure tool defaults (js/82). All paper-mm except prec/units.
+  dimOffset: 12,    // standoff of the dim line from the measured span (paper-mm)
+  dimTextH: 2.5,    // text cap height (paper-mm)
+  dimStyle: 'plex', // label font (NB_STYLES key) — same set as the text box
+  dimTerm: 'tick',  // terminator: 'tick' | 'arrow' | 'dot'
+  dimPrec: 0,       // decimal places 0..3
+  dimUnits: 'mm',   // 'mm' | 'm'
 };
 
 // ---- MODE SWITCHING ----
@@ -148,11 +155,33 @@ function applySheetMode(mode, silent) {
     if (iso) iso.hidden = true;
     if (elev) {
       elev.hidden = false;
+      // multi-file-workspace: size the 2D pane to the ACTIVE page, not a
+      // hardcoded A1. A native page reproduces the old A1 drawing-area inset
+      // (margins + title-block band) EXACTLY, so it stays byte-identical; an
+      // imported PDF page (hasTitleBlock:false) has no margins/title block, so
+      // the pane fills the full page (0,0)->(w,h). This anchors the 2D content
+      // origin (sheetX/sheetY) at the active page's drawing-area centre so a
+      // non-A1 PDF page is centred under the page frame instead of off in the
+      // A1 bottom-right corner.
+      const _pg = (typeof activePageSize === 'function')
+        ? activePageSize() : { w: SHEET.W, h: SHEET.H };
+      const _hasTB = (typeof pageHasTitleBlock === 'function')
+        ? pageHasTitleBlock((typeof activePage === 'function') ? activePage() : null)
+        : true;
+      // Drawing-area extents in sheet-mm. Native (title-block) pages inset by
+      // the shared SHEET margins + title-block band — identical to the old
+      // DA.* getters when _pg is A1. PDF pages use the full page rect.
+      const _daL = _hasTB ? SHEET.ML : 0;
+      const _daT = _hasTB ? SHEET.MT : 0;
+      const _daR = _hasTB ? (_pg.w - SHEET.MR) : _pg.w;
+      const _daB = _hasTB ? (_pg.h - SHEET.MB - SHEET.TB_H) : _pg.h;
+      const _daW = _daR - _daL;
+      const _daH = _daB - _daT;
       // Fill the drawing area edge-to-edge.
-      elev.boxW = DA.width - 4;
-      elev.boxH = DA.height - 4;
-      elev.sheetX = DA.left + (DA.width) / 2;
-      elev.sheetY = DA.top + (DA.height) / 2;
+      elev.boxW = _daW - 4;
+      elev.boxH = _daH - 4;
+      elev.sheetX = _daL + _daW / 2;
+      elev.sheetY = _daT + _daH / 2;
     }
     activeBlock = elev;
     // Use the same 1:10 paper scale as 3D mode so members and parametric

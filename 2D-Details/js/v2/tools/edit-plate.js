@@ -539,50 +539,59 @@
       return true;
     }
 
-    // Priority 4: body OR a (non-corner) edge → MOVE the whole plate. A click on
-    // a long top/bottom edge, or anywhere inside the outline, just selects and
-    // moves the plate as one. (Corner grabs were claimed at priority 3.)
-    let bHit = hitTestBody(blk, cursor.u, cursor.v);
-    if (!bHit) {
-      const eHit = hitTestEdge(blk, cursor.u, cursor.v);
-      if (eHit) bHit = { elementId: eHit.elementId };
-    }
-    if (bHit) {
-      const el = v2.appState.model.elements.get(bHit.elementId);
-      if (!el || !el.geometry || !Array.isArray(el.geometry.polygon)) return false;
-      // Bluebeam copy-drag: Alt (or Ctrl on Windows) + body-drag duplicates the
-      // plate. The actual clone is deferred to the first pointer movement (see
-      // onPointerMove dupPending) so a modifier-click that never moves makes no
-      // copy. A copy is a fresh independent plate (no group), so the group hooks
-      // are skipped — we must not snapshot the ORIGINAL's mates for dragging.
-      const _dup = (typeof window.isDupDragModifier === 'function' && window.isDupDragModifier(event));
-      state.selectedId = bHit.elementId;
-      window.v25SelPlateIds = [bHit.elementId];   // plain click → single selection
-      state.bodyDrag = {
-        elementId:    bHit.elementId,
-        origPolygon:  el.geometry.polygon.slice(),
-        anchorWorld:  { u: cursor.u, v: cursor.v },
-        currentDelta: { u: 0, v: 0 },
-        orthoAxis:    null,
-        snapLines:    null,
-        dupPending:   _dup,
-      };
-      // plate-grouping-stiffener — clicking a grouped plate selects the whole
-      // group; snapshot the v25 mates so they translate with this plate's drag.
-      // (Skipped while duplicating — the copy is a fresh independent plate.)
-      if (!_dup) {
-        if (typeof window.v25GroupOnPlateSelected === 'function') window.v25GroupOnPlateSelected(bHit.elementId);
-        if (typeof window.v25GroupOnPlateDragBegin === 'function') window.v25GroupOnPlateDragBegin(bHit.elementId);
-        if (typeof window.v25GroupOnPlateMoveUndoBegin === 'function') window.v25GroupOnPlateMoveUndoBegin(bHit.elementId);
-      }
-      if (ctx.requestRender) ctx.requestRender();
-      return true;
-    }
-
-    // Empty (plain) click: deselect + clear the plate co-selection, fall to v1.
-    if (state.selectedId) { state.selectedId = null; if (ctx.requestRender) ctx.requestRender(); }
-    window.v25SelPlateIds = [];
+    // Priority 4 (SELECTION-PRECISION, 2026-06): a plain body / non-corner-edge
+    // click is NO LONGER claimed here. It used to select+arm a body drag, which
+    // made the plate always win over a screw / small entity drawn on top of it
+    // (the v2 capture-phase pointerdown suppressed v1 entirely). Now we DEFER to
+    // v1's ranked hit-stack (js/71 v25HitTestStack): v1 decides plate-vs-screw-
+    // vs-timber by specificity, and when the PLATE wins it calls back into
+    // beginBodyDragFromExternalSelect (below) to arm the very same body drag.
+    // Returning false here lets the compatibility mousedown reach v1 (the v2
+    // dispatcher only stops propagation when a handler CLAIMS). Priorities 1-3
+    // (rotation handle, Shift multi-select, corner resize) still claim above.
+    //
+    // We DO NOT select, DO NOT arm state.bodyDrag, DO NOT set v25SelPlateIds, and
+    // DO NOT clear them here — clearing is now v1's job (empty-space + v1-entity-
+    // wins both clear the plate co-selection in js/39). Just fall through.
     return false;
+  }
+
+  /* ---- external body-drag arm (SELECTION-PRECISION) -----------------------------
+   * Called by v1 (js/39-events.js mousedown) AFTER its ranked hit-stack decided a
+   * v2 plate is the tightest target under the cursor. Selects the plate and arms
+   * the SAME state.bodyDrag the old priority-4 path armed, so the subsequent
+   * capture-phase pointermove / pointerup (still routed to editPlate while a v1
+   * 'select' tool is active) drive the move + commit + group/undo unchanged.
+   *   elementId    — the v2 plate element id (NOT the 'v2plate-' synthetic).
+   *   cursorWorld  — { u, v } the click landed at (the drag anchor).
+   *   dupModifier  — true to start an Alt/Ctrl copy-drag (clone on first move).
+   * Mirrors the body of the retired priority-4 block. */
+  function beginBodyDragFromExternalSelect(elementId, cursorWorld, dupModifier) {
+    const model = v2.appState && v2.appState.model;
+    if (!model || !model.elements || typeof model.elements.get !== 'function') return false;
+    const el = model.elements.get(elementId);
+    if (!el || !el.geometry || !Array.isArray(el.geometry.polygon)) return false;
+    const cw = cursorWorld || { u: 0, v: 0 };
+    state.selectedId = elementId;
+    window.v25SelPlateIds = [elementId];
+    state.bodyDrag = {
+      elementId:    elementId,
+      origPolygon:  el.geometry.polygon.slice(),
+      anchorWorld:  { u: cw.u, v: cw.v },
+      currentDelta: { u: 0, v: 0 },
+      orthoAxis:    null,
+      snapLines:    null,
+      dupPending:   !!dupModifier,
+    };
+    // plate-grouping-stiffener — a grouped plate drags its v25 mates. Skipped
+    // while duplicating (the copy is a fresh independent plate).
+    if (!dupModifier) {
+      if (typeof window.v25GroupOnPlateSelected === 'function') window.v25GroupOnPlateSelected(elementId);
+      if (typeof window.v25GroupOnPlateDragBegin === 'function') window.v25GroupOnPlateDragBegin(elementId);
+      if (typeof window.v25GroupOnPlateMoveUndoBegin === 'function') window.v25GroupOnPlateMoveUndoBegin(elementId);
+    }
+    if (typeof requestRender === 'function') requestRender();
+    return true;
   }
 
   function onPointerMove(event, ctx) {
@@ -899,5 +908,6 @@
     onPointerUp:          onPointerUp,
     onKey:                onKey,
     selectInRect:         selectInRect,                // plate-marquee-fix (2026-06-01)
+    beginBodyDragFromExternalSelect: beginBodyDragFromExternalSelect, // SELECTION-PRECISION
   };
 })();

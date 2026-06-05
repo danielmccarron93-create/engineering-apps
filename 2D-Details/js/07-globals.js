@@ -59,9 +59,20 @@ let plateDimActive = false;  // true when user is typing a dimension mid-edge
 let nbPlace = null;   // {blk,u,v} first click (box top-left) during two-click placement
 let nbEditor = null;  // inline text-editor overlay state {ent, el, blk}
 
+// ---- DIMENSION / MEASURE TOOL STATE (v25 'dim2' entity — see js/82) ----
+// The first measured point lives on v25State.dragStart (so getCursor's ortho
+// origin picks it up); measureP1 mirrors it only so the keyboard typing block
+// can read it cheaply.
+let measureP1 = null;          // {u,v} first measured point (mirror of v25State.dragStart)
+let measureDimInput = '';      // typed-digit buffer (set exact length after 2nd click)
+let measureDimActive = false;  // true while a typed length is being entered
+let measureClickLen = 0;       // as-clicked length (mm) — revert target if the buffer is cleared
+let measureAwaitId = null;     // id of the just-placed dim2 awaiting digit/letter typing
+let dimEditor = null;          // inline double-click editor state {ent, el, blk, raf}
+
 let spaceHeld = false, shiftHeld = false, altHeld = false;
 let snapOn = true, orthoOn = false, gridOn = false;
-let gridSize = 10;
+let gridSize = 5;
 let nudgeSize = 10;
 let spellEnabled = true;   // note spell-check on by default (js/80 + js/81); persisted to localStorage
 
@@ -99,6 +110,16 @@ let dimType = 'horizontal'; // 'horizontal', 'vertical', 'aligned', 'angular'
 // Mouse state
 let isPanning = false, panLast = null;
 let dragMoving = false, dragStart = null, dragSnapshots = null;
+
+// ---- SHIFT-SCROLL PAGE NAVIGATION (multi-file-workspace) ----
+// Shift+wheel steps between pages in the active file's project.sheets. Wheel
+// deltas are tiny and noisy (esp. trackpads), so we accumulate them here and
+// move a number of pages PROPORTIONAL to the piled-up delta: one notch ≈ one
+// page, a hard flick = several pages in a single direct jump. The whole-step
+// amount is subtracted off after each jump (the sub-threshold remainder is kept
+// so slow drips still eventually advance). Read/written only by the wheel handler
+// in js/39-events.js.
+let pageNavAccum = 0;
 
 // ---- MODIFIER-DRAG DUPLICATE (Bluebeam-style copy-drag) ----
 // Hold the duplicate modifier and body-drag any item to drop an exact copy; the
