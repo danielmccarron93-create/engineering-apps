@@ -35,6 +35,8 @@ const FLASH_MS = 220;                    // total flash duration
 const FLASH_PEAK = 0.5;                  // peak bloom alpha (<= ~0.5)
 const FLASH_BLOOM = '255,250,235';       // warm-white bulb rgb
 const FLASH_TAIL = 'rgba(255,240,210,0.06)'; // developing-warmth tail
+const FLASH_FRAME = '255,200,120';       // warm-amber capture-frame pulse (reads on WHITE paper, where a white bloom is invisible)
+const FLASH_FRAME_PEAK = 0.72;           // frame-pulse peak alpha
 const SNAP_DPI = 300;                    // capture DPI
 const MAX_SNAP_SIDE = 6000;              // px memory guard on the larger side
 
@@ -626,11 +628,14 @@ function _snapDrawFlash(cs) {
   }
   ctx.restore();
 
-  // 2. Border pulse (outside the clip so the stroke isn't half-clipped).
+  // 2. Warm capture-frame pulse — the recognisable "shutter" cue. Warm-amber so it
+  //    reads on WHITE paper (a white bloom is invisible there) AND on dark content;
+  //    inset a touch so it reads as a frame. Drawn unclipped (full stroke shows).
+  const frameA = FLASH_FRAME_PEAK * up * (1 - ease);
   ctx.save();
-  const borderA = Math.min(0.6, bloomA * 1.2);
-  ctx.strokeStyle = 'rgba(255,255,255,' + borderA.toFixed(3) + ')';
-  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = 'rgba(' + FLASH_FRAME + ',' + frameA.toFixed(3) + ')';
+  ctx.lineWidth = 2.5;
+  const ins = 2.5;
   if (zone.shape === 'poly' && Array.isArray(zone.polySheet) && zone.polySheet.length) {
     ctx.beginPath();
     zone.polySheet.forEach((p, i) => {
@@ -640,7 +645,7 @@ function _snapDrawFlash(cs) {
     ctx.closePath();
     ctx.stroke();
   } else {
-    ctx.strokeRect(minX, minY, maxX - minX, maxY - minY);
+    ctx.strokeRect(minX + ins, minY + ins, (maxX - minX) - 2 * ins, (maxY - minY) - 2 * ins);
   }
   ctx.restore();
 
