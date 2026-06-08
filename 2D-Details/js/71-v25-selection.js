@@ -251,6 +251,16 @@ function v25EntBounds(ent) {
     return { L: ent.u - halfW, R: ent.u + halfW, B: ent.v + axLo, T: ent.v + axHi };
   }
   if (ent.type === 'noteBox' && typeof nbBounds === 'function') return nbBounds(ent);
+  // CLT panel — AABB of the (rotated) world outline. Drives marquee-select,
+  // the hover-halo fallback, the deselect-proximity guard, and group/align.
+  if (ent.type === 'clt' && typeof cltWorldOutline === 'function') {
+    const oc = cltWorldOutline(ent);
+    if (oc && oc.length) {
+      let L = Infinity, R = -Infinity, B = Infinity, T = -Infinity;
+      oc.forEach(p => { if (p.u < L) L = p.u; if (p.u > R) R = p.u; if (p.v < B) B = p.v; if (p.v > T) T = p.v; });
+      return { L, R, B, T };
+    }
+  }
   return null;
 }
 
@@ -461,6 +471,12 @@ function v25EntHit(blk, ent, cursorPx, ctx) {
       poly = [{ u: ent.u, v: ent.v }, { u: ent.u + w, v: ent.v }, { u: ent.u + w, v: ent.v + h }, { u: ent.u, v: ent.v + h }];
     }
     return areaHit(poly);
+  }
+  if (t === 'clt') {
+    // Click hit-test = the same (rotated) world outline the highlight uses, so
+    // the pickable area matches what's drawn for both edge and plan modes.
+    const oc = (typeof cltWorldOutline === 'function') ? cltWorldOutline(ent) : null;
+    return (oc && oc.length >= 3) ? areaHit(oc.map(p => ({ u: p.u, v: p.v }))) : null;
   }
   if (t === 'snapshot') {
     const w = ent.w || 0, h = ent.h || 0, rotDeg = ent.rot || 0;
@@ -727,6 +743,11 @@ function v25HitTestStack(blk, u, v) {
   for (let i = arr.length - 1; i >= 0; i--) {
     const ent = arr[i];
     if (!ent || !ent._v25) continue;
+    // snapshot-tools (js/88) — a flattened (locked) image is invisible to normal
+    // picks (click / hover / cycle / marquee / right-click-select) so a stray
+    // click can't grab it while tracing. Double-click + the right-click menu
+    // reach it through v25SnapshotAt instead.
+    if (ent.type === 'snapshot' && ent.flattened) continue;
 
     // NoteBox leader segments — a precise candidate (mirrors the old leader
     // pickup; the arrow TIP already emitted a PASS-0 candidate above).
@@ -875,6 +896,34 @@ function v25EntHandles(ent, blk) {
       out.push({ key: 'e-bottom', u: ent.u + w / 2, v: ent.v });
       out.push({ key: 'e-top',    u: ent.u + w / 2, v: ent.v + h });
     }
+  } else if (ent.type === 'clt') {
+    const rot = (ent.rot || 0) * Math.PI / 180;
+    const cosR = Math.cos(rot), sinR = Math.sin(rot);
+    const len = ent.lengthMM || 0;
+    if (ent.mode === 'plan') {
+      // Face rect — four mid-edge grips (resize) + perpendicular rotation ball.
+      const w = len, h = ent.widthMM || 0;
+      const X = (lu, lv) => ent.u + lu * cosR - lv * sinR;
+      const Y = (lu, lv) => ent.v + lu * sinR + lv * cosR;
+      out.push({ key: 'e-left',   u: X(0, h / 2),   v: Y(0, h / 2) });
+      out.push({ key: 'e-right',  u: X(w, h / 2),   v: Y(w, h / 2) });
+      out.push({ key: 'e-bottom', u: X(w / 2, 0),   v: Y(w / 2, 0) });
+      out.push({ key: 'e-top',    u: X(w / 2, h),   v: Y(w / 2, h) });
+      if (w > 0 && h > 0) {
+        const offsetMm = h + Math.max(60, h * 0.4);
+        out.push({ key: 'rotate', shape: 'circle', u: X(w / 2, offsetMm), v: Y(w / 2, offsetMm) });
+      }
+    } else {
+      // Edge strip — end-a / end-b length-angle grips + rotation ball.
+      out.push({ key: 'end-a', u: ent.u, v: ent.v });
+      out.push({ key: 'end-b', u: ent.u + cosR * len, v: ent.v + sinR * len });
+      if (len > 0) {
+        const half = ((typeof cltPanelThickness === 'function') ? cltPanelThickness(ent.panel) : 0) / 2 || 60;
+        const offsetMm = half + Math.max(80, half * 0.8);
+        const midU = ent.u + cosR * (len / 2), midV = ent.v + sinR * (len / 2);
+        out.push({ key: 'rotate', shape: 'circle', u: midU + (-sinR) * offsetMm, v: midV + cosR * offsetMm });
+      }
+    }
   } else if (ent.type === 'leader2') {
     out.push({ key: 'tip', u: ent.tipU, v: ent.tipV });
     out.push({ key: 'txt', u: ent.txtU, v: ent.txtV });
@@ -919,6 +968,7 @@ function v25EntHandles(ent, blk) {
   // "spin this thing". Polygon mats use centroid + furthest-point radius
   // to push the handle outside the visible polygon.
   if (ent.type === 'snapshot') {
+    if (ent.flattened) return out;   // snapshot-tools (js/88): locked image shows no grips
     const w = ent.w || 0, h = ent.h || 0;
     const rr = (ent.rot || 0) * Math.PI / 180, cc = Math.cos(rr), ss = Math.sin(rr);
     const cu = ent.u + w / 2, cv = ent.v + h / 2;
@@ -1010,6 +1060,13 @@ function v25CollectSnapPoints(blk, originU, originV) {
     } else if (ent.type === 'anchor') {
       pts.push({ u: ent.u, v: ent.v, src: ent.id });
       if (ent.txtU != null && ent.txtV != null) pts.push({ u: ent.txtU, v: ent.txtV, src: ent.id });
+    } else if (ent.type === 'stud' || ent.type === 'bolt2' || ent.type === 'screw') {
+      // To-scale fixings (ChemSet stud 72j / bolt2 72c / HBS screw 72i): emit
+      // the shaft centre so placing a new fixing alignment-snaps onto another
+      // fixing's vertical/horizontal line — the "same vertical plane" gauge
+      // line. Mirrors the legacy `anchor` branch; the subtle 5px align-v/-h
+      // guide + easy break-out come for free from v25TrySnap downstream.
+      pts.push({ u: ent.u, v: ent.v, src: ent.id });
     } else if (ent.type === 'mat' && ent.shape === 'poly' && ent.pts) {
       // Polygon mats rotate about centroid — emit rotated-into-world snap
       // points so the user can grab the visible vertices of a tilted poly.
@@ -1314,7 +1371,7 @@ function v25DrawSnapIndicator(blk, cs) {
 // plate. Members, fixings and filled regions read as "picked" at a glance; pure
 // annotations / borders (dims, leaders, reo lines, viewport frames) stay
 // outline-only so the wash stays signal, not noise.
-const V25_SEL_FILL_TYPES = new Set(['mem2', 'mat', 'mesh', 'blockWall', 'stiff2', 'anchor', 'screw', 'stud', 'bolt2']);
+const V25_SEL_FILL_TYPES = new Set(['mem2', 'mat', 'mesh', 'blockWall', 'stiff2', 'anchor', 'screw', 'stud', 'bolt2', 'clt']);
 
 // Oriented rod rectangle hugging a fastener's DRAWN glyph (stud / screw / bolt2).
 // Built from the bearing/clamp-recentred centreline (v25FastenerCentreline) ±
@@ -1364,6 +1421,14 @@ function v25SelFootprint(ent, blk) {
     const len = ent.length || 0;
     const hd = (typeof v25Mem2HalfDepth === 'function') ? v25Mem2HalfDepth(ent) : 50;
     if ((ent.aspect || 'elev') === 'sec' || len === 0) {
+      // GLT sections are strongly non-square (e.g. 165×480) — hug the true
+      // breadth×depth glyph (spun by roll) via the tight WorldOutline rather than
+      // the depth² square the other section types fall back to, so the selection
+      // halo matches the drawn member (and the precise hit-test / hover).
+      if (ent.memberType === 'glt' && typeof v25Mem2WorldOutline === 'function') {
+        const oc = v25Mem2WorldOutline(ent);
+        if (oc && oc.length >= 3) return oc.map(p => ({ u: p[0], v: p[1] }));
+      }
       return [{ u: ent.u - hd, v: ent.v - hd }, { u: ent.u + hd, v: ent.v - hd },
               { u: ent.u + hd, v: ent.v + hd }, { u: ent.u - hd, v: ent.v + hd }];
     }
@@ -1385,6 +1450,12 @@ function v25SelFootprint(ent, blk) {
     const w = ent.w || 0, h = ent.h || 0, cu = ent.u + w / 2, cv = ent.v + h / 2;
     return [[-w/2, -h/2], [w/2, -h/2], [w/2, h/2], [-w/2, h/2]].map(([lx, ly]) => ({
       u: cu + lx * c - ly * s, v: cv + lx * s + ly * c }));
+  }
+  // CLT panel — oriented strip (edge: length × layup thickness) or rect
+  // (plan: length × width), via the shared world-outline helper.
+  if (t === 'clt' && typeof cltWorldOutline === 'function') {
+    const oc = cltWorldOutline(ent);
+    if (oc && oc.length >= 3) return oc.map(p => ({ u: p.u, v: p.v }));
   }
   // Section block wall — oriented thin strip (width = block thickness).
   if (t === 'blockWall' && ent.wallMode === 'sec') {
@@ -1409,6 +1480,10 @@ function v25SelFootprint(ent, blk) {
 
 function v25DrawSelectionHighlight(blk, cs) {
   if (sheetMode !== '2d') return;
+  // GLT-notch (72m) — while a member is armed for cutting, the amber notch glow
+  // (drawClickPreview → v25NotchPreview) stands in for the selection highlight,
+  // so suppress the dashed terracotta box to keep the gesture clean.
+  if (tool === 'v25-notch') return;
   const col = cs.getPropertyValue('--selected-color').trim() || '#4a90e2';
   // Faint dashed outline around each selected entity. Mat entities draw a
   // tight rotated outline (matching the visible polygon) when ent.rot is
@@ -1486,9 +1561,21 @@ function v25DrawSelectionHighlight(blk, cs) {
         // Dashed connector from anchor (member midpoint or mat centroid) to
         // the rotation ball so the user can see what the handle is anchored
         // to and what the rotation pivot is.
-        if (h.key === 'rotate' && (ent.type === 'mem2' || ent.type === 'mat' || ent.type === 'blockWall')) {
+        if (h.key === 'rotate' && (ent.type === 'mem2' || ent.type === 'mat' || ent.type === 'blockWall' || ent.type === 'clt')) {
           let mU, mV;
-          if (ent.type === 'mem2' || ent.type === 'blockWall') {
+          if (ent.type === 'clt') {
+            // edge strip → midpoint of the draw line; plan rect → its centre.
+            const r2 = (ent.rot || 0) * Math.PI / 180, c2 = Math.cos(r2), s2 = Math.sin(r2);
+            const lenR = ent.lengthMM || 0;
+            if (ent.mode === 'plan') {
+              const w2 = lenR, h2 = ent.widthMM || 0;
+              mU = ent.u + c2 * (w2 / 2) - s2 * (h2 / 2);
+              mV = ent.v + s2 * (w2 / 2) + c2 * (h2 / 2);
+            } else {
+              mU = ent.u + c2 * (lenR / 2);
+              mV = ent.v + s2 * (lenR / 2);
+            }
+          } else if (ent.type === 'mem2' || ent.type === 'blockWall') {
             const r2 = (ent.rot || 0) * Math.PI / 180;
             const lenR = (ent.type === 'blockWall') ? (ent.lengthMM || 0) : (ent.length || 0);
             mU = ent.u + Math.cos(r2) * (lenR / 2);
@@ -1661,6 +1748,11 @@ function v25HoverOutline(blk, ent) {
   }
   if (t === 'mat') { out.closed.push(v25MatPolyWorld(ent)); return out; }
   if (t === 'blockWall') { out.closed.push(v25BlockWallPolyWorld(ent)); return out; }
+  if (t === 'clt') {
+    const oc = (typeof cltWorldOutline === 'function') ? cltWorldOutline(ent) : null;
+    if (oc && oc.length >= 3) out.closed.push(oc.map(p => ({ u: p.u, v: p.v }))); else bboxClosed();
+    return out;
+  }
   if (t === 'lineSet' || t === 'line' || t === 'reoBar') {
     if (ent.pts && ent.pts.length) { const poly = ent.pts.map(p => ({ u: p.u, v: p.v })); (ent.closed ? out.closed : out.open).push(poly); }
     return out;
@@ -1874,6 +1966,28 @@ function v25HitHandle(blk, ent, u, v) {
       if (d < 8 && d < bestD) { bestD = d; bestI = i; }
     }
     if (bestI >= 0) return 'pt:' + bestI;
+  }
+  if (ent.type === 'clt') {
+    const rot = (ent.rot || 0) * Math.PI / 180, c = Math.cos(rot), s = Math.sin(rot);
+    const len = ent.lengthMM || 0;
+    if (ent.mode === 'plan') {
+      const w = len, h = ent.widthMM || 0;
+      const X = (lu, lv) => ent.u + lu * c - lv * s, Y = (lu, lv) => ent.v + lu * s + lv * c;
+      const tests = [
+        ['e-left', X(0, h / 2), Y(0, h / 2)], ['e-right', X(w, h / 2), Y(w, h / 2)],
+        ['e-bottom', X(w / 2, 0), Y(w / 2, 0)], ['e-top', X(w / 2, h), Y(w / 2, h)],
+      ];
+      let bk = null, bd = Infinity;
+      for (const t of tests) { const d = distPx(t[1], t[2]); if (d < 10 && d < bd) { bd = d; bk = t[0]; } }
+      if (bk) return bk;
+    } else {
+      const ebu = ent.u + c * len, ebv = ent.v + s * len;
+      const dA = distPx(ent.u, ent.v), dB = distPx(ebu, ebv);
+      const aPx = real2px(blk, ent.u, ent.v), bPx = real2px(blk, ebu, ebv);
+      const spanPx = Math.hypot(bPx.x - aPx.x, bPx.y - aPx.y);
+      const TOL = Math.max(3, Math.min(12, spanPx / 3));
+      if (dA < TOL || dB < TOL) return dA <= dB ? 'end-a' : 'end-b';
+    }
   }
   if (ent.type === 'blockWall') {
     if (ent.wallMode === 'sec') {
@@ -2129,6 +2243,85 @@ function v25Move(ent, du, dv, handle) {
     return;
   }
 
+  // CLT panel grips — edge strip (end-a/end-b + rotate) and plan rect
+  // (e-* edge resize + rotate). Rotates about the strip midpoint (edge) or the
+  // rect centre (plan); both keep the opposite reference fixed.
+  if (ent.type === 'clt') {
+    const rot = (ent.rot || 0) * Math.PI / 180;
+    const cosR = Math.cos(rot), sinR = Math.sin(rot);
+    const len = ent.lengthMM || 0;
+    const shift = !!(typeof shiftHeld !== 'undefined' && shiftHeld);
+    // Body drag — translate the panel origin. (Without this the per-handle
+    // branches below fall through to a bare `return`, so the panel can be
+    // selected and grip-edited but never moved.)
+    if (handle === 'body') { ent.u += du; ent.v += dv; return; }
+    if (ent.mode === 'plan') {
+      const w = len, h = ent.widthMM || 0;
+      if (handle === 'rotate') {
+        if (w < 1 || h < 1) return;
+        const cx = ent.u + cosR * (w / 2) - sinR * (h / 2);
+        const cy = ent.v + sinR * (w / 2) + cosR * (h / 2);
+        const cu = (typeof v25Drag === 'object' && v25Drag) ? (v25Drag.lastU + du) : (cx + du);
+        const cv = (typeof v25Drag === 'object' && v25Drag) ? (v25Drag.lastV + dv) : (cy + dv);
+        const dx = cu - cx, dy = cv - cy;
+        if (dx * dx + dy * dy < 1) return;
+        const cursorRot = Math.atan2(dy, dx) - Math.PI / 2;
+        const nr = applySnappedRotation(cursorRot, shift);
+        const cN = Math.cos(nr), sN = Math.sin(nr);
+        ent.u = cx - (cN * (w / 2) - sN * (h / 2));
+        ent.v = cy - (sN * (w / 2) + cN * (h / 2));
+        ent.rot = nr * 180 / Math.PI;
+        return;
+      }
+      // Edge resize — project the world delta onto the local axes.
+      const MIN = 50;
+      const pu = du * cosR + dv * sinR;          // along length
+      const pv = du * (-sinR) + dv * cosR;       // along width
+      if (handle === 'e-right')  { const nl = w + pu; if (nl >= MIN) ent.lengthMM = nl; return; }
+      if (handle === 'e-left')   { const nl = w - pu; if (nl >= MIN) { ent.u += pu * cosR; ent.v += pu * sinR; ent.lengthMM = nl; } return; }
+      if (handle === 'e-top')    { const nh = h + pv; if (nh >= MIN) ent.widthMM = nh; return; }
+      if (handle === 'e-bottom') { const nh = h - pv; if (nh >= MIN) { ent.u += pv * (-sinR); ent.v += pv * cosR; ent.widthMM = nh; } return; }
+      return;
+    }
+    // Edge strip.
+    if (handle === 'rotate') {
+      if (len < 1) return;
+      const midU = ent.u + cosR * (len / 2), midV = ent.v + sinR * (len / 2);
+      const cu = (typeof v25Drag === 'object' && v25Drag) ? (v25Drag.lastU + du) : (midU + du);
+      const cv = (typeof v25Drag === 'object' && v25Drag) ? (v25Drag.lastV + dv) : (midV + dv);
+      const dx = cu - midU, dy = cv - midV;
+      if (dx * dx + dy * dy < 1) return;
+      const nr = applySnappedRotation(Math.atan2(dy, dx) - Math.PI / 2, shift);
+      ent.u = midU - Math.cos(nr) * (len / 2);
+      ent.v = midV - Math.sin(nr) * (len / 2);
+      ent.rot = nr * 180 / Math.PI;
+      return;
+    }
+    if (handle === 'end-a' || handle === 'end-b') {
+      const ax = ent.u, ay = ent.v;
+      const bx = ent.u + cosR * len, by = ent.v + sinR * len;
+      let nax = ax, nay = ay, nbx = bx, nby = by;
+      if (handle === 'end-a') { nax = ax + du; nay = ay + dv; } else { nbx = bx + du; nby = by + dv; }
+      if (shift) {
+        const STEP = Math.PI / 4;
+        const fx = (handle === 'end-a') ? nbx : nax, fy = (handle === 'end-a') ? nby : nay;
+        const px = (handle === 'end-a') ? nax : nbx, py = (handle === 'end-a') ? nay : nby;
+        const wu = px - fx, wv = py - fy;
+        if (wu !== 0 || wv !== 0) {
+          const a = Math.round(Math.atan2(wv, wu) / STEP) * STEP;
+          const t = wu * Math.cos(a) + wv * Math.sin(a);
+          const sx = fx + t * Math.cos(a), sy = fy + t * Math.sin(a);
+          if (handle === 'end-a') { nax = sx; nay = sy; } else { nbx = sx; nby = sy; }
+        }
+      }
+      const dx = nbx - nax, dy = nby - nay, nl = Math.hypot(dx, dy);
+      if (nl < 1) return;
+      ent.u = nax; ent.v = nay; ent.lengthMM = nl; ent.rot = Math.atan2(dy, dx) * 180 / Math.PI;
+      return;
+    }
+    return;
+  }
+
   // Blockwork section strip — rotation ball (snap to 0/45/90… unless Shift).
   if (ent.type === 'blockWall' && ent.wallMode === 'sec' && handle === 'rotate') {
     const len = ent.lengthMM || 0;
@@ -2162,6 +2355,26 @@ function v25Move(ent, du, dv, handle) {
     let nax = ax, nay = ay, nbx = bx, nby = by;
     if (handle === 'end-a') { nax = ax + du; nay = ay + dv; }
     else                    { nbx = bx + du; nby = by + dv; }
+    // Shift → 45° angle-lock: snap the strip onto the nearest eighth-angle by
+    // projecting the dragged end onto the closest 45° line through the FIXED
+    // end (0/45/90/...). Same path as the mem2 end-handle above so every
+    // straight member re-angles identically under Shift. Bare `shiftHeld` is
+    // the live modifier global.
+    if (typeof shiftHeld !== 'undefined' && shiftHeld) {
+      const STEP = Math.PI / 4;
+      const fx = (handle === 'end-a') ? nbx : nax;   // fixed end
+      const fy = (handle === 'end-a') ? nby : nay;
+      const px = (handle === 'end-a') ? nax : nbx;   // raw dragged end
+      const py = (handle === 'end-a') ? nay : nby;
+      const wu = px - fx, wv = py - fy;
+      if (wu !== 0 || wv !== 0) {
+        const a = Math.round(Math.atan2(wv, wu) / STEP) * STEP;
+        const t = wu * Math.cos(a) + wv * Math.sin(a);   // project onto snapped dir
+        const sx = fx + t * Math.cos(a), sy = fy + t * Math.sin(a);
+        if (handle === 'end-a') { nax = sx; nay = sy; }
+        else                    { nbx = sx; nby = sy; }
+      }
+    }
     const dx = nbx - nax, dy = nby - nay, nl = Math.hypot(dx, dy);
     if (nl < 1) return;
     ent.u = nax; ent.v = nay;
@@ -2288,6 +2501,23 @@ function v25Move(ent, du, dv, handle) {
     if (ent.pts && ent.pts[idx]) {
       ent.pts[idx].u += du;
       ent.pts[idx].v += dv;
+      // Shift → snap the dragged vertex onto the nearest 0/45/90° line through
+      // its REFERENCE neighbour (the previous vertex, or the next vertex for
+      // pt:0), preserving the dragged segment's length. Same eighth-angle
+      // projection the mem2 end-handles use. Whole-line body drags get H/V-only
+      // ortho upstream (39-events); vertex drags get the finer 45° steps here.
+      if (typeof shiftHeld !== 'undefined' && shiftHeld && ent.pts.length >= 2) {
+        const refIdx = (idx > 0) ? idx - 1 : 1;
+        const ref = ent.pts[refIdx];
+        const wu = ent.pts[idx].u - ref.u, wv = ent.pts[idx].v - ref.v;
+        if (wu !== 0 || wv !== 0) {
+          const STEP = Math.PI / 4;
+          const a = Math.round(Math.atan2(wv, wu) / STEP) * STEP;
+          const t = wu * Math.cos(a) + wv * Math.sin(a);   // project onto snapped dir
+          ent.pts[idx].u = ref.u + t * Math.cos(a);
+          ent.pts[idx].v = ref.v + t * Math.sin(a);
+        }
+      }
     }
     return;
   }
@@ -2325,6 +2555,23 @@ function v25UpdateInspector() {
   // selection (it surfaces a selected member's Section for editing). Safe in any
   // mode: the bar self-hides outside 2D / when no editable selection applies.
   if (typeof v25UpdateOptionsBar === 'function') v25UpdateOptionsBar();
+  // v2-plate-inspector — plate selection lives in v2.tools.editPlate.state /
+  // window.v25SelPlateIds (mutual-exclusion with v25Selected, see js/39-events.js),
+  // never in v25Selected, so the entities2D-driven inspector body below can
+  // never render it. When a v2 plate is the active selection, hand the panel to
+  // the purpose-built v2 inspector (js/v2/ui/inspector-plate.js); it owns the
+  // host (clears + rebuilds it) and commits thickness/type edits through
+  // v2.transactions.editElement + the undo stack, so undo/redo/autosave and the
+  // v1<->v2 mirror bridge all keep working.
+  if (sheetMode === '2d'
+      && (!Array.isArray(v25Selected) || !v25Selected.length)
+      && window.v2 && v2.tools && v2.tools.editPlate && v2.tools.editPlate.state
+      && v2.tools.editPlate.state.selectedId
+      && v2.ui && v2.ui.inspectorPlate
+      && typeof v2.ui.inspectorPlate.renderForElement === 'function') {
+    v2.ui.inspectorPlate.renderForElement(v2.tools.editPlate.state.selectedId, root);
+    return;
+  }
   if (sheetMode !== '2d' || !v25Selected.length) return; // leave existing inspector
   const id = v25Selected[v25Selected.length - 1];
   const arr = entities2D[(activeBlock && activeBlock.viewKey) || 'elevation'] || [];
@@ -2362,7 +2609,23 @@ function v25UpdateInspector() {
       num('Length (mm)', 'lengthMM');
       num('Rotation°', 'rot', 0.5);
       sel('End break', 'endBreak', ['start','end','both','none']);
-      sel('Grout cores', 'grouted', ['','true']);
+      // blockwork-section-hatch — grout stipple (default ON) + 45° cross-hatch
+      // overlay (default OFF), each with Spacing / Opacity / Line-width sliders.
+      // Lazily migrate a legacy `grouted` flag onto groutFill so the toggle and
+      // the renderer agree for old saves.
+      if (ent.groutFill == null) ent.groutFill = !!ent.grouted;
+      if (ent.xHatch == null) ent.xHatch = true;   // cross-hatch defaults ON
+      const _gd = (typeof BLOCKWALL_GROUT_DEFAULTS === 'object') ? BLOCKWALL_GROUT_DEFAULTS : { spacing: 25, opacity: 55, width: 30 };
+      const _xd = (typeof BLOCKWALL_XHATCH_DEFAULTS === 'object') ? BLOCKWALL_XHATCH_DEFAULTS : { spacing: 50, opacity: 22, width: 30 };
+      fields.push({ kind: 'sel', label: 'Grout fill', key: 'groutFill', opts: [{ v: 'true', l: 'On' }, { v: '', l: 'Off' }] });
+      fields.push({ kind: 'range', label: '· spacing',    key: 'groutSpacing', min: 0, max: 100, step: 5, defaultVal: _gd.spacing, suffix: '%' });
+      fields.push({ kind: 'range', label: '· opacity',    key: 'groutOpacity', min: 0, max: 100, step: 5, defaultVal: _gd.opacity, suffix: '%' });
+      fields.push({ kind: 'range', label: '· line width', key: 'groutWidth',   min: 0, max: 100, step: 5, defaultVal: _gd.width,   suffix: '%' });
+      fields.push({ kind: 'sel', label: 'Cross-hatch', key: 'xHatch', opts: [{ v: 'true', l: 'On' }, { v: '', l: 'Off' }] });
+      fields.push({ kind: 'range', label: '· spacing',    key: 'xHatchSpacing', min: 0, max: 100, step: 5, defaultVal: _xd.spacing, suffix: '%' });
+      fields.push({ kind: 'range', label: '· opacity',    key: 'xHatchOpacity', min: 0, max: 100, step: 5, defaultVal: _xd.opacity, suffix: '%' });
+      fields.push({ kind: 'range', label: '· line width', key: 'xHatchWidth',   min: 0, max: 100, step: 5, defaultVal: _xd.width,   suffix: '%' });
+      fields.push({ kind: 'sel', label: '· flip dir', key: 'xHatchFlip', opts: [{ v: 'true', l: 'On' }, { v: '', l: 'Off' }] });
     } else {
       num('Length (mm)', 'lengthMM'); num('Height (mm)', 'heightMM');
       fields.push({ kind:'h', label: 'Break-line edges' });
@@ -2370,6 +2633,36 @@ function v25UpdateInspector() {
       sel('Bottom', 'breakEdges.bottom', ['','true']);
       sel('Left', 'breakEdges.left', ['','true']);
       sel('Right', 'breakEdges.right', ['','true']);
+    }
+  } else if (ent.type === 'clt') {
+    // NeXTimber CLT panel. Panel designation fixes the to-scale layup; treatment
+    // + grain/board knobs are cosmetic. Mode (edge/plan) is set by the tool.
+    const _panelKeys = (typeof CLT_PANELS === 'object') ? Object.keys(CLT_PANELS) : [ent.panel];
+    fields.push({ kind: 'sel', label: 'Panel', key: 'panel',
+      opts: _panelKeys.map(function (k) { return { v: k, l: (CLT_PANELS[k] && CLT_PANELS[k].label) || k }; }) });
+    const _treats = (typeof CLT_PRODUCT === 'object' && CLT_PRODUCT.treatments) ? CLT_PRODUCT.treatments : ['Untreated', 'H3'];
+    sel('Treatment', 'treatment', _treats);
+    fields.push({ kind: 'ro', label: 'View', value: (ent.mode === 'plan') ? 'Plan / face' : 'Edge / section' });
+    num('Length (mm)', 'lengthMM');
+    if (ent.mode === 'plan') {
+      num('Width (mm)', 'widthMM');
+      sel('Board axis', 'boardAxis', ['length', 'width']);
+    } else {
+      sel('Section axis', 'sectionAxis', ['across', 'along']);
+      sel('End break', 'endBreak', ['start', 'end', 'both', 'none']);
+    }
+    num('Rotation°', 'rot', 0.5);
+    fields.push({ kind: 'h', label: 'Appearance' });
+    fields.push({ kind: 'num', label: 'Board width (mm)', key: 'boardWidth', step: 5, min: 40, max: 400 });
+    sel('Show boards', 'showBoards', [{ v: 'true', l: 'On' }, { v: '', l: 'Off' }]);
+    const _cg = (typeof CLT_GRAIN_DEFAULTS === 'object') ? CLT_GRAIN_DEFAULTS : { size: 45, spacing: 50, opacity: 30 };
+    fields.push({ kind: 'range', label: 'Grain size', key: 'grainSize', min: 0, max: 100, step: 5, defaultVal: _cg.size, suffix: '%' });
+    fields.push({ kind: 'range', label: 'Grain spacing', key: 'grainSpacing', min: 0, max: 100, step: 5, defaultVal: _cg.spacing, suffix: '%' });
+    fields.push({ kind: 'range', label: 'Grain opacity', key: 'grainOpacity', min: 0, max: 100, step: 5, defaultVal: _cg.opacity, suffix: '%' });
+    fields.push({ kind: 'range', label: 'Edge weight', key: 'edgeWeight', min: 0, max: 100, step: 5, defaultVal: (typeof CLT_EDGE_DEFAULT === 'number' ? CLT_EDGE_DEFAULT : 50), suffix: '%' });
+    if (typeof cltPropertyRows === 'function') {
+      fields.push({ kind: 'h', label: 'Properties' });
+      cltPropertyRows(ent.panel, ent.treatment).forEach(function (r) { fields.push({ kind: 'ro', label: r.label, value: r.value }); });
     }
   } else if (ent.type === 'anchor') {
     sel('Kind', 'kind', Object.keys(V25_ANCHOR_DB));
@@ -2402,6 +2695,9 @@ function v25UpdateInspector() {
     sel('Precision', 'prec', ['0', '1', '2', '3']);
     sel('Units', 'units', ['mm', 'm']);
     num('Offset (mm, paper)', 'off');
+    // dim-text-offset — label sits beside / just past the arrows (AS 1100 small-
+    // gap convention, e.g. the "5 GAP" callout) instead of centred on the span.
+    fields.push({ kind: 'sel', label: 'Text offset', key: 'txtOffset', opts: [{ v: 'true', l: 'On' }, { v: '', l: 'Off' }] });
     txt('Override label (blank → measured)', 'textOverride');
     fields.push({ kind: 'h', label: 'Dimension line' });
     num('Width (mm)', 'dimLw', 0.05);
@@ -2412,13 +2708,14 @@ function v25UpdateInspector() {
     col('Line colour', 'extColour');
     sel('Line style', 'extLs', ['solid', 'dashed', 'dotted']);
   } else if (ent.type === 'mem2') {
-    sel('Type', 'memberType', ['ub','uc','wb','pfc','shs','rhs']);
+    sel('Type', 'memberType', ['ub','uc','wb','pfc','shs','rhs','glt']);
     let secNames = ent.memberType === 'ub' ? Object.keys(UB_DB).filter(n => n.includes('UB'))
                  : ent.memberType === 'uc' ? Object.keys(UC_DB || {})
                  : ent.memberType === 'wb' ? Object.keys((typeof WB_DB === 'object') ? WB_DB : {})
                  : ent.memberType === 'pfc' ? Object.keys((typeof PFC_DB === 'object') ? PFC_DB : {})
                  : ent.memberType === 'shs' ? Object.keys(SHS_DB)
                  : ent.memberType === 'rhs' ? Object.keys((typeof RHS_DB === 'object' ? RHS_DB : {}))
+                 : ent.memberType === 'glt' ? Object.keys((typeof GLT_SIZES === 'object') ? GLT_SIZES : {})
                  : [];
     if (ent.section && !secNames.includes(ent.section)) secNames = [ent.section, ...secNames];
     sel('Section', 'section', secNames);
@@ -2437,6 +2734,27 @@ function v25UpdateInspector() {
     sel('Start end (A)', 'endA', endKinds);
     sel('Far end (B)',   'endB', endKinds);
     col('Fill colour', 'fillColour');
+    // GLT timber — grade selector, grain (size / spacing / opacity) sliders, and
+    // the full ASH MASSLAM design-property readout for the selected grade + size.
+    if (ent.memberType === 'glt') {
+      // Seed the grade default if unset so the Grade dropdown and the property
+      // table below always agree (placement / type-switch seed it too; this
+      // covers any hand-built or legacy GLT entity).
+      if (!ent.grade) ent.grade = (typeof GLT_DEFAULT_GRADE !== 'undefined' ? GLT_DEFAULT_GRADE : 'M45');
+      const _grades = (typeof GLT_GRADES === 'object') ? Object.keys(GLT_GRADES) : ['M38', 'M45'];
+      fields.push({ kind: 'sel', label: 'Grade', key: 'grade',
+        opts: _grades.map(function (k) { return { v: k, l: (typeof GLT_GRADES === 'object' && GLT_GRADES[k]) ? GLT_GRADES[k].label : k }; }) });
+      const _gd = (typeof GLT_GRAIN_DEFAULTS === 'object') ? GLT_GRAIN_DEFAULTS : { size: 50, spacing: 50, opacity: 35 };
+      fields.push({ kind: 'range', label: 'Grain size',    key: 'grainSize',    min: 0, max: 100, step: 5, defaultVal: _gd.size,    suffix: '%' });
+      fields.push({ kind: 'range', label: 'Grain spacing', key: 'grainSpacing', min: 0, max: 100, step: 5, defaultVal: _gd.spacing, suffix: '%' });
+      fields.push({ kind: 'range', label: 'Grain opacity', key: 'grainOpacity', min: 0, max: 100, step: 5, defaultVal: _gd.opacity, suffix: '%' });
+      fields.push({ kind: 'h', label: 'Design properties — ASH MASSLAM' });
+      if (typeof gltPropertyRows === 'function') {
+        const _g = ent.grade || (typeof GLT_DEFAULT_GRADE !== 'undefined' ? GLT_DEFAULT_GRADE : 'M45');
+        const _sz = (typeof GLT_SIZES === 'object') ? GLT_SIZES[ent.section] : null;
+        gltPropertyRows(_g, _sz).forEach(function (r) { fields.push({ kind: 'ro', label: r.label, value: r.value }); });
+      }
+    }
     // Hollow sections (SHS/RHS/CHS) draw two dashed inner-wall hidden lines in
     // elevation — expose a per-member weight stepper so they can be made
     // heavier/lighter. Renderer reads ent.hidLwLevel (drawMem2D, 68-v25-tools.js).
@@ -2508,9 +2826,19 @@ function v25UpdateInspector() {
       fields.push({ kind:'ro', label: 'Visual length (mm)', value: visualLen.toFixed(0) });
     }
   } else if (ent.type === 'lineSet') {
-    fields.push({ kind:'h', label: 'Edge' });
-    fields.push({ kind:'stepper', label:'Thickness', key:'lwLevel' });
-    sel('Style', 'ls', ['solid','dashed','centre','phantom']);
+    // linework-upgrade — full line/polyline property set. Raw `lw` (mm) is the
+    // single width source; editing it clears any legacy AS1100 ramp level (see
+    // the lineSet special-case in the input listener). Colour + Opacity come
+    // from the common Display block below.
+    fields.push({ kind:'h', label: 'Line' });
+    num('Width (mm)', 'lw', 0.05);
+    sel('Style', 'ls', ['solid','dashed','dotted','centre','phantom']);
+    sel('Cap', 'cap', ['butt','round','square']);
+    sel('Join', 'join', ['miter','round','bevel']);
+    fields.push({ kind:'ro', label: 'Vertices', value: String((ent.pts && ent.pts.length) || 0) });
+    fields.push({ kind:'h', label: 'Ends' });
+    sel('Start', 'arrowStart', ['none','arrow','dot','tick']);
+    sel('End', 'arrowEnd', ['none','arrow','dot','tick']);
     fields.push({ kind:'h', label: 'Polyline' });
     sel('Closed', 'closed', ['','true']);
     if (ent.closed) {
@@ -2648,6 +2976,18 @@ function v25UpdateInspector() {
           return `<option value="${ov}"${ov === val ? ' selected' : ''}>${ol}</option>`;
         }).join('') +
         `</select></div>`;
+    } else if (f.kind === 'range') {
+      // Slider field (0–100 grain knobs). Live value badge updated in the input
+      // listener below without an inspector rebuild, so dragging stays smooth.
+      const rmin = (f.min != null) ? f.min : 0;
+      const rmax = (f.max != null) ? f.max : 100;
+      const rstep = (f.step != null) ? f.step : 1;
+      const rcur = (typeof ent[f.key] === 'number') ? ent[f.key] : ((f.defaultVal != null) ? f.defaultVal : rmin);
+      const rsuf = f.suffix || '';
+      html += `<div class="ins-row"><label for="${id}">${f.label}</label>` +
+        `<input id="${id}" type="range" data-key="${f.key}" data-suffix="${rsuf}" min="${rmin}" max="${rmax}" step="${rstep}" value="${rcur}" style="flex:1"/>` +
+        `<span class="ins-range-val" style="flex:0 0 40px;text-align:right;font:11px var(--font-mono,ui-monospace,monospace);color:var(--text-mute)">${rcur}${rsuf}</span>` +
+        `</div>`;
     } else if (f.kind === 'area') {
       const v2 = val.replace(/\n/g, '|');
       html += `<div class="ins-row ins-row-col"><label for="${id}">${f.label}</label><textarea id="${id}" data-key="${f.key}" rows="3">${v2}</textarea></div>`;
@@ -2702,7 +3042,7 @@ function v25UpdateInspector() {
     const k = inp.dataset.key;
     inp.addEventListener('input', () => {
       let val = inp.value;
-      if (inp.type === 'number') {
+      if (inp.type === 'number' || inp.type === 'range') {
         // V25-layout-overhaul Phase 7 — for opacity, an empty / NaN value
         // clears the override (rather than setting it to 0 which would hide
         // the entity). All other num fields keep the legacy "|| 0" coercion.
@@ -2742,6 +3082,11 @@ function v25UpdateInspector() {
       } else {
         ent[k] = val;
       }
+      // linework-upgrade — editing a line's raw Width clears any legacy AS1100
+      // ramp level so the renderer honours the mm value the user just typed.
+      if (k === 'lw' && ent.type === 'lineSet') delete ent.lwLevel;
+      // Toggling Closed rebuilds the inspector so the fill controls show/hide.
+      if (k === 'closed' && ent.type === 'lineSet') { v25UpdateInspector(); }
       // Special: for anchor changing kind, refresh size dropdown
       if (k === 'kind' && ent.type === 'anchor') {
         const def = V25_ANCHOR_DB[val];
@@ -2752,6 +3097,10 @@ function v25UpdateInspector() {
       // the entity reverts to the new size's catalogue defaults.
       if (k === 'studSpec' && ent.type === 'stud') {
         delete ent.embedDepth; delete ent.faceOffset;
+        // anchor-callout-note: re-stamp the new size's design embedment (M16=150
+        // etc.) so drawing + a linked callout note re-default to it, then sync.
+        if (typeof V25_STUD_DESIGN_EMBED !== 'undefined' && V25_STUD_DESIGN_EMBED[ent.studSpec] != null) ent.embedDepth = V25_STUD_DESIGN_EMBED[ent.studSpec];
+        if (typeof v25SyncStudEmbedReadouts === 'function') v25SyncStudEmbedReadouts(ent);
         v25UpdateInspector();
       }
       // Member type change → reset section to a valid one for the new type.
@@ -2761,12 +3110,15 @@ function v25UpdateInspector() {
                     : val === 'wb' ? (typeof WB_DB === 'object' ? WB_DB : UB_DB)
                     : val === 'shs' ? SHS_DB
                     : val === 'rhs' ? (typeof RHS_DB === 'object' ? RHS_DB : {})
+                    : val === 'glt' ? (typeof GLT_SIZES === 'object' ? GLT_SIZES : {})
                     : {};
         let names = Object.keys(newDb || {});
         if (val === 'ub') names = names.filter(n => n.includes('UB'));
         if (val === 'uc' && typeof UC_DB === 'object') names = Object.keys(UC_DB);
         if (val === 'wb' && typeof WB_DB === 'object') names = Object.keys(WB_DB);
         if (!names.includes(ent.section)) ent.section = (typeof lastUsedSection !== 'undefined' && lastUsedSection[val]) || names[0] || '';
+        // Switching a member to GLT seeds a default grade so the property rows render.
+        if (val === 'glt' && !ent.grade) ent.grade = (typeof lastGltGrade !== 'undefined' ? lastGltGrade : (typeof GLT_DEFAULT_GRADE !== 'undefined' ? GLT_DEFAULT_GRADE : 'M45'));
         v25UpdateInspector();
       }
       // Live-sync the top-bar embedment readout when a stud's embedment is edited
@@ -2774,6 +3126,17 @@ function v25UpdateInspector() {
       if (ent.type === 'stud' && (k === 'embedDepth' || k === 'faceOffset')
           && typeof v25SyncStudEmbedReadouts === 'function') {
         v25SyncStudEmbedReadouts(ent);
+      }
+      // GLT grade change → rebuild so the ASH design-property rows reflect it.
+      if (k === 'grade' && ent.type === 'mem2' && typeof v25UpdateInspector === 'function') {
+        v25UpdateInspector();
+        requestRender();
+        return;
+      }
+      // Live-update a range slider's value badge (grain sliders) without rebuild.
+      if (inp.type === 'range') {
+        const _vspan = inp.parentElement && inp.parentElement.querySelector('.ins-range-val');
+        if (_vspan) _vspan.textContent = inp.value + (inp.dataset.suffix || '');
       }
       requestRender();
     });
@@ -2828,6 +3191,10 @@ function v25DeleteSelected() {
     const idx = arr.findIndex(e => e.id === id);
     if (idx >= 0) removed.push(arr.splice(idx, 1)[0]);
   }
+  // anchor-callout-note: reconcile links for removed studs / callout notes
+  // (freeze, no cascade). Same view bucket the entities were spliced from.
+  const view = (activeBlock && activeBlock.viewKey) || 'elevation';
+  if (removed.length && typeof v25AnchorNoteOnDelete === 'function') v25AnchorNoteOnDelete(removed, view);
   if (removed.length) {
     undoStack.push({ act: 'v25Delete', removed, view: activeBlock.viewKey });
     if (undoStack.length > 100) undoStack.shift();
@@ -2865,6 +3232,11 @@ function v25CloneEntsInPlace(ids) {
     if (!ent || ent._v2Mirror) continue;   // plate mirrors duplicate via the v2 path
     const clone = JSON.parse(JSON.stringify(ent));
     clone.id = ent2dIdN++;
+    // anchor-callout-note: a clone must NOT inherit cross-links to the original's
+    // partner (they'd point at the original stud/note by id). Start unlinked so a
+    // duplicated callout never drives the original anchor; re-binding is manual.
+    if (clone.linkedStudId != null) clone.linkedStudId = null;
+    if (clone.linkedNoteId != null) clone.linkedNoteId = null;
     if (clone.groupId) {
       if (!groupRemap[clone.groupId]) groupRemap[clone.groupId] = mintGid();
       clone.groupId = groupRemap[clone.groupId];

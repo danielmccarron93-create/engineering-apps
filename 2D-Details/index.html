@@ -135,6 +135,53 @@
             d="M4 3.5 L6 3.5 L6 13.3
                Q6 14 6.7 14 L17.5 14 L17.5 16.5 L4 16.5 Z"/>
     </symbol>
+    <!-- GLT — ASH MASSLAM glue-laminated timber: solid rectangle + end-grain
+         rings, drawn in warm tan so the timber member reads at a glance. -->
+    <symbol id="icon-glt" viewBox="0 0 20 20">
+      <rect x="3" y="3" width="14" height="14" rx="0.6" fill="none" stroke="#a06a39" stroke-width="1.5"/>
+      <circle cx="10" cy="11.5" r="1.5" fill="none" stroke="#c89a66" stroke-width="0.9"/>
+      <circle cx="10" cy="11.5" r="3.1" fill="none" stroke="#c89a66" stroke-width="0.9"/>
+      <circle cx="10" cy="11.5" r="4.6" fill="none" stroke="#c89a66" stroke-width="0.9"/>
+      <circle cx="10" cy="11.5" r="0.55" fill="#a06a39" stroke="none"/>
+    </symbol>
+
+    <!-- CLT (cross-laminated timber) tiles — warm-tan to match GLT. Edge/Wall
+         show the layup stack (outer layers with end-grain board joints); Plan
+         icons show the face board direction. -->
+    <symbol id="icon-clt-edge" viewBox="0 0 20 20">
+      <rect x="2" y="6" width="16" height="8" rx="0.4" fill="none" stroke="#a06a39" stroke-width="1.4"/>
+      <line x1="2" y1="8.7" x2="18" y2="8.7" stroke="#c89a66" stroke-width="0.8"/>
+      <line x1="2" y1="11.3" x2="18" y2="11.3" stroke="#c89a66" stroke-width="0.8"/>
+      <line x1="6"  y1="6" x2="6"  y2="8.7" stroke="#c89a66" stroke-width="0.6"/>
+      <line x1="10" y1="6" x2="10" y2="8.7" stroke="#c89a66" stroke-width="0.6"/>
+      <line x1="14" y1="6" x2="14" y2="8.7" stroke="#c89a66" stroke-width="0.6"/>
+      <line x1="6"  y1="11.3" x2="6"  y2="14" stroke="#c89a66" stroke-width="0.6"/>
+      <line x1="10" y1="11.3" x2="10" y2="14" stroke="#c89a66" stroke-width="0.6"/>
+      <line x1="14" y1="11.3" x2="14" y2="14" stroke="#c89a66" stroke-width="0.6"/>
+    </symbol>
+    <symbol id="icon-clt-wall" viewBox="0 0 20 20">
+      <rect x="6" y="2" width="8" height="16" rx="0.4" fill="none" stroke="#a06a39" stroke-width="1.4"/>
+      <line x1="8.7"  y1="2" x2="8.7"  y2="18" stroke="#c89a66" stroke-width="0.8"/>
+      <line x1="11.3" y1="2" x2="11.3" y2="18" stroke="#c89a66" stroke-width="0.8"/>
+      <line x1="6" y1="6"  x2="8.7" y2="6"  stroke="#c89a66" stroke-width="0.6"/>
+      <line x1="6" y1="10" x2="8.7" y2="10" stroke="#c89a66" stroke-width="0.6"/>
+      <line x1="6" y1="14" x2="8.7" y2="14" stroke="#c89a66" stroke-width="0.6"/>
+      <line x1="11.3" y1="6"  x2="14" y2="6"  stroke="#c89a66" stroke-width="0.6"/>
+      <line x1="11.3" y1="10" x2="14" y2="10" stroke="#c89a66" stroke-width="0.6"/>
+      <line x1="11.3" y1="14" x2="14" y2="14" stroke="#c89a66" stroke-width="0.6"/>
+    </symbol>
+    <symbol id="icon-clt-plan-h" viewBox="0 0 20 20">
+      <rect x="3" y="3" width="14" height="14" rx="0.4" fill="none" stroke="#a06a39" stroke-width="1.4"/>
+      <line x1="3" y1="7"  x2="17" y2="7"  stroke="#c89a66" stroke-width="0.9"/>
+      <line x1="3" y1="10" x2="17" y2="10" stroke="#c89a66" stroke-width="0.9"/>
+      <line x1="3" y1="13" x2="17" y2="13" stroke="#c89a66" stroke-width="0.9"/>
+    </symbol>
+    <symbol id="icon-clt-plan-v" viewBox="0 0 20 20">
+      <rect x="3" y="3" width="14" height="14" rx="0.4" fill="none" stroke="#a06a39" stroke-width="1.4"/>
+      <line x1="7"  y1="3" x2="7"  y2="17" stroke="#c89a66" stroke-width="0.9"/>
+      <line x1="10" y1="3" x2="10" y2="17" stroke="#c89a66" stroke-width="0.9"/>
+      <line x1="13" y1="3" x2="13" y2="17" stroke="#c89a66" stroke-width="0.9"/>
+    </symbol>
 
     <!-- ===== Orientation presets (single-stroke; inherit .icon stroke) =====
          One symbol per V25_ORIENT entry. Elevation icons show the member run
@@ -381,6 +428,26 @@
       <!-- lay-flat: wide section -->
       <path d="M3 6 H17 V14 H3 Z"/>
       <path d="M5 8 H15 V12 H5 Z"/>
+    </symbol>
+    <!-- GLT (timber) — elevation shows side grain (thin lines along the run);
+         section shows end-grain rings. Mirrors the RHS deep/flat geometry. -->
+    <symbol id="icon-orient-glt-elev-deep" viewBox="0 0 20 20">
+      <path d="M3 3.5 H17 V16.5 H3 Z"/>
+      <path d="M4.5 8 H15.5 M4.5 12 H15.5" stroke-width="0.7"/>
+    </symbol>
+    <symbol id="icon-orient-glt-elev-flat" viewBox="0 0 20 20">
+      <path d="M3 7 H17 V13 H3 Z"/>
+      <path d="M4.5 10 H15.5" stroke-width="0.7"/>
+    </symbol>
+    <symbol id="icon-orient-glt-sec-upright" viewBox="0 0 20 20">
+      <path d="M6 3 H14 V17 H6 Z"/>
+      <circle cx="10" cy="11.5" r="1.9" fill="none" stroke-width="0.7"/>
+      <circle cx="10" cy="11.5" r="3.7" fill="none" stroke-width="0.7"/>
+    </symbol>
+    <symbol id="icon-orient-glt-sec-flat" viewBox="0 0 20 20">
+      <path d="M3 6 H17 V14 H3 Z"/>
+      <circle cx="10" cy="10" r="1.7" fill="none" stroke-width="0.7"/>
+      <circle cx="10" cy="10" r="3.2" fill="none" stroke-width="0.7"/>
     </symbol>
     <!-- CHS -->
     <symbol id="icon-orient-chs-elev" viewBox="0 0 20 20">
@@ -920,6 +987,14 @@
 
   <div class="top-bar__spacer"></div>
 
+  <!-- title-block-styles — choose the Bligh Tanner title block (Sketch /
+       Bottom / Right). Mirrors the 2D/3D switcher; per-sheet via sheetInfo.tbStyle. -->
+  <div class="tb-style-switcher" id="tbStyleSwitcher" role="tablist" aria-label="Title block style" title="Title block style">
+    <button class="tb-style-seg active" data-tbstyle="sketch"   title="Structural Sketch — blue block, no border"><span>Sketch</span></button>
+    <button class="tb-style-seg"        data-tbstyle="tbBottom" title="Structural Drawing — title block along the bottom"><span>Bottom</span></button>
+    <button class="tb-style-seg"        data-tbstyle="tbRight"  title="Structural Drawing — title block down the right"><span>Right</span></button>
+  </div>
+
   <!-- 2D / 3D toggle — top-right cluster per Dan's sketch. -->
   <div class="sheet-mode-switcher" id="sheetModeSwitcher" role="tablist" aria-label="Sheet mode" title="2D / 3D mode (Shift+M)">
     <button class="sheet-mode-seg active" id="sheetMode3D" data-sheetmode="3d">
@@ -1307,9 +1382,16 @@
     <label style="display:flex;align-items:center;gap:4px">
       <span>Grid</span>
       <select id="gridSizeSelect">
-        <option value="1">1</option><option value="5" selected>5</option>
+        <option value="1" selected>1</option><option value="5">5</option>
         <option value="10">10</option>
         <option value="25">25</option><option value="100">100</option>
+      </select>
+    </label>
+    <label style="display:flex;align-items:center;gap:4px" title="Step used when drawing lengths & placing anchors (Grid is used for the first point of a member and for dragging). Set to 1 to match Grid.">
+      <span>Inc</span>
+      <select id="incrementSizeSelect">
+        <option value="1">1</option><option value="5" selected>5</option>
+        <option value="10">10</option><option value="25">25</option>
       </select>
     </label>
     <label style="display:flex;align-items:center;gap:4px">
@@ -1377,20 +1459,37 @@
 
 <!-- TITLE BLOCK DIALOG -->
 <div class="dialog-overlay" id="titleBlockDialog">
-  <div class="dialog plate-dialog" style="max-width:520px">
+  <div class="dialog plate-dialog" style="max-width:680px;max-height:88vh;overflow:auto">
     <div class="dialog-title">Edit Title Block</div>
-    <div class="dialog-body" style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-      <label style="grid-column:1/3">Project: <input id="tbProject"></label>
-      <label style="grid-column:1/3">Client: <input id="tbClient"></label>
-      <label style="grid-column:1/3">Detail description: <input id="tbDescription"></label>
-      <label>Drawing No: <input id="tbDrawingNo"></label>
+    <div class="dialog-body" style="display:grid;grid-template-columns:1fr 1fr;gap:8px 12px">
+      <div class="tb-dlg-group" style="grid-column:1/3">Project</div>
+      <label style="grid-column:1/3">Project name: <input id="tbProject"></label>
+      <label style="grid-column:1/3">Project address: <input id="tbProjectAddress"></label>
+      <label>Client: <input id="tbClient"></label>
+      <label>Job / project no: <input id="tbJobNo"></label>
+
+      <div class="tb-dlg-group" style="grid-column:1/3">Drawing</div>
+      <label style="grid-column:1/3">Drawing title / item: <input id="tbDescription"></label>
+      <label>Drawing no: <input id="tbDrawingNo"></label>
       <label>Revision: <input id="tbRevision"></label>
       <label>Date: <input id="tbDate" type="date"></label>
-      <label>Sheet: <input id="tbSheetOf" placeholder="1 of 1"></label>
-      <label>Drawn by: <input id="tbDesigner"></label>
+      <label>Sheet (x of y): <input id="tbSheetOf" placeholder="1 of 1"></label>
+      <label>Scale (blank = auto): <input id="tbScaleText" placeholder="1:10 @ A1"></label>
+      <label>Printing note: <input id="tbPrintingReq"></label>
+
+      <div class="tb-dlg-group" style="grid-column:1/3">Status &amp; people</div>
+      <label>Status: <input id="tbStatus"></label>
+      <label>Status sub-line: <input id="tbStatusSub"></label>
+      <label>Drawn by: <input id="tbDrawnBy"></label>
+      <label>Design by: <input id="tbDesignBy"></label>
       <label>Checked by: <input id="tbChecker"></label>
-      <label style="grid-column:1/3">Firm name: <input id="tbFirmName"></label>
-      <label style="grid-column:1/3">Firm tagline: <input id="tbFirmTagline"></label>
+      <label>Signed: <input id="tbSigned"></label>
+      <label>Architect name: <input id="tbArchitectName"></label>
+      <label>Firm name: <input id="tbFirmName"></label>
+
+      <div class="tb-dlg-group" style="grid-column:1/3">Revision history</div>
+      <div id="tbRevEditor" style="grid-column:1/3"></div>
+      <button type="button" class="dialog-btn" id="tbRevAdd" style="grid-column:1/3;justify-self:start">+ Add revision</button>
     </div>
     <div class="dialog-buttons">
       <button class="dialog-btn" onclick="document.getElementById('titleBlockDialog').classList.remove('visible')">Cancel</button>
@@ -1545,6 +1644,9 @@
 <!-- Engineering spell-check term database (added 2026-06-01). See PlannedBuilds/notebox-spellcheck/. -->
 <script src="js/02f-data-spell-terms.js"></script>
 <script src="js/02g-data-anchor-studs.js"></script>
+<!-- ASH MASSLAM GLT timber member catalogue (added 2026-06-06). See PlannedBuilds/glt-member/. -->
+<script src="js/02h-data-glt.js"></script>
+<script src="js/02i-data-clt.js"></script>
 <script src="js/03-data-bolts.js"></script>
 <script src="js/04-workspace.js"></script>
 <script src="js/05-state.js"></script>
@@ -1626,6 +1728,15 @@
 <script src="js/72h-v25-depth-order.js"></script>
 <script src="js/72i-v25-screw.js"></script>
 <script src="js/72j-v25-stud.js"></script>
+<script src="js/72k-v25-glt.js"></script>
+<!-- GLT notch/void cutting tool (right-click a GLT member → Notch). Loads after
+     the GLT options (72k) and before 73-init.js; its handlers are called at
+     render/event time so any load position before init is fine. -->
+<script src="js/72m-v25-notch.js"></script>
+<!-- CLT (NeXTimber cross-laminated timber) panel — renderer + tools + options
+     controls. Loads after the GLT (72k) and notch (72m) modules and before
+     73-init.js; depends on the 02i catalogue + the 68 timber-grain helpers. -->
+<script src="js/72n-v25-clt.js"></script>
 <!-- multi-file-workspace Phase 2 — IndexedDB session autosave/restore. Loads
      after js/49a-file-tabs.js (renderFileTabs) and before js/73-init.js so its
      window.sessionInit/sessionRestore hooks exist when workspaceInit() runs. -->
@@ -1648,6 +1759,10 @@
 <script src="js/96-stroke-font.js"></script>
 <script src="js/97-v25-notebox.js"></script>
 <script src="js/98-v25-notebox-ui.js"></script>
+<!-- Chemical-anchor callout note + two-way embedment binding (anchor-callout-note).
+     Builds on the stud (js/72j) + noteBox (js/97/98); all hooks are runtime
+     typeof-guarded so load order is not functionally required. -->
+<script src="js/89-v25-anchor-note.js"></script>
 <!-- Note spell-check (added 2026-06-01): vendored Typo.js + en-AU Hunspell dict,
      engine, and UI. Must load AFTER js/98 (it hooks the noteBox editor). -->
 <script src="lib/typo.js"></script>
@@ -1660,6 +1775,14 @@
      high-DPI raster composite, paste at cursor / in-place. Loads after dimension (82)
      so render pipeline + dispatch + selection are in place. -->
 <script src="js/86-v25-snapshot.js"></script>
+<!-- Snapshot image tools — opacity dial, Multiply (white-knockout) blend, Flatten
+     (lock from selection), and named-layer assign/hide via the top options bar +
+     a right-click menu. Loads after the snapshot entity (86). -->
+<script src="js/88-v25-snapshot-tools.js"></script>
+<!-- title-block-styles — three Bligh Tanner title blocks (Sketch / Bottom /
+     Right) + the top-bar style toggle. Owns drawDrawingFrame (moved out of
+     45-dxf-export.js). Pure paper-space renderer; loads before render() runs. -->
+<script src="js/87-titleblock.js"></script>
 <!-- Timber-screw connection feature — Phase 2 entity types (added 2026-05-18).
      Note: number 76 was originally js/76-v25-plate.js (the v1 V25 plate path),
      deleted by architecture-v2 Phase 2 on 2026-05-22 once plates became

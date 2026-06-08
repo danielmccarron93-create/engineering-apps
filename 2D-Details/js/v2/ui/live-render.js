@@ -887,6 +887,9 @@
       // bolt bodies so it sits on top of both the v25 members and the plates.
       try { if (typeof window.v25DrawGroupFlash === 'function') window.v25DrawGroupFlash(blk, cs); }
       catch (e) { if (window.console && console.error) console.error('[v2.ui.liveRender] v25DrawGroupFlash threw:', e); }
+      // ungroup farewell glow — single quick fade, same slot as the group flash.
+      try { if (typeof window.v25DrawUngroupFlash === 'function') window.v25DrawUngroupFlash(blk, cs); }
+      catch (e) { if (window.console && console.error) console.error('[v2.ui.liveRender] v25DrawUngroupFlash threw:', e); }
       // Fix M (2026-05-23): vertex dots on every v2 plate (so users see
       // where to click for vertex-drag / Shift+click-delete). Painted AFTER
       // the plate outline so the dots sit on top.
