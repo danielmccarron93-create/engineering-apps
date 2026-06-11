@@ -55,6 +55,25 @@ function v25SnapshotMoveTargets(ent) {
   return out;
 }
 
+// bb-multi-drag (2026-06-11) — snapshot EVERY entity of a multi-selection for
+// undo, so a multi-select body drag records as ONE atomic 'v25Move' action.
+// Folds each entity through v25SnapshotMoveTargets so group mates (other v25
+// ents + grouped v2 plates) ride along; deduped by id since a group's members
+// can appear in the selection AND in each other's group snapshots.
+function v25SnapshotMoveTargetsMulti(ids, viewKey) {
+  const out = { ents: [], plates: [] };
+  const arr = (typeof entities2D !== 'undefined' && entities2D[viewKey]) || [];
+  const seenEnt = {}, seenPlate = {};
+  (ids || []).forEach(function (id) {
+    const ent = arr.find(function (en) { return en && en.id === id; });
+    if (!ent) return;
+    const s = v25SnapshotMoveTargets(ent);
+    s.ents.forEach(function (e) { if (!seenEnt[e.id]) { seenEnt[e.id] = true; out.ents.push(e); } });
+    s.plates.forEach(function (p) { if (!seenPlate[p.id]) { seenPlate[p.id] = true; out.plates.push(p); } });
+  });
+  return out;
+}
+
 // True when a before/after pair of v25-move snapshots differ in any recorded
 // field (any entity property or any plate-polygon coordinate). Used to skip
 // pushing a no-op undo entry for a click that didn't actually move anything.
@@ -77,6 +96,21 @@ function initEvents() {
     // Detect which block the click is in
     const clickedBlock = blockAtPixel(px, py);
     if (clickedBlock) activeBlock = clickedBlock;
+
+    // Snapshot tool (key 'G', 2D paper-space): begin/extend the region outline here,
+    // before any block-op or placement branch. snapDown needs only px,py.
+    if (tool === 'v25-snapshot' && e.button === 0 && typeof snapDown === 'function') {
+      snapDown(activeBlock || null, 0, 0, px, py, e);
+      e.preventDefault(); return;
+    }
+
+    // GLT-notch (72m): in notch mode, a left-click starts (or continues) a cut
+    // trace before any select/drag/placement logic. Commit is on double-click /
+    // Enter, so a single click never commits.
+    if (tool === 'v25-notch' && e.button === 0 && typeof v25NotchDown === 'function') {
+      v25NotchDown(activeBlock || null, px, py, e);
+      e.preventDefault(); return;
+    }
 
     // Check for section cut line drag (in elevation view, select tool, left button)
     // V25 — section cut lines are 3D-only; skip in 2D mode.
@@ -123,6 +157,10 @@ function initEvents() {
       // V25 — right-click on a v25 tool either finishes a poly bar, finishes
       // a free polyline, undoes the last vertex, or cancels the in-progress drag.
       if (tool && tool.startsWith('v25-')) {
+        // GLT-notch (72m) — right-click cancels the current trace but stays
+        // armed (Esc exits the mode). Never exits here, so the contextmenu that
+        // follows this mousedown can't flash a stale menu over the canvas.
+        if (tool === 'v25-notch') { if (typeof v25NotchCancelTrace === 'function') v25NotchCancelTrace(); return; }
         if (tool === 'v25-bar' && v25State.polyPts.length >= 2) {
           v25FinishBarPoly();
         } else if (tool === 'v25-line' && v25State.polyPts.length >= 2) {
@@ -231,6 +269,77 @@ function initEvents() {
         }
         if (consumed) return;
       }
+      // linework-upgrade — Shift+click on a SELECTED lineSet: insert a node on
+      // a segment (then arm a drag so it can be placed, with Shift = ortho/45°
+      // snap), or delete a node clicked directly (kept ≥2 pts). Mirrors the
+      // poly-mat node editing above, but open polylines skip the wrap segment.
+      if (e.shiftKey && v25Selected.length) {
+        const lines = v25Selected
+          .map(id => (entities2D[activeBlock.viewKey] || []).find(en => en.id === id))
+          .filter(en => en && en.type === 'lineSet' && Array.isArray(en.pts) && en.pts.length >= 2);
+        const cursorPx = real2px(activeBlock, cu, cv);
+        let consumed = false;
+        for (const ent of lines) {
+          // 1) On a node? → delete it (keep ≥2 points so the line survives).
+          let nodeI = -1, nodeD = Infinity;
+          for (let i = 0; i < ent.pts.length; i++) {
+            const pp = real2px(activeBlock, ent.pts[i].u, ent.pts[i].v);
+            const d = Math.hypot(pp.x - cursorPx.x, pp.y - cursorPx.y);
+            if (d < 12 && d < nodeD) { nodeD = d; nodeI = i; }
+          }
+          if (nodeI >= 0) {
+            if (ent.pts.length > 2) {
+              const before = v25SnapshotMoveTargets(ent);
+              ent.pts.splice(nodeI, 1);
+              const after = v25SnapshotMoveTargets(ent);
+              if (typeof undoStack !== 'undefined') {
+                undoStack.push({ act: 'v25Move', view: activeBlock.viewKey, before, after });
+                if (undoStack.length > 100) undoStack.shift();
+                if (typeof redoStack !== 'undefined') redoStack = [];
+              }
+              if (typeof v25UpdateInspector === 'function') v25UpdateInspector();
+              requestRender();
+            }
+            consumed = true; break;
+          }
+          // 2) On a segment? → insert a node at the projected point and arm a
+          //    drag on it. Open lines iterate 0..n-2 (no wrap); closed wrap.
+          let segI = -1, segD = Infinity, segPt = null;
+          const segCount = ent.closed ? ent.pts.length : ent.pts.length - 1;
+          for (let i = 0; i < segCount; i++) {
+            const a = ent.pts[i];
+            const b = ent.pts[(i + 1) % ent.pts.length];
+            const aPx = real2px(activeBlock, a.u, a.v);
+            const bPx = real2px(activeBlock, b.u, b.v);
+            const dx = bPx.x - aPx.x, dy = bPx.y - aPx.y;
+            const lenSq = dx * dx + dy * dy;
+            if (lenSq < 1e-3) continue;
+            const t = Math.max(0, Math.min(1, ((cursorPx.x - aPx.x) * dx + (cursorPx.y - aPx.y) * dy) / lenSq));
+            const projX = aPx.x + t * dx, projY = aPx.y + t * dy;
+            const d = Math.hypot(cursorPx.x - projX, cursorPx.y - projY);
+            if (d < 14 && d < segD) {
+              segD = d; segI = i;
+              const real2 = px2real(activeBlock, projX, projY);
+              segPt = { u: real2.u, v: real2.v };
+            }
+          }
+          if (segI >= 0 && segPt) {
+            const before = v25SnapshotMoveTargets(ent);
+            const newIdx = segI + 1;
+            ent.pts.splice(newIdx, 0, segPt);
+            // Arm a vertex drag on the new node so the user can immediately
+            // position it; undoBefore is the pre-insert snapshot so the mouseup
+            // diff records the insert (plus any drag) as one undo step.
+            v25Drag = { ent, handle: 'pt:' + newIdx, lastU: cu, lastV: cv, startU: cu, startV: cv };
+            v25Drag.undoBefore = before;
+            if (typeof v25ResetSnapState === 'function') v25ResetSnapState();
+            if (typeof v25UpdateInspector === 'function') v25UpdateInspector();
+            requestRender();
+            consumed = true; break;
+          }
+        }
+        if (consumed) return;
+      }
       // Bluebeam-style: if a v25 entity is already selected and the cursor
       // is near one of its visible grip handles (within ~14 px), grab THAT
       // handle even if the click would otherwise hit a different entity or
@@ -307,7 +416,15 @@ function initEvents() {
         return;
       }
       if (hit) {
-        v25Selected = e.shiftKey ? Array.from(new Set([...(v25Selected||[]), hit.id])) : [hit.id];
+        // bb-multi-drag — a plain click on an entity that is ALREADY part of a
+        // multi-selection keeps the selection intact (Bluebeam: grab any member
+        // and the whole set rides the drag). Anything else keeps the existing
+        // replace / shift-add behaviour.
+        const _keepMulti = !e.shiftKey && Array.isArray(v25Selected)
+          && v25Selected.length > 1 && v25Selected.includes(hit.id);
+        if (!_keepMulti) {
+          v25Selected = e.shiftKey ? Array.from(new Set([...(v25Selected||[]), hit.id])) : [hit.id];
+        }
         // SELECTION-PRECISION (B) — v1 ENTITY WINS: clear the plate co-selection
         // so exactly one of {v25Selected, v25SelPlateIds} is ever non-empty.
         window.v25SelPlateIds = [];
@@ -319,7 +436,16 @@ function initEvents() {
         if (!e.shiftKey && typeof v25ExpandGroupSelection === 'function') v25ExpandGroupSelection();
         const handle = (typeof v25HitHandle === 'function') ? v25HitHandle(activeBlock, hit, cu, cv) : 'body';
         v25Drag = { ent: hit, handle, lastU: cu, lastV: cv, startU: cu, startV: cv };
-        v25Drag.undoBefore = v25SnapshotMoveTargets(hit);
+        // bb-multi-drag — latch the id list at mousedown (body grabs only; grip /
+        // rotate / vertex handles keep editing the one entity) so the move loop
+        // and the undo snapshots cover the SAME set for the whole gesture.
+        if (handle === 'body' && Array.isArray(v25Selected)
+            && v25Selected.length > 1 && v25Selected.includes(hit.id)) {
+          v25Drag.multiIds = v25Selected.slice();
+          v25Drag.undoBefore = v25SnapshotMoveTargetsMulti(v25Drag.multiIds, activeBlock.viewKey);
+        } else {
+          v25Drag.undoBefore = v25SnapshotMoveTargets(hit);
+        }
         if (typeof v25ResetSnapState === 'function') v25ResetSnapState();
         // Bluebeam copy-drag: Alt (or Ctrl on Windows) + body-drag duplicates.
         // The clone is deferred to the first mouse movement (see the mousemove
@@ -1084,6 +1210,19 @@ function initEvents() {
     const { px, py } = getPixelXY(e);
     cursorSheet = { px, py };
 
+    // Snapshot tool: drive the live region marquee (no-op until a drag/poly started).
+    if (tool === 'v25-snapshot') {
+      if (typeof snapMove === 'function') snapMove(activeBlock || null, 0, 0, px, py);
+      return;
+    }
+
+    // GLT-notch (72m): drive live edge-distance dims / rubber-band trace + keep
+    // the saw cursor. cursorSheet is already set above so the preview tracks.
+    if (tool === 'v25-notch') {
+      if (typeof v25NotchMove === 'function') v25NotchMove(activeBlock || null, px, py, e);
+      return;
+    }
+
     // 3D orbit handling
     if (v3dOrbiting) {
       v3dHandleOrbitMove(px, py);
@@ -1194,6 +1333,10 @@ function initEvents() {
           const _clone = _arr.find(en => en && en.id === (_match ? _match.newId : _newIds[0]));
           if (_clone) v25Drag.ent = _clone;
           v25Selected = _newIds;
+          // bb-multi-drag — the drag now owns the CLONES; retarget the latched
+          // multi-drag id list so the move loop slides the copies, not the
+          // stay-put originals.
+          if (v25Drag.multiIds) v25Drag.multiIds = _newIds.slice();
           v25Drag.dupAdded = { view: activeBlock.viewKey, ids: _newIds.slice() };
         }
       }
@@ -1219,6 +1362,25 @@ function initEvents() {
       const du = u - v25Drag.lastU, dv = v - v25Drag.lastV;
       if (du !== 0 || dv !== 0) {
         v25Move(v25Drag.ent, du, dv, v25Drag.handle);
+        // bb-multi-drag — slide the REST of the latched multi-selection by the
+        // same delta so the whole set moves as one (Bluebeam behaviour, no
+        // grouping needed). One v25Move per group representative: v25Move's
+        // group hook already translates EVERY mate of a group (incl. grouped
+        // v2 plates), so further selected members of an already-moved group
+        // are skipped to avoid double-translating them.
+        if (v25Drag.multiIds) {
+          const _mArr = entities2D[activeBlock.viewKey] || [];
+          const _movedGids = {};
+          if (v25Drag.ent && v25Drag.ent.groupId) _movedGids[v25Drag.ent.groupId] = true;
+          for (const _mid of v25Drag.multiIds) {
+            if (_mid === v25Drag.ent.id) continue;
+            const _men = _mArr.find(en => en && en.id === _mid);
+            if (!_men) continue;
+            if (_men.groupId && _movedGids[_men.groupId]) continue;
+            v25Move(_men, du, dv, 'body');
+            if (_men.groupId) _movedGids[_men.groupId] = true;
+          }
+        }
         // Body-translation soft-snap — gently aligns the moving item onto
         // another item's centreline / edge (members ↔ member edges; fixings ↔
         // other fixings' centres + member edges). Mutates ent.u/ent.v when a
@@ -1241,8 +1403,12 @@ function initEvents() {
         // tearing the welded assembly apart by the snap offset (which persists
         // after drop). A group should slide as one unit; aligning a single
         // member of it to a neighbour independently is wrong anyway.
+        // bb-multi-drag — the soft-snap is also skipped for a multi-selection
+        // body drag, for the same reason as groups: it would shift only the
+        // grabbed entity, tearing the selection's relative layout apart.
         if (!orthoLock && v25Drag.handle === 'body'
             && !(v25Drag.ent && v25Drag.ent.groupId)
+            && !v25Drag.multiIds
             && (_bt === 'mem2' || _bt === 'bolt2' || _bt === 'screw' || _bt === 'stud')) {
           const _uBefore = v25Drag.ent.u, _vBefore = v25Drag.ent.v;
           activeEdgeSnaps = v25ApplySnap(activeBlock, [v25Drag.ent]);
@@ -1364,6 +1530,13 @@ function initEvents() {
   // hatch-pattern dropdown so the user can fill the polygon they just drew.
   canvas.addEventListener('dblclick', (e) => {
     if (sheetMode !== '2d') return;
+    // GLT-notch (72m): double-click commits a traced rectangle, or — when the
+    // double-click is in place (no trace) — opens the sized-void dialog.
+    if (tool === 'v25-notch') {
+      const { px, py } = getPixelXY(e);
+      if (typeof v25NotchDblClick === 'function') v25NotchDblClick(activeBlock || null, px, py, e);
+      e.preventDefault(); return;
+    }
     if (tool === 'select' && activeBlock) {
       const { px, py } = getPixelXY(e);
       const real = px2real(activeBlock, px, py);
@@ -1380,6 +1553,21 @@ function initEvents() {
         return;
       }
       const hit = (typeof v25HitTest === 'function') ? v25HitTest(activeBlock, real.u, real.v) : null;
+      // snapshot-tools (js/88) — double-click an image (incl. a flattened/locked
+      // one, reached via v25SnapshotAt) selects it and pops the top options bar
+      // (Opacity / Multiply / Flatten / Layer). The image ranks LOW in the pick,
+      // so `hit` is the image only when nothing is drawn on top; otherwise fall
+      // back to v25SnapshotAt for a locked image sitting alone under the cursor.
+      {
+        let _snap = (hit && hit.type === 'snapshot') ? hit : null;
+        if (!_snap && !hit && typeof v25SnapshotAt === 'function') _snap = v25SnapshotAt(activeBlock, real.u, real.v);
+        if (_snap) {
+          if (typeof v25SelectSnapshot === 'function') v25SelectSnapshot(_snap);
+          else { v25Selected = [_snap.id]; if (typeof v25UpdateInspector === 'function') v25UpdateInspector(); }
+          e.preventDefault();
+          return;
+        }
+      }
       // Premium note (noteBox): double-click opens the inline text editor. Uses
       // the same block-local coords as the other 2D click paths (real.u/real.v).
       if (typeof nbOpenEditorAt === 'function' && nbOpenEditorAt(activeBlock, real.u, real.v)) {
@@ -1394,11 +1582,11 @@ function initEvents() {
         e.preventDefault();
         return;
       }
-      if (hit && hit.type === 'lineSet' && hit.closed) {
-        if (typeof v25OpenFillPicker === 'function') v25OpenFillPicker(hit, e.clientX, e.clientY);
-        e.preventDefault();
-        return;
-      }
+      // linework-upgrade — double-click on a line (open OR closed) now falls
+      // through to the generic select+Settings open below, matching every other
+      // member. Closed-polygon fill (material / solid colour) lives in the
+      // line options bar + inspector fill controls, so there is no longer a
+      // separate fill-picker shortcut to conflict with the editing UI.
       // Double-click on a steel-member end face (in elevation) → open a
       // small "end cap" dropdown so the user can flip that end between a
       // normal solid edge and a breakline. Mid-member double-clicks fall
@@ -1468,6 +1656,10 @@ function initEvents() {
         return;
       }
     }
+    if (tool === 'v25-snapshot' && typeof snapDblClick === 'function') {
+      snapDblClick(activeBlock || null, 0, 0);
+      e.preventDefault(); return;
+    }
     if (tool === 'v25-line' && v25State.polyPts && v25State.polyPts.length >= 2) {
       const last = v25State.polyPts[v25State.polyPts.length - 1];
       const prev = v25State.polyPts[v25State.polyPts.length - 2];
@@ -1502,6 +1694,12 @@ function initEvents() {
   });
 
   canvas.addEventListener('mouseup', (e) => {
+    // Snapshot tool: a release completes a rect drag (capture) or drops a polygon node.
+    if (tool === 'v25-snapshot' && typeof snapUp === 'function') {
+      const { px, py } = getPixelXY(e);
+      snapUp(activeBlock || null, 0, 0, px, py, e);
+      e.preventDefault(); return;
+    }
     // V25-layout-overhaul — Phase 4 hatch tool decides drag vs click on release.
     // Runs before any other release logic so we don't double-handle the event.
     if (tool === 'v25-hatch' && v25State.hatchDownPx && v25State.hatchDownWorld
@@ -1528,9 +1726,9 @@ function initEvents() {
       requestRender();
       return;
     }
-    // V25 plain text-box (v25-note) decides single-click vs press-drag-to-size
-    // on release — mirrors the hatch tool branch above.
-    if (tool === 'v25-note' && v25State.noteDownPx && v25State.noteDownWorld && activeBlock) {
+    // V25 plain text-box (v25-note / v25-textplain) decides single-click vs
+    // press-drag-to-size on release — mirrors the hatch tool branch above.
+    if ((tool === 'v25-note' || tool === 'v25-textplain') && v25State.noteDownPx && v25State.noteDownWorld && activeBlock) {
       const dx = e.clientX - v25State.noteDownPx.x, dy = e.clientY - v25State.noteDownPx.y;
       const moved = Math.hypot(dx, dy);
       const { px, py } = getPixelXY(e);
@@ -1626,6 +1824,9 @@ function initEvents() {
       const _dragEnt = v25Drag.ent;
       const _undoBefore = v25Drag.undoBefore;
       const _undoView = (activeBlock && activeBlock.viewKey) || null;
+      // bb-multi-drag — the AFTER snapshot below must cover the same id set as
+      // the BEFORE one, else undo would restore a mismatched subset.
+      const _multiIds = v25Drag.multiIds || null;
       v25Drag = null;
       // The flange-snap can RE-WELD/RE-BOLT an already-jointed assembly at the
       // drop point: v25JointSnapGroupToFlange -> applyJoint splices the old
@@ -1649,7 +1850,9 @@ function initEvents() {
       // base undo()/redo() in 05-state.js). Skip if nothing actually changed
       // (a click with no drag) — otherwise Ctrl+Z would unwind a no-op.
       if (_undoBefore && _undoView) {
-        const _undoAfter = v25SnapshotMoveTargets(_dragEnt);
+        const _undoAfter = _multiIds
+          ? v25SnapshotMoveTargetsMulti(_multiIds, _undoView)
+          : v25SnapshotMoveTargets(_dragEnt);
         if (v25MoveSnapshotsDiffer(_undoBefore, _undoAfter)) {
           undoStack.push({ act: 'v25Move', view: _undoView, before: _undoBefore, after: _undoAfter });
           if (undoStack.length > 100) undoStack.shift();
@@ -1752,6 +1955,7 @@ function initEvents() {
           const list = (typeof entities2D !== 'undefined' && entities2D[activeBlock.viewKey]) || [];
           const hitIds = list.filter(ent => {
             if (ent._v2Mirror) return false;   // plate mirrors are v2-selected below
+            if (ent.type === 'snapshot' && ent.flattened) return false;  // snapshot-tools (js/88): locked image
             const b = (typeof v25EntBounds === 'function') ? v25EntBounds(ent) : null;
             if (!b) return false;
             // v25EntBounds returns {L,R,B,T} with L<R and B<T already.
@@ -2014,6 +2218,22 @@ function initEvents() {
       const _real = px2real(activeBlock, e.clientX - _r.left, e.clientY - _r.top);
       if (typeof v25JointTryMenu === 'function' && _real &&
           v25JointTryMenu(activeBlock, _real.u, _real.v, e.clientX, e.clientY)) return;
+      // snapshot-tools (js/88) — right-click an image opens its own menu (layer
+      // assign / create + hide·show, Multiply, Flatten·Unlock, paint order). Only
+      // when the image is the relevant target: it won the normal pick (nothing on
+      // top), or it's the lone (possibly locked) image under the cursor.
+      if (_real && typeof v25SnapshotAt === 'function') {
+        const _top = (typeof v25HitTest === 'function') ? v25HitTest(activeBlock, _real.u, _real.v) : null;
+        let _snap = (_top && _top.type === 'snapshot') ? _top : null;
+        if (!_snap && !_top) _snap = v25SnapshotAt(activeBlock, _real.u, _real.v);
+        if (_snap) {
+          if (typeof v25SelectSnapshot === 'function') v25SelectSnapshot(_snap);
+          if (typeof v25ShowSnapshotContextMenu === 'function') {
+            v25ShowSnapshotContextMenu(_snap, e.clientX, e.clientY);
+            return;
+          }
+        }
+      }
       // member-depth-order (72h) — right-click selects the member/plate under
       // the cursor (unless already selected) so Front/Back acts on what was
       // clicked, then the group/depth menu opens on that selection.

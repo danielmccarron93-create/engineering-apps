@@ -331,6 +331,14 @@ function _dxfEmit2DEntity(b, blk, ent) {
   } else if (ent.type === 'circle') {
     const p = _dxfBlockPlace(blk, ent.cu, ent.cv);
     _dxfCircle(b, '0', p.x, p.y, ent.r);
+  } else if (ent.type === 'lineSet') {
+    // linework-upgrade — the unified line/polyline entity. Export the bare
+    // vertex geometry as an (LW)POLYLINE; caps / joins / arrowheads are
+    // screen-only annotations and are intentionally not vectorised.
+    if (ent.pts && ent.pts.length >= 2) {
+      const pts = ent.pts.map(p => { const d = _dxfBlockPlace(blk, p.u, p.v); return [d.x, d.y]; });
+      _dxfPolyline(b, '0', pts, !!ent.closed);
+    }
   } else if (ent.type === 'text' || ent.type === 'materialTag' || ent.type === 'memberTag') {
     const p = _dxfBlockPlace(blk, ent.u, ent.v);
     let txt = ent.text || '';
@@ -467,7 +475,9 @@ function _dxfEmit2DEntity(b, blk, ent) {
     const bd = (typeof BOLT_DB !== 'undefined' && BOLT_DB[ent.size]) ||
                (typeof BOLT_DB !== 'undefined' && BOLT_DB.M20) ||
                { d: 20, headAF: 30, headH: 13, nutAF: 30, nutH: 16, washOD: 37, washT: 3, minorD: 17.29, threadL: 46, pitch: 2.5 };
-    const place = (u, v) => { const p = _dxfBlockPlace(blk, u, v); return [p.x, p.y]; };
+    // Free rotation (ent.rot) — spin every emitted point about the anchor so
+    // the DXF matches the canvas glyph (v25FixingRotWrap, 69-v25-dispatch.js).
+    const place = (u, v) => { const rp = (typeof v25FixingRotPt === 'function') ? v25FixingRotPt(ent, u, v) : { u, v }; const p = _dxfBlockPlace(blk, rp.u, rp.v); return [p.x, p.y]; };
     const polyDxf = (pts, closed) => _dxfPolyline(b, 'S-BOLT', pts, closed);
     const lineDxf = (u1, v1, u2, v2) => { const a = place(u1, v1), c = place(u2, v2); _dxfLine(b, 'S-BOLT', a[0], a[1], c[0], c[1]); };
     // Chamfered hex side profile along a given axis (mirrors hexPointsAlongU/V
@@ -584,19 +594,138 @@ function _dxfEmit2DEntity(b, blk, ent) {
       }
     }
   } else if (ent.type === 'screw') {
-    // 2D-mode HBS timber screw (V25). Mirrors drawScrew2D's to-scale side profile
-    // so the DXF matches the canvas: head (pan + collar + taper), shank, threaded
-    // sawtooth, pointed tip, dashed centreline. End-on → head + clearance + shank
-    // circles + Torx cross. All on the S-BOLT (fasteners) layer.
-    const S = (typeof getScrewSpec === 'function' && getScrewSpec(ent.screwSpec))
-            || (typeof HBS_PLATE_SCREWS === 'object' && HBS_PLATE_SCREWS[ent.screwSpec])
-            || { d: 10, d2: 6.6, dS: 7.2, dK: 16.5, t1: 16.5, tK: 5.0, L: 120, b: 95, dV_steel: 13 };
-    const place = (u, v) => { const p = _dxfBlockPlace(blk, u, v); return [p.x, p.y]; };
+    // 2D-mode timber screw (V25) — HBS pan-head (02c) or VGS fully-threaded
+    // (02j; spec ids 'VGS…', resolved by spec.system). Mirrors the canvas
+    // drawers' to-scale side profiles so the DXF matches the sheet: head,
+    // shank/thread-root core, leaning thread teeth, pointed tip, centreline.
+    // End-on → head circles (+ hexagon for VGS hex). All on the S-BOLT layer.
+    // Family-aware fallback (mirrors drawScrew2D in 72i): an unresolvable
+    // VGS-shaped id still emits the VGS glyph so DXF never flips family.
+    const _spec = (typeof getScrewSpec === 'function' && getScrewSpec(ent.screwSpec))
+            || (typeof HBS_PLATE_SCREWS === 'object' && HBS_PLATE_SCREWS[ent.screwSpec]) || null;
+    const S = _spec || ((typeof isVgsSpec === 'function' && isVgsSpec(ent.screwSpec))
+            ? { system: 'rothoblaas-vgs', headType: 'csk', d: 11, L: 300, b: 290,
+                dK: 19.3, t1: 8.2, dIn: 10.58, dU: 7.7,
+                hRim: 1, hCone: 3.49, hRib: 3.71, hCham: 1,
+                d2: 6.6, tip: 9.92, pitch: 4.8 }
+            : { d: 10, d2: 6.6, dS: 7.2, dK: 16.5, t1: 16.5, tK: 5.0, L: 120, b: 95, dV_steel: 13 });
+    // Free rotation (ent.rot) — spin every emitted point about the anchor so
+    // the DXF matches the canvas glyph (v25FixingRotWrap, 69-v25-dispatch.js).
+    const place = (u, v) => { const rp = (typeof v25FixingRotPt === 'function') ? v25FixingRotPt(ent, u, v) : { u, v }; const p = _dxfBlockPlace(blk, rp.u, rp.v); return [p.x, p.y]; };
     const polyDxf = (pts, closed) => _dxfPolyline(b, 'S-BOLT', pts, closed);
     const lineDxf = (u1, v1, u2, v2) => { const a = place(u1, v1), c = place(u2, v2); _dxfLine(b, 'S-BOLT', a[0], a[1], c[0], c[1]); };
     const orient = ent.screwOrient || 'end';
+    const isVgs = !!(S && S.system === 'rothoblaas-vgs');
 
-    if (orient === 'end') {
+    if (isVgs) {
+      // ---- VGS (Rothoblaas fully-threaded, ETA-11/0030) ----
+      // Locked profile (manufacturer IFC + catalogue p.166/168). Local axis s
+      // runs head TOP (s=0) → tip apex, like the HBS branch below.
+      //   csk (L≤600): bearing plane = head TOP (flush countersunk head);
+      //     rim(dK) → 90° cone(dK→dIn) → rib cone(dIn→dU) → neck(dU) →
+      //     chamfer → thread-root core(d2) → tip cone → apex at s=L.
+      //   hex (L>600): catalogue L is under-head plane → tip; hex head(SW) sits
+      //     above s=0..tS, washer flange(dFl) tS..tS+tFl, bearing plane =
+      //     flange UNDERSIDE (s = tS+tFl); glyph total = tS + L.
+      const isHex = S.headType === 'hex';
+      const d = S.d || 11, d2 = S.d2 || d * 0.6;
+      const L = S.L || 300, bThr = S.b || (L - (isHex ? 20 : 10));
+      const dh = d / 2, d2h = d2 / 2;
+
+      if (orient === 'end') {
+        const ctr = _dxfBlockPlace(blk, ent.u, ent.v);
+        let bitR;   // mm — radius of the TX bit "X" (mirrors drawVgsEntEnd in 77)
+        if (isHex) {
+          // Washer-flange circle + across-flats hexagon (6-vertex closed pline,
+          // flat-up: vertices at k·60°, matching the canvas drawer in 77).
+          _dxfCircle(b, 'S-BOLT', ctr.x, ctr.y, (S.dFl || 15.1) / 2);
+          const R = (S.SW || 17) / Math.sqrt(3);   // circumradius for SW across flats
+          const hexPts = [];
+          for (let i = 0; i < 6; i++) {
+            const a2 = i * Math.PI / 3;   // flat-up hex (flats top and bottom)
+            hexPts.push(place(ent.u + Math.cos(a2) * R, ent.v + Math.sin(a2) * R));
+          }
+          polyDxf(hexPts, true);
+          bitR = ((S.SW || 17) / 2) * 0.45;
+        } else {
+          // csk: head Ø + inner-head Ø (where the 90° countersink cone ends).
+          _dxfCircle(b, 'S-BOLT', ctr.x, ctr.y, (S.dK || 16) / 2);
+          _dxfCircle(b, 'S-BOLT', ctr.x, ctr.y, (S.dIn || (S.dK || 16) * 0.62) / 2);
+          bitR = ((S.dK || 16) / 2) * 0.45;
+        }
+        // TX bit "X" — two 45° strokes through centre (canvas + HBS DXF parity).
+        const c45 = Math.SQRT1_2 * bitR;
+        lineDxf(ent.u - c45, ent.v - c45, ent.u + c45, ent.v + c45);
+        lineDxf(ent.u - c45, ent.v + c45, ent.u + c45, ent.v - c45);
+      } else {
+        // Section — same axis conventions as the HBS branch: bearing plane
+        // lands on the detected face; body grows along bodyDir.
+        const axisIsU = (orient === 'h-headL' || orient === 'h-headR');
+        const trans = axisIsU ? ent.v : ent.u;
+        const bodyDir = (orient === 'h-headL' || orient === 'v-headB') ? 1 : -1;
+        const bearing = (typeof v25ScrewBearingFace === 'function') ? v25ScrewBearingFace(blk, ent) : null;
+        const junction = (bearing != null) ? bearing : (axisIsU ? ent.u : ent.v);
+        let sBear, sTotal, sThread, sCham0, headTop;   // headTop = half-profile head→neck
+        if (isHex) {
+          const SW = S.SW || 17, tS = S.tS || 6.4, dFl = S.dFl || 15.1, tFl = S.tFl || 2;
+          const dU = S.dU || d * 1.2;
+          sBear = tS + tFl; sTotal = tS + L;
+          sThread = tS + (L - bThr);                              // L-b = 20 for all hex
+          sCham0 = Math.max(sBear, sThread - (S.hCham || 2.5));
+          headTop = [[0, SW / 2], [tS, SW / 2], [tS, dFl / 2], [sBear, dFl / 2], [sBear, dU / 2], [sCham0, dU / 2]];
+        } else {
+          const dK = S.dK || 16, dIn = S.dIn || dK * 0.62, dU = S.dU || d * 0.7;
+          const hRim = S.hRim || 0.9, hCone = S.hCone || 2, hRib = S.hRib || 3;
+          const headEnd = hRim + hCone + hRib;
+          sBear = 0; sTotal = L;
+          sThread = L - bThr;                                     // catalogue L-b, never hardcoded
+          sCham0 = Math.max(headEnd, sThread - (S.hCham || 1));
+          headTop = [[0, dK / 2], [hRim, dK / 2], [hRim + hCone, dIn / 2], [headEnd, dU / 2], [sCham0, dU / 2]];
+        }
+        const sTipBase = sTotal - (S.tip || d * 0.9);
+        const axisAt = (s) => junction + bodyDir * (s - sBear);
+        const P = axisIsU ? (s, t) => place(axisAt(s), trans + t)
+                          : (s, t) => place(trans + t, axisAt(s));
+        // Body envelope (head + neck + chamfer + thread-root core + tip cone).
+        const bodyTop = headTop.concat([[sThread, d2h], [sTipBase, d2h], [sTotal, 0]]);
+        polyDxf(bodyTop.map(p => P(p[0], p[1])).concat(bodyTop.slice().reverse().map(p => P(p[0], -p[1]))), true);
+        // Head outline (the heavy overlay on canvas). The closed mirror also
+        // strokes the bearing line: csk → the s=0 closing edge across dK; hex →
+        // the flange-underside crossing at s = tS + tFl.
+        const headOnly = headTop.slice(0, headTop.length - 1);   // head→neck start, no neck run
+        polyDxf(headOnly.map(p => P(p[0], p[1])).concat(headOnly.slice().reverse().map(p => P(p[0], -p[1]))), true);
+        if (isHex) {
+          // Standard two hex-facet lines along the across-flats side view
+          // (±SW/4 — keep in sync with the canvas drawer in 72i).
+          const tS = S.tS || 6.4, fh = (S.SW || 17) / 4;
+          [fh, -fh].forEach(t => { const q1 = P(0, t), q2 = P(tS, t); _dxfLine(b, 'S-BOLT', q1[0], q1[1], q2[0], q2[1]); });
+        }
+        // Thread teeth — VGS is FULLY threaded: crest d/2 → root d2/2 from
+        // sThread to the apex, teeth shrinking over the tip cone (mirrors the
+        // HBS rows; pitch exaggerated to ≥1.6 mm on paper).
+        {
+          const ds = (typeof drawingScale !== 'undefined' && drawingScale) ? drawingScale : 1;
+          const pitch = Math.max(S.pitch || 0.45 * d, 1.6 * ds);
+          const nMax = Math.ceil((sTotal - sThread) / pitch) + 4;
+          const hAt = (s, base) => (s <= sTipBase) ? base : base * Math.max(0, (sTotal - s) / Math.max(0.5, sTotal - sTipBase));
+          const row = (sign, off) => {
+            for (let n = 0; n <= nMax; n++) {
+              const sPk = sThread + off + n * pitch;
+              if (sPk >= sTotal - 0.3) break;
+              const cr = hAt(sPk, dh), ro = hAt(sPk, d2h);
+              if (cr - ro < 0.2) continue;
+              const f1 = Math.max(sThread, sPk - pitch * 0.6), f2 = Math.min(sTotal, sPk + pitch * 0.4);
+              polyDxf([P(f1, sign * ro), P(sPk, sign * cr), P(f2, sign * ro)], false);
+            }
+          };
+          row(1, 0); row(-1, pitch / 2);
+        }
+        // Centreline.
+        const a0 = axisAt(0), aL = axisAt(sTotal);
+        if (axisIsU) lineDxf(Math.min(a0, aL) - 4, trans, Math.max(a0, aL) + 4, trans);
+        else lineDxf(trans, Math.min(a0, aL) - 4, trans, Math.max(a0, aL) + 4);
+      }
+    } else if (orient === 'end') {
       const ctr = _dxfBlockPlace(blk, ent.u, ent.v);
       _dxfCircle(b, 'S-BOLT', ctr.x, ctr.y, (S.dK || 16.5) / 2);
       if (S.dV_steel && Math.abs(S.dV_steel - (S.dK || 16.5)) > 0.5) _dxfCircle(b, 'S-BOLT', ctr.x, ctr.y, S.dV_steel / 2);
@@ -665,7 +794,9 @@ function _dxfEmit2DEntity(b, blk, ent) {
     const nd = (typeof studDims === 'function') ? studDims(S.size, S.d || 16)
              : { nutAF: (S.d || 16) * 1.7, nutH: (S.d || 16) * 0.86, washOD: (S.d || 16) * 2.1,
                  washT: (S.d || 16) * 0.2, minorD: (S.d || 16) * 0.84, pitch: 2 };
-    const place = (u, v) => { const p = _dxfBlockPlace(blk, u, v); return [p.x, p.y]; };
+    // Free rotation (ent.rot) — spin every emitted point about the anchor so
+    // the DXF matches the canvas glyph (v25FixingRotWrap, 69-v25-dispatch.js).
+    const place = (u, v) => { const rp = (typeof v25FixingRotPt === 'function') ? v25FixingRotPt(ent, u, v) : { u, v }; const p = _dxfBlockPlace(blk, rp.u, rp.v); return [p.x, p.y]; };
     const polyDxf = (pts, closed) => _dxfPolyline(b, 'S-BOLT', pts, closed);
     const lineDxf = (u1, v1, u2, v2) => { const a = place(u1, v1), c = place(u2, v2); _dxfLine(b, 'S-BOLT', a[0], a[1], c[0], c[1]); };
     const segP = (p1, p2) => _dxfLine(b, 'S-BOLT', p1[0], p1[1], p2[0], p2[1]);
@@ -822,14 +953,91 @@ function _dxfEmit2DEntity(b, blk, ent) {
         for (let yLo = ent.v; yLo < ent.v + h - 0.5; yLo += courseH) { perpsForBand(yLo, Math.min(yLo + courseH, ent.v + h), ci); ci++; }
       }
     }
+  } else if (ent.type === 'clt') {
+    // CLT panel — outline + (edge) lamination lines & board joints, or (plan)
+    // face board joints. Mirrors drawClt2D so the DXF matches the canvas.
+    const LAY = 'S-TIMBER';
+    const place = (u, v) => { const p = _dxfBlockPlace(blk, u, v); return [p.x, p.y]; };
+    const lineDxf = (p1, p2) => _dxfLine(b, LAY, p1[0], p1[1], p2[0], p2[1]);
+    const zigDxf = (p1, p2) => {
+      const dx = p2[0] - p1[0], dy = p2[1] - p1[1], len = Math.hypot(dx, dy);
+      if (len < 1) { lineDxf(p1, p2); return; }
+      const nx = -dy / len, ny = dx / len, amp = len * 0.08, s1 = 0.35, s2 = 0.65, n = 3;
+      const pts = [[p1[0], p1[1]], [p1[0] + dx * s1, p1[1] + dy * s1]];
+      for (let i = 0; i < n; i++) {
+        const t = s1 + (s2 - s1) * (i + 0.5) / n, sg = (i % 2 === 0) ? 1 : -1;
+        pts.push([p1[0] + dx * t + nx * amp * sg, p1[1] + dy * t + ny * amp * sg]);
+      }
+      pts.push([p1[0] + dx * s2, p1[1] + dy * s2], [p2[0], p2[1]]);
+      _dxfPolyline(b, LAY, pts, false);
+    };
+    const rot = (ent.rot || 0) * Math.PI / 180, cosR = Math.cos(rot), sinR = Math.sin(rot);
+    const W = (lu, lv) => place(ent.u + lu * cosR - lv * sinR, ent.v + lu * sinR + lv * cosR);
+    const L = ent.lengthMM || 0;
+    const bw = (typeof ent.boardWidth === 'number' && ent.boardWidth > 4) ? ent.boardWidth : 120;
+    const showBoards = !(ent.showBoards === false || ent.showBoards === '' || ent.showBoards === 'false');
+    if (ent.mode === 'plan') {
+      const Wd = ent.widthMM || 0;
+      lineDxf(W(0, 0), W(L, 0)); lineDxf(W(L, 0), W(L, Wd)); lineDxf(W(L, Wd), W(0, Wd)); lineDxf(W(0, Wd), W(0, 0));
+      if (showBoards) {
+        if (ent.boardAxis !== 'width') { for (let y = bw; y < Wd - 0.5; y += bw) lineDxf(W(0, y), W(L, y)); }
+        else { for (let x = bw; x < L - 0.5; x += bw) lineDxf(W(x, 0), W(x, Wd)); }
+      }
+    } else {
+      const panel = (typeof getCltPanel === 'function') ? getCltPanel(ent.panel) : null;
+      const T = (typeof cltPanelThickness === 'function') ? cltPanelThickness(ent.panel) : 0;
+      const half = (T || 20) / 2;
+      lineDxf(W(0, -half), W(L, -half)); lineDxf(W(0, half), W(L, half));
+      if (panel) {
+        const across = (ent.sectionAxis !== 'along');
+        let v0 = -half;
+        for (let i = 0; i < panel.layup.length; i++) {
+          const v1 = v0 + panel.layup[i];
+          const isLong = (i % 2) === 0;
+          const isEnd = across ? isLong : !isLong;
+          if (showBoards && isEnd) { for (let x = bw; x < L - 0.5; x += bw) lineDxf(W(x, v0), W(x, v1)); }
+          if (i < panel.layup.length - 1) lineDxf(W(0, v1), W(L, v1));
+          v0 = v1;
+        }
+      }
+      const eb = ent.endBreak || 'none';
+      const capAt = (lu, brk) => { if (brk) zigDxf(W(lu, -half), W(lu, half)); else lineDxf(W(lu, -half), W(lu, half)); };
+      capAt(0, eb === 'start' || eb === 'both');
+      capAt(L, eb === 'end' || eb === 'both');
+    }
   } else if (ent.type === 'noteBox') {
     if (typeof nbDxfEmit === 'function') nbDxfEmit(b, blk, ent);
   } else if (ent.type === 'mem2') {
     // member-depth-order (72h) — 2D members were previously absent from DXF.
     // Emit the outer outline on S-BEAM; the span behind any member pushed in
     // front of it goes on S-HIDDEN (HIDDEN linetype).
-    if (typeof v25Mem2WorldOutline === 'function') {
-      const oc = v25Mem2WorldOutline(ent);
+    // GLT-notch (72m): an edge-notched GLT has a reshaped outline — emit the
+    // segment-clipped edge outline (body edges outside the cut + cut faces) on
+    // S-BEAM instead of the bounding rectangle. Un-notched members keep the
+    // depth-occlusion-aware full outline.
+    const _notchEdge = (typeof v25NotchHasEdge === 'function') && v25NotchHasEdge(ent);
+    if (_notchEdge && typeof v25NotchDxfSegments === 'function') {
+      const segs = v25NotchDxfSegments(ent) || [];
+      for (const sg of segs) {
+        const p1 = _dxfBlockPlace(blk, sg[0][0], sg[0][1]);
+        const p2 = _dxfBlockPlace(blk, sg[1][0], sg[1][1]);
+        _dxfLine(b, 'S-BEAM', p1.x, p1.y, p2.x, p2.y);
+      }
+    } else if ((ent.aspect || 'elev') === 'sec' && ent.memberType === 'chs'
+               && typeof CHS_DB === 'object' && CHS_DB[ent.section]) {
+      // CHS cross-section — true DXF circles (outer face + bore), matching the
+      // canvas renderer, instead of the bounding-square outline.
+      const dbS = CHS_DB[ent.section];
+      const r = (dbS.D || 100) / 2, ri = Math.max(0, r - (dbS.t || 6));
+      const cp = _dxfBlockPlace(blk, ent.u, ent.v);
+      _dxfCircle(b, 'S-BEAM', cp.x, cp.y, r / drawingScale);
+      if (ri > 0) _dxfCircle(b, 'S-BEAM', cp.x, cp.y, ri / drawingScale);
+    } else if (typeof v25Mem2WorldOutline === 'function') {
+      // Section-aspect members emit the true glyph outline (I / C / L / box)
+      // when v25Mem2SecOutline provides one; elevations and SHS sections keep
+      // the envelope from v25Mem2WorldOutline.
+      const oc = ((typeof v25Mem2SecOutline === 'function') && v25Mem2SecOutline(ent))
+              || v25Mem2WorldOutline(ent);
       if (oc && oc.length >= 2) {
         const selfPoly = oc.map(p => ({ u: p[0], v: p[1] }));
         const occ = (typeof v25DepthOccludersFor === 'function')
@@ -837,6 +1045,27 @@ function _dxfEmit2DEntity(b, blk, ent) {
         for (let i = 0; i < oc.length; i++) {
           const a = oc[i], c = oc[(i + 1) % oc.length];
           _dxfEmitOccludedEdge(b, blk, a[0], a[1], c[0], c[1], occ, 'S-BEAM');
+        }
+      }
+    }
+    // GLT-notch (72m) — interior voids (holes) as closed polylines / circles.
+    if (typeof v25NotchDxfShapes === 'function') {
+      const vs = v25NotchDxfShapes(ent);
+      if (vs) {
+        for (const s of vs) {
+          if (s.type === 'circle') {
+            const cp = _dxfBlockPlace(blk, s.cu, s.cv);
+            // _dxfBlockPlace scales coords by 1/drawingScale; the radius must be
+            // scaled to match (else the hole exports drawingScale× oversized).
+            _dxfCircle(b, 'S-BEAM', cp.x, cp.y, s.r / drawingScale);
+          } else {
+            for (let i = 0; i < s.pts.length; i++) {
+              const a = s.pts[i], c = s.pts[(i + 1) % s.pts.length];
+              const p1 = _dxfBlockPlace(blk, a[0], a[1]);
+              const p2 = _dxfBlockPlace(blk, c[0], c[1]);
+              _dxfLine(b, 'S-BEAM', p1.x, p1.y, p2.x, p2.y);
+            }
+          }
         }
       }
     }
@@ -1071,180 +1300,9 @@ function drawSheetGrid(cs) {
   }
 }
 
-function drawDrawingFrame(cs) {
-  const tl = s2px(SHEET.ML, SHEET.MT);
-  const br = s2px(SHEET.W - SHEET.MR, SHEET.H - SHEET.MB);
-  const col = cs.getPropertyValue('--ink').trim();
-
-  // Outer frame
-  ctx.strokeStyle = col;
-  ctx.lineWidth = 1.5;
-  ctx.strokeRect(tl.x, tl.y, br.x - tl.x, br.y - tl.y);
-
-  // --- V25 Title block: "Workshop ledger" pattern (4-column grid) ---
-  // Project | Drawing | Issue | Sheet
-  // Each column has a serif-italic head, mono-caps labels, sans values.
-  // The Sheet column is special: the drawing-number is the hero (28 px serif),
-  // with a mono "Rev X · N of M" line below.
-  const inkCol     = cs.getPropertyValue('--ink').trim();
-  const muteCol    = cs.getPropertyValue('--mute').trim();
-  const subtleCol  = cs.getPropertyValue('--text-subtle').trim() || muteCol;
-  const accentCol  = cs.getPropertyValue('--accent').trim();
-  const borderCol  = cs.getPropertyValue('--sheet-border').trim() || col;
-  const fontSans   = cs.getPropertyValue('--font-sans').trim()  || 'system-ui';
-  const fontMono   = cs.getPropertyValue('--font-mono').trim()  || 'monospace';
-  const fontSerif  = cs.getPropertyValue('--font-serif').trim() || 'serif';
-
-  const tbY  = SHEET.H - SHEET.MB - SHEET.TB_H;     // top of title block (sheet mm)
-  const tbL  = SHEET.ML, tbR = SHEET.W - SHEET.MR;
-  const tbB  = SHEET.H - SHEET.MB;
-  const tlTB = s2px(tbL, tbY);
-  const brTB = s2px(tbR, tbB);
-  const tbWmm = tbR - tbL;
-
-  // Top separator line — hairline using the sheet border colour
-  ctx.strokeStyle = borderCol;
-  ctx.lineWidth = 1.0;
-  ctx.beginPath();
-  ctx.moveTo(tlTB.x, tlTB.y);
-  ctx.lineTo(brTB.x, tlTB.y);
-  ctx.stroke();
-
-  // 4-column proportional split — matches design's grid 1.1fr 1.3fr 1fr 0.8fr
-  const fr = [1.1, 1.3, 1.0, 0.8];
-  const frTotal = fr.reduce((a,b)=>a+b, 0);
-  const colXs = [];   // sheet-mm x of each column-left edge
-  let acc = tbL;
-  fr.forEach(f => { colXs.push(acc); acc += tbWmm * (f / frTotal); });
-  colXs.push(tbR);    // sentinel right-edge for boundary math
-
-  // Vertical column dividers
-  ctx.strokeStyle = borderCol;
-  ctx.lineWidth = 0.5;
-  ctx.beginPath();
-  for (let i = 1; i < 4; i++) {
-    const dp = s2px(colXs[i], tbY);
-    ctx.moveTo(dp.x, tlTB.y);
-    ctx.lineTo(dp.x, brTB.y);
-  }
-  ctx.stroke();
-
-  // Per-column drawing helper. Renders a serif-italic head, then a list of
-  // [label, value] rows with mono-caps labels (left ~22mm) + sans values.
-  const drawCol = (colX, colW, head, rows) => {
-    const padL = 4, padT = 2.6;       // sheet-mm padding
-    const headFs = Math.max(7,  sheetLen(3.0));
-    const lblFs  = Math.max(5,  sheetLen(1.8));
-    const valFs  = Math.max(6,  sheetLen(2.4));
-
-    // Column head — serif italic, subtle
-    ctx.textAlign = 'left'; ctx.textBaseline = 'top';
-    ctx.fillStyle = muteCol;
-    ctx.font = `italic 500 ${headFs}px ${fontSerif}`;
-    const hp = s2px(colX + padL, tbY + padT);
-    ctx.fillText(head, hp.x, hp.y);
-
-    // Hairline under the head
-    const hlY = tbY + padT + 4.5;
-    ctx.strokeStyle = borderCol;
-    ctx.lineWidth = 0.4;
-    const hl1 = s2px(colX + padL, hlY);
-    const hl2 = s2px(colX + colW - 2, hlY);
-    ctx.beginPath(); ctx.moveTo(hl1.x, hl1.y); ctx.lineTo(hl2.x, hl2.y); ctx.stroke();
-
-    // Rows
-    const rowStartY = hlY + 2.5;
-    const rowH      = (SHEET.TB_H - (rowStartY - tbY) - 2) / Math.max(rows.length, 1);
-    const lblColW   = Math.min(13, colW * 0.32);   // sheet-mm
-
-    rows.forEach(([lbl, val], i) => {
-      const ry = rowStartY + i * rowH;
-      // Label (mono caps, subtle)
-      ctx.font = `500 ${lblFs}px ${fontMono}`;
-      ctx.fillStyle = subtleCol;
-      const lp = s2px(colX + padL, ry);
-      ctx.fillText((lbl || '').toUpperCase(), lp.x, lp.y);
-      // Value (sans, ink)
-      ctx.font = `500 ${valFs}px ${fontSans}`;
-      ctx.fillStyle = inkCol;
-      const vp = s2px(colX + padL + lblColW, ry);
-      ctx.fillText(val || '—', vp.x, vp.y);
-    });
-  };
-
-  // Column 1 — Project
-  drawCol(colXs[0], colXs[1] - colXs[0], 'Project', [
-    ['No.',    sheetInfo.project],
-    ['Client', sheetInfo.client],
-    ['Firm',   sheetInfo.firmName],
-  ]);
-  // Column 2 — Drawing
-  drawCol(colXs[1], colXs[2] - colXs[1], 'Drawing', [
-    ['Title',      sheetInfo.description],
-    ['Discipline', 'Structural'],
-    ['Scale',      '1:' + drawingScale + '  @ A1'],
-  ]);
-  // Column 3 — Issue
-  drawCol(colXs[2], colXs[3] - colXs[2], 'Issue', [
-    ['Drawn',   sheetInfo.designer || sheetInfo.drawnBy],
-    ['Checked', sheetInfo.checker],
-    ['Date',    sheetInfo.date],
-  ]);
-
-  // Column 4 — Sheet (special: serif-hero number + rev/sheetOf caption)
-  {
-    const colX = colXs[3], colW = colXs[4] - colXs[3];
-    const padL = 5, padT = 2.6;
-    const headFs    = Math.max(7,  sheetLen(3.0));
-    const numberFs  = Math.max(14, sheetLen(8.5));   // serif hero
-    const captionFs = Math.max(5,  sheetLen(2.0));
-
-    // "Sheet" head
-    ctx.textAlign = 'left'; ctx.textBaseline = 'top';
-    ctx.fillStyle = muteCol;
-    ctx.font = `italic 500 ${headFs}px ${fontSerif}`;
-    const hp = s2px(colX + padL, tbY + padT);
-    ctx.fillText('Sheet', hp.x, hp.y);
-    // Hairline under head
-    const hlY = tbY + padT + 4.5;
-    ctx.strokeStyle = borderCol;
-    ctx.lineWidth = 0.4;
-    const hl1 = s2px(colX + padL, hlY);
-    const hl2 = s2px(colX + colW - 2, hlY);
-    ctx.beginPath(); ctx.moveTo(hl1.x, hl1.y); ctx.lineTo(hl2.x, hl2.y); ctx.stroke();
-
-    // Hero serif sheet number — roughly 8.5mm tall in sheet-mm
-    ctx.fillStyle = inkCol;
-    ctx.font = `500 ${numberFs}px ${fontSerif}`;
-    const numberY = hlY + 3;        // sheet-mm
-    const np = s2px(colX + padL, numberY);
-    ctx.fillText(sheetInfo.drawingNo || 'S-XXX', np.x, np.y);
-
-    // Rev / sheetOf caption — mono caps, with the rev letter coral.
-    // Sit ~10mm below the hero baseline (numberFs is ~8.5mm tall).
-    const capY = numberY + 9;
-    const capP = s2px(colX + padL, capY);
-    ctx.font = `500 ${captionFs}px ${fontMono}`;
-    ctx.fillStyle = muteCol;
-    const rev = sheetInfo.revision || 'A';
-    const sof = sheetInfo.sheetOf || '';
-    const prefix = 'REV ';
-    ctx.fillText(prefix, capP.x, capP.y);
-    // Coral revision letter
-    const prefixW = ctx.measureText(prefix).width;
-    ctx.fillStyle = accentCol;
-    ctx.font = `600 ${captionFs}px ${fontMono}`;
-    ctx.fillText(rev.toUpperCase(), capP.x + prefixW, capP.y);
-    // Sheet-of suffix
-    if (sof) {
-      const revW = ctx.measureText(rev.toUpperCase()).width;
-      ctx.fillStyle = muteCol;
-      ctx.font = `500 ${captionFs}px ${fontMono}`;
-      ctx.fillText(' · ' + sof.toUpperCase(), capP.x + prefixW + revW, capP.y);
-    }
-  }
-
-  ctx.textAlign = 'start'; ctx.textBaseline = 'alphabetic';
-}
+// title-block-styles (2026-06-05) — drawDrawingFrame moved OUT of this file to
+// js/87-titleblock.js, which now owns the three Bligh Tanner title-block styles
+// (Sketch / Bottom / Right) + dispatcher. The DXF title-strip emission below
+// (the L/R/B/T frame box) still lives here and is unchanged.
 
 // ============================================================

@@ -15,9 +15,37 @@ function v25WithFrameScale(scale, fn) {
 }
 
 // ---- ENTITY HELPERS ----
+// Free-rotation (ent.rot, degrees CCW in world coords) of a world point about a
+// fixing's anchor (ent.u, ent.v). The to-scale fixings (bolt2 72c / screw 72i /
+// stud 72j) draw their glyph axis-aligned then spin it rigidly about the anchor;
+// hit-test / centreline / grips / DXF use this same transform to stay in sync.
+function v25FixingRotPt(ent, u, v) {
+  const deg = Number(ent && ent.rot) || 0;
+  if (!deg) return { u, v };
+  const r = deg * Math.PI / 180, c = Math.cos(r), s = Math.sin(r);
+  const du = u - ent.u, dv = v - ent.v;
+  return { u: ent.u + du * c - dv * s, v: ent.v + du * s + dv * c };
+}
+// Inverse — map a world point back into the fixing's unrotated local frame.
+function v25FixingUnrotPt(ent, u, v) {
+  const deg = Number(ent && ent.rot) || 0;
+  if (!deg) return { u, v };
+  const r = -deg * Math.PI / 180, c = Math.cos(r), s = Math.sin(r);
+  const du = u - ent.u, dv = v - ent.v;
+  return { u: ent.u + du * c - dv * s, v: ent.v + du * s + dv * c };
+}
+
 function v25Add(type, props) {
   const vk = (activeBlock && activeBlock.viewKey) || 'elevation';
   const ent = mkEnt2D(vk, type, { _v25: true, ...props });
+  // Auto-depth: a newly drawn member defaults to sitting IN FRONT of any
+  // existing member it overlaps, so the older (first-drawn) member's covered
+  // span auto-dashes as a hidden line. Run BEFORE addEnt2D so the chosen z is
+  // captured by the undo snapshot. Right-click "Send to Back" still overrides.
+  // (v25DepthAutoBackOnPlace — 72h-v25-depth-order.js)
+  if (type === 'mem2' && typeof v25DepthAutoBackOnPlace === 'function') {
+    v25DepthAutoBackOnPlace(ent, vk);
+  }
   addEnt2D(ent);
   requestRender();
   return ent;

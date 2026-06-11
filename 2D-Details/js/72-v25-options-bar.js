@@ -22,7 +22,7 @@ function v25BuildOptionsBar() {
 // mirroring the catalogue wiring so the placement bar and the selected-member
 // size editor below never drift. curSec (optional) is prepended when it isn't in
 // the catalogue so the dropdown can always show the member's actual section.
-function v25MemberSectionNames(mt, curSec) {
+function v25MemberSectionNames(mt, curSec, chsGrade) {
   const dbS = mt === 'ub' ? UB_DB
             : mt === 'uc' ? (typeof UC_DB === 'object' ? UC_DB : UB_DB)
             : mt === 'wb' ? (typeof WB_DB === 'object' ? WB_DB : UB_DB)
@@ -30,13 +30,45 @@ function v25MemberSectionNames(mt, curSec) {
             : mt === 'rhs' ? (typeof RHS_DB === 'object' ? RHS_DB : {})
             : mt === 'chs' ? (typeof CHS_DB === 'object' ? CHS_DB : {})
             : mt === 'pfc' ? (typeof PFC_DB === 'object' ? PFC_DB : {})
+            : mt === 'ea'  ? (typeof EA_DB  === 'object' ? EA_DB  : {})
+            : mt === 'ua'  ? (typeof UA_DB  === 'object' ? UA_DB  : {})
+            : mt === 'glt' ? (typeof GLT_SIZES === 'object' ? GLT_SIZES : {})
             : {};
   let names = Object.keys(dbS || {});
   if (mt === 'ub') names = names.filter(n => n.includes('UB'));
   if (mt === 'uc') names = (typeof UC_DB === 'object') ? Object.keys(UC_DB) : names.filter(n => n.includes('UC'));
   if (mt === 'wb') names = (typeof WB_DB === 'object') ? Object.keys(WB_DB) : names.filter(n => n.includes('WB'));
+  // chs-availability (2026-06-12) — CHS lists only the Austube guide sizes for
+  // the active grade (CHS_AVAIL in 02-data-sections.js); the full CHS_DB stays
+  // for geometry, and a legacy curSec is prepended below as usual.
+  if (mt === 'chs' && typeof chsAvailSizes === 'function') {
+    const av = chsAvailSizes(chsGrade || 'C350');
+    if (av.length) names = av;
+  }
   if (curSec && !names.includes(curSec)) names = [curSec, ...names];
   return names;
+}
+
+// chs-availability — shared <option>/<select> fragments for the CHS Grade and
+// Finish dropdowns (placement bar + selected-member bar use the same HTML).
+function v25ChsGradeOptionsHTML(cur) {
+  const gs = (typeof CHS_GRADES !== 'undefined') ? CHS_GRADES : [{ v: 'C350', l: 'C350L0' }, { v: 'C250', l: 'C250L0' }];
+  return gs.map(g => `<option value="${g.v}"${g.v === cur ? ' selected' : ''}>${g.l}</option>`).join('');
+}
+function v25ChsFinishSelectHTML(id, grade, sizeKey, cur) {
+  const opts = (typeof chsFinishOptions === 'function') ? chsFinishOptions(grade, sizeKey) : [];
+  const inner = opts.length
+    ? opts.map(o => `<option value="${o.v}"${o.v === cur ? ' selected' : ''}>${o.l}</option>`).join('')
+    : `<option value="">—</option>`;
+  return `<select id="${id}" style="width:150px">${inner}</select>`;
+}
+// Same-OD equivalent when switching grade (50 M → 50 L stays a DN50 pipe),
+// else the grade's default 80NB pipe — so the armed size is always buildable.
+function v25ChsMigrateSize(grade, curKey) {
+  const sizes = (typeof chsAvailSizes === 'function') ? chsAvailSizes(grade) : [];
+  if (!sizes.length || sizes.includes(curKey)) return curKey;
+  const od = String(curKey || '').split('x')[0];
+  return sizes.find(s => s.split('x')[0] === od) || (grade === 'C250' ? '88.9x4.0' : '88.9x3.2');
 }
 
 // member-size-from-top-bar (2026-06-04) — the single selected 2D member (mem2),
@@ -63,6 +95,212 @@ function v25SelectedSingleStud() {
   const arr = (typeof entities2D !== 'undefined' && entities2D[view]) || [];
   const ent = arr.find(e => e && e.id === v25Selected[0]);
   return (ent && ent.type === 'stud') ? ent : null;
+}
+
+// selected-clt-bar — the single selected CLT panel, or null. Lets the options
+// bar surface its Panel / Treatment / board + grain controls when one is
+// selected, mirroring v25SelectedSingleMem2 / v25SelectedSingleStud.
+function v25SelectedSingleClt() {
+  if (typeof sheetMode === 'undefined' || sheetMode !== '2d') return null;
+  if (typeof v25Selected === 'undefined' || !Array.isArray(v25Selected) || v25Selected.length !== 1) return null;
+  const view = (typeof activeBlock !== 'undefined' && activeBlock && activeBlock.viewKey) || 'elevation';
+  const arr = (typeof entities2D !== 'undefined' && entities2D[view]) || [];
+  const ent = arr.find(e => e && e.id === v25Selected[0]);
+  return (ent && ent.type === 'clt') ? ent : null;
+}
+
+// selected-wall-bar — the single selected blockwork SECTION strip (wallMode 'sec'),
+// or null. Lets the top options bar surface its Block / End-break / grout + cross-
+// hatch controls when one is selected (double-click or single-click select),
+// mirroring v25SelectedSingleMem2 / v25SelectedSingleStud.
+function v25SelectedSingleWallSec() {
+  if (typeof sheetMode === 'undefined' || sheetMode !== '2d') return null;
+  if (typeof v25Selected === 'undefined' || !Array.isArray(v25Selected) || v25Selected.length !== 1) return null;
+  const view = (typeof activeBlock !== 'undefined' && activeBlock && activeBlock.viewKey) || 'elevation';
+  const arr = (typeof entities2D !== 'undefined' && entities2D[view]) || [];
+  const ent = arr.find(e => e && e.id === v25Selected[0]);
+  return (ent && ent.type === 'blockWall' && ent.wallMode === 'sec') ? ent : null;
+}
+
+// blockwork-section-hatch — Grout-fill + Cross-hatch controls (two toggles, each
+// with Spacing / Opacity / Line-width sliders). Built as an HTML fragment so the
+// SAME control set serves the placement options bar (writing v25Last) and, via
+// the inspector's own range/sel fields, the selected wall. `src` is the value bag
+// (v25Last at placement); idp keeps ids distinct. Mirrors the GLT grain controls
+// (72k). Renderer + defaults live in 68-v25-tools.js (drawBlockWallSec2D).
+function v25WallHatchControlsHTML(src, idp) {
+  src = src || {};
+  const gd = (typeof BLOCKWALL_GROUT_DEFAULTS === 'object') ? BLOCKWALL_GROUT_DEFAULTS : { spacing: 25, opacity: 55, width: 30 };
+  const xd = (typeof BLOCKWALL_XHATCH_DEFAULTS === 'object') ? BLOCKWALL_XHATCH_DEFAULTS : { spacing: 50, opacity: 22, width: 30 };
+  const gOn = (src.groutFill != null) ? !!src.groutFill : (src.grouted != null ? !!src.grouted : true);
+  const xOn = (src.xHatch != null) ? !!src.xHatch : true;
+  const v = (k, d) => (src[k] != null ? src[k] : d);
+  const fld = (label, inner) => '<label style="display:flex;align-items:center;gap:4px">' +
+    '<span style="color:var(--text-mute);font-size:11px">' + label + '</span>' + inner + '</label>';
+  const sl = (id, val) => '<input id="' + id + '" type="range" min="0" max="100" step="5" value="' + val +
+    '" style="width:72px;vertical-align:middle"><span id="' + id + '-val" style="color:var(--text-mute);font-size:11px;min-width:30px;display:inline-block">' + val + '%</span>';
+  return fld('Grout fill',  '<input id="' + idp + '-wallgrout" type="checkbox"' + (gOn ? ' checked' : '') + '/>') +
+    fld('· spacing',    sl(idp + '-grout-sp', v('groutSpacing', gd.spacing))) +
+    fld('· opacity',    sl(idp + '-grout-op', v('groutOpacity', gd.opacity))) +
+    fld('· line width', sl(idp + '-grout-lw', v('groutWidth',   gd.width))) +
+    fld('Cross-hatch',  '<input id="' + idp + '-wallxhatch" type="checkbox"' + (xOn ? ' checked' : '') + '/>') +
+    fld('· spacing',    sl(idp + '-xh-sp', v('xHatchSpacing', xd.spacing))) +
+    fld('· opacity',    sl(idp + '-xh-op', v('xHatchOpacity', xd.opacity))) +
+    fld('· line width', sl(idp + '-xh-lw', v('xHatchWidth',   xd.width))) +
+    fld('· flip ⤢',     '<input id="' + idp + '-xh-flip" type="checkbox"' + (src.xHatchFlip ? ' checked' : '') + '/>');
+}
+
+// Wire the controls above. applyFn(partial) receives whichever field changed and
+// persists it (v25Last for placement, or the selected entity). Sliders fire on
+// 'input' (live drag) and DON'T rebuild the bar, so they keep focus mid-drag.
+function v25WallHatchWire(bar, idp, applyFn) {
+  if (!bar) return;
+  const chk = (id, key) => {
+    const el = bar.querySelector('#' + id);
+    if (el) el.addEventListener('change', () => { const p = {}; p[key] = !!el.checked; applyFn(p); });
+  };
+  const sld = (id, key) => {
+    const el = bar.querySelector('#' + id), out = bar.querySelector('#' + id + '-val');
+    if (!el) return;
+    el.addEventListener('input', () => {
+      const n = parseInt(el.value, 10) || 0;
+      if (out) out.textContent = n + '%';
+      const p = {}; p[key] = n; applyFn(p);
+    });
+  };
+  chk(idp + '-wallgrout',  'groutFill');
+  chk(idp + '-wallxhatch', 'xHatch');
+  sld(idp + '-grout-sp', 'groutSpacing');
+  sld(idp + '-grout-op', 'groutOpacity');
+  sld(idp + '-grout-lw', 'groutWidth');
+  sld(idp + '-xh-sp', 'xHatchSpacing');
+  sld(idp + '-xh-op', 'xHatchOpacity');
+  sld(idp + '-xh-lw', 'xHatchWidth');
+  chk(idp + '-xh-flip', 'xHatchFlip');
+}
+
+// linework-upgrade — the single selected lineSet (line/polyline), or null.
+// Mirrors v25SelectedSingleMem2 so the top bar can surface a selected line's
+// full style for editing.
+function v25SelectedSingleLineSet() {
+  if (typeof sheetMode === 'undefined' || sheetMode !== '2d') return null;
+  if (typeof v25Selected === 'undefined' || !Array.isArray(v25Selected) || v25Selected.length !== 1) return null;
+  const view = (typeof activeBlock !== 'undefined' && activeBlock && activeBlock.viewKey) || 'elevation';
+  const arr = (typeof entities2D !== 'undefined' && entities2D[view]) || [];
+  const ent = arr.find(e => e && e.id === v25Selected[0]);
+  return (ent && ent.type === 'lineSet') ? ent : null;
+}
+
+// linework-upgrade — AS 1100 named line-type presets. Each sets the AS1100
+// weight ramp index (lwLevel) + style + the matching raw mm so the Width
+// readout stays honest. Indices map into AS1100_LW [0,.05,.10,.13,.18,.25,.35].
+const V25_LINE_PRESETS = {
+  visible: { label: 'Visible', lwLevel: 6, ls: 'solid' },
+  hidden:  { label: 'Hidden',  lwLevel: 5, ls: 'dashed' },
+  centre:  { label: 'Centre',  lwLevel: 4, ls: 'centre' },
+  phantom: { label: 'Phantom', lwLevel: 5, ls: 'phantom' },
+};
+const V25_LINE_WIDTHS = [0.13, 0.18, 0.25, 0.35, 0.50, 0.70, 1.00];
+
+// Build the full linework control fragment. `v` is a NORMALISED value bag
+// (lw/ls/lwLevel/colour/opacity/cap/join/arrowStart/arrowEnd[/closed/fillMaterial
+// /fillColour]); idp keeps element ids unique. opts.fill adds the Closed + fill
+// controls (selected-line bar + inspector use them; placement does not). The
+// SAME fragment serves both the placement bar (writing v25Last via the wire's
+// applyFn) and the selected-line bar (writing the entity). Mirrors the wall-
+// hatch HTML/wire pair so field names never drift.
+function v25LineControlsHTML(v, idp, opts) {
+  v = v || {}; opts = opts || {};
+  const fld = (label, inner) => '<label style="display:flex;align-items:center;gap:4px">' +
+    '<span style="color:var(--text-mute);font-size:11px">' + label + '</span>' + inner + '</label>';
+  const opt = (val, cur, lbl) => '<option value="' + val + '"' + (val === cur ? ' selected' : '') + '>' + (lbl != null ? lbl : val) + '</option>';
+  const lw = (typeof v.lw === 'number') ? v.lw : 0.35;
+  const ls = v.ls || 'solid';
+  const cap = v.cap || 'butt';
+  const join = v.join || 'miter';
+  const aS = v.arrowStart || 'none';
+  const aE = v.arrowEnd || 'none';
+  const op = (typeof v.opacity === 'number') ? Math.round(v.opacity * 100) : 100;
+  const colShown = v.colour || '';
+  let h = '';
+  // Width (raw mm — picking one clears any AS1100 ramp level).
+  h += fld('Width', '<select id="' + idp + '-lw" style="width:74px">' +
+    V25_LINE_WIDTHS.map(w => opt(String(w), String(lw), w.toFixed(2) + ' mm')).join('') + '</select>');
+  // Style.
+  h += fld('Style', '<select id="' + idp + '-ls" style="width:90px">' +
+    ['solid','dashed','dotted','centre','phantom'].map(s => opt(s, ls)).join('') + '</select>');
+  // AS 1100 named-type quick presets.
+  h += '<span style="display:flex;align-items:center;gap:3px"><span style="color:var(--text-mute);font-size:11px">AS1100</span>' +
+    Object.keys(V25_LINE_PRESETS).map(k =>
+      '<button type="button" data-preset="' + k + '" id="' + idp + '-pre-' + k + '" ' +
+      'style="padding:2px 6px;font-size:11px;border:1px solid var(--border);background:var(--surface-3);color:var(--text);border-radius:4px;cursor:pointer">' +
+      V25_LINE_PRESETS[k].label + '</button>').join('') + '</span>';
+  // Colour (+ clear-to-theme).
+  h += fld('Colour', '<input id="' + idp + '-col" type="color" value="' + (colShown || '#2c2c2c') + '" style="width:30px;height:22px;padding:0;cursor:pointer"/>' +
+    '<button type="button" id="' + idp + '-col-x" title="Use theme colour" style="padding:1px 5px;font-size:10px;border:1px solid var(--border);background:var(--surface-3);color:var(--text-mute);border-radius:4px;cursor:pointer">×</button>');
+  // Opacity.
+  h += fld('Opacity', '<input id="' + idp + '-op" type="range" min="10" max="100" step="5" value="' + op +
+    '" style="width:70px;vertical-align:middle"><span id="' + idp + '-op-val" style="color:var(--text-mute);font-size:11px;min-width:30px;display:inline-block">' + op + '%</span>');
+  // Ends (arrowheads / caps / ticks).
+  const ends = s => ['none','arrow','dot','tick'].map(x => opt(x, s)).join('');
+  h += fld('Start', '<select id="' + idp + '-as" style="width:70px">' + ends(aS) + '</select>');
+  h += fld('End', '<select id="' + idp + '-ae" style="width:70px">' + ends(aE) + '</select>');
+  // Cap & join.
+  h += fld('Cap', '<select id="' + idp + '-cap" style="width:70px">' + ['butt','round','square'].map(x => opt(x, cap)).join('') + '</select>');
+  h += fld('Join', '<select id="' + idp + '-join" style="width:70px">' + ['miter','round','bevel'].map(x => opt(x, join)).join('') + '</select>');
+  // Closed + fill (selected-line + inspector only).
+  if (opts.fill) {
+    h += fld('Closed', '<input id="' + idp + '-closed" type="checkbox"' + (v.closed ? ' checked' : '') + '/>');
+    if (v.closed) {
+      const mats = (typeof V25_MATERIALS === 'object') ? Object.keys(V25_MATERIALS) : [];
+      h += fld('Fill hatch', '<select id="' + idp + '-fillmat" style="width:110px">' +
+        opt('', v.fillMaterial || '', '(none)') + mats.map(m => opt(m, v.fillMaterial || '')).join('') + '</select>');
+      h += fld('Fill colour', '<input id="' + idp + '-fillcol" type="color" value="' + (v.fillColour || '#bcd8ff') + '" style="width:30px;height:22px;padding:0;cursor:pointer"/>' +
+        '<button type="button" id="' + idp + '-fillcol-x" title="No solid fill" style="padding:1px 5px;font-size:10px;border:1px solid var(--border);background:var(--surface-3);color:var(--text-mute);border-radius:4px;cursor:pointer">×</button>');
+    }
+  }
+  return h;
+}
+
+// Wire the linework controls. applyFn(partial) receives NORMALISED keys and
+// persists them onto the right target (v25Last mirrors for placement, or the
+// entity for a selection). rebuildFn (optional) re-renders the bar after a
+// change that adds/removes controls (the Closed toggle reveals the fill row).
+function v25LineControlsWire(bar, idp, applyFn, rebuildFn) {
+  if (!bar) return;
+  const q = id => bar.querySelector('#' + id);
+  const onSel = (id, key, num) => { const el = q(id); if (el) el.addEventListener('change', () => { const p = {}; p[key] = num ? parseFloat(el.value) : el.value; applyFn(p); }); };
+  onSel(idp + '-lw', 'lw', true);   // picking a raw width clears the AS1100 ramp level
+  { const el = q(idp + '-lw'); if (el) el.addEventListener('change', () => applyFn({ lwLevel: null })); }
+  onSel(idp + '-ls', 'ls');
+  onSel(idp + '-as', 'arrowStart');
+  onSel(idp + '-ae', 'arrowEnd');
+  onSel(idp + '-cap', 'cap');
+  onSel(idp + '-join', 'join');
+  Object.keys(V25_LINE_PRESETS).forEach(k => {
+    const b = q(idp + '-pre-' + k);
+    if (b) b.addEventListener('click', () => {
+      const p = V25_LINE_PRESETS[k];
+      const mm = (typeof AS1100_LW !== 'undefined' && AS1100_LW[p.lwLevel] != null) ? AS1100_LW[p.lwLevel] : 0.35;
+      // Raw lw is the single width source; clear any legacy AS1100 ramp level
+      // so the named-type weight is exactly the lw we set here.
+      applyFn({ lw: mm, ls: p.ls, lwLevel: null });
+      if (rebuildFn) rebuildFn();
+    });
+  });
+  const colEl = q(idp + '-col');
+  if (colEl) colEl.addEventListener('input', () => applyFn({ colour: colEl.value }));
+  const colX = q(idp + '-col-x');
+  if (colX) colX.addEventListener('click', () => { applyFn({ colour: null }); if (rebuildFn) rebuildFn(); });
+  const opEl = q(idp + '-op'), opOut = q(idp + '-op-val');
+  if (opEl) opEl.addEventListener('input', () => { const n = parseInt(opEl.value, 10) || 100; if (opOut) opOut.textContent = n + '%'; applyFn({ opacity: n / 100 }); });
+  const closedEl = q(idp + '-closed');
+  if (closedEl) closedEl.addEventListener('change', () => { applyFn({ closed: !!closedEl.checked }); if (rebuildFn) rebuildFn(); });
+  onSel(idp + '-fillmat', 'fillMaterial');
+  const fcEl = q(idp + '-fillcol');
+  if (fcEl) fcEl.addEventListener('input', () => applyFn({ fillColour: fcEl.value }));
+  const fcX = q(idp + '-fillcol-x');
+  if (fcX) fcX.addEventListener('click', () => { applyFn({ fillColour: null }); if (rebuildFn) rebuildFn(); });
 }
 
 function v25UpdateOptionsBar() {
@@ -140,22 +378,47 @@ function v25UpdateOptionsBar() {
     bar.style.display = 'flex';
     const mt = selMem.memberType || 'ub';
     const curSec = selMem.section || '';
-    const secNames = v25MemberSectionNames(mt, curSec);
+    // chs-availability — selected CHS gets the same Grade / Finish selects as
+    // the placement bar; the size list filters to the active grade.
+    const selChsGrade = (mt === 'chs')
+      ? (selMem.grade || (typeof chsGradeOfSize === 'function' && chsGradeOfSize(curSec)) || 'C350')
+      : null;
+    const secNames = v25MemberSectionNames(mt, curSec, selChsGrade);
+    const secLabel = (s) => (mt === 'chs' && typeof chsSizeLabel === 'function') ? chsSizeLabel(selChsGrade, s) : s;
     bar.innerHTML =
       `<strong>${mt.toUpperCase()}</strong>` +
       `<span style="color:var(--text-mute);font-size:11px">selected</span>` +
+      (mt === 'chs' ?
+        `<label style="display:flex;align-items:center;gap:4px">` +
+          `<span style="color:var(--text-mute);font-size:11px">Grade</span>` +
+          `<select id="v25o-selchs-grade" style="width:90px">${v25ChsGradeOptionsHTML(selChsGrade)}</select>` +
+        `</label>` : '') +
       `<label style="display:flex;align-items:center;gap:4px">` +
         `<span style="color:var(--text-mute);font-size:11px">Section</span>` +
-        `<select id="v25o-selsect" style="width:160px">` +
-          secNames.map(s => `<option value="${s}"${s === curSec ? ' selected' : ''}>${s}</option>`).join('') +
+        `<select id="v25o-selsect" style="width:${mt === 'chs' ? 180 : 160}px">` +
+          secNames.map(s => `<option value="${s}"${s === curSec ? ' selected' : ''}>${secLabel(s)}</option>`).join('') +
         `</select>` +
         ` <button id="v25o-selsect-pick" type="button" style="padding:2px 8px;font-size:11px;border:1px solid var(--border);background:var(--surface-3);color:var(--text);border-radius:4px;cursor:pointer">Pick…</button>` +
       `</label>` +
+      (mt === 'chs' ?
+        `<label style="display:flex;align-items:center;gap:4px">` +
+          `<span style="color:var(--text-mute);font-size:11px">Finish</span>` +
+          v25ChsFinishSelectHTML('v25o-selchs-finish', selChsGrade, curSec, selMem.finish) +
+        `</label>` : '') +
       `<span style="color:var(--text-mute);margin-left:4px;font-size:11px">Changes the selected member · also editable in the Settings tab</span>`;
     const applySel = (name) => {
       if (!name) return;
       selMem.section = name;
       if (typeof lastUsedSection !== 'undefined' && selMem.memberType) lastUsedSection[selMem.memberType] = name;
+      // chs-availability — a size picked from the other grade's list (via the
+      // grade-grouped Pick… dialog) drags the grade with it; the finish is
+      // revalidated against the new size's availability.
+      if (selMem.memberType === 'chs') {
+        const g2 = (typeof chsGradeOfSize === 'function' && chsGradeOfSize(name)) || selMem.grade || 'C350';
+        selMem.grade = g2;
+        if (typeof chsValidFinish === 'function') selMem.finish = chsValidFinish(g2, name, selMem.finish);
+        if (typeof v25UpdateOptionsBar === 'function') setTimeout(v25UpdateOptionsBar, 0);
+      }
       if (typeof v3dMarkDirty === 'function') v3dMarkDirty();
       if (typeof invalidateWeldCache === 'function') invalidateWeldCache();
       if (typeof v25UpdateInspector === 'function') v25UpdateInspector();
@@ -163,6 +426,21 @@ function v25UpdateOptionsBar() {
     };
     const selSel = bar.querySelector('#v25o-selsect');
     if (selSel) selSel.addEventListener('change', (e) => applySel(e.target.value));
+    const selChsGradeSel = bar.querySelector('#v25o-selchs-grade');
+    if (selChsGradeSel) selChsGradeSel.addEventListener('change', (e) => {
+      const g = e.target.value;
+      selMem.grade = g;
+      if (typeof lastChsGrade !== 'undefined') lastChsGrade = g;
+      // Migrate to the same-OD size in the new grade (applySel revalidates the
+      // finish and rebuilds the bar so the Section list re-filters).
+      applySel(v25ChsMigrateSize(g, selMem.section));
+    });
+    const selChsFinSel = bar.querySelector('#v25o-selchs-finish');
+    if (selChsFinSel) selChsFinSel.addEventListener('change', (e) => {
+      selMem.finish = e.target.value;
+      if (typeof lastChsFinish !== 'undefined') lastChsFinish = selMem.finish;
+      if (typeof v25UpdateInspector === 'function') v25UpdateInspector();
+    });
     const selPick = bar.querySelector('#v25o-selsect-pick');
     if (selPick) selPick.addEventListener('click', (ev) => {
       ev.stopPropagation();
@@ -176,6 +454,20 @@ function v25UpdateOptionsBar() {
         onChoose: (name) => applySel(name),
       });
     });
+    // GLT timber: append grade + grain (size / spacing / opacity) sliders after
+    // the Section row, writing straight onto the selected member.
+    if (selMem.memberType === 'glt' && typeof v25GltBuildControls === 'function') {
+      const gltHost = document.createElement('span');
+      gltHost.style.cssText = 'display:flex;gap:8px;align-items:center;flex-wrap:wrap';
+      gltHost.innerHTML = v25GltBuildControls({
+        grade: selMem.grade, grainSize: selMem.grainSize,
+        grainSpacing: selMem.grainSpacing, grainOpacity: selMem.grainOpacity,
+      }, 'v25o-selglt');
+      bar.appendChild(gltHost);
+      if (typeof v25GltWireControls === 'function') {
+        v25GltWireControls(bar, 'v25o-selglt', function (partial) { v25GltApplyToEnt(selMem, partial); });
+      }
+    }
     return;
   }
 
@@ -248,6 +540,112 @@ function v25UpdateOptionsBar() {
     return;
   }
 
+  // selected-wall-bar (blockwork-section-hatch) — a single selected section-strip
+  // wall surfaces its Block / End-break + the grout & cross-hatch controls in the
+  // top bar (the same controls also sit in the left inspector). Mirrors the
+  // selected-member / selected-stud bars; refreshed via v25UpdateInspector ->
+  // v25UpdateOptionsBar on select / deselect.
+  const selWall = (typeof v25SelectedSingleWallSec === 'function') ? v25SelectedSingleWallSec() : null;
+  if (sheetMode === '2d' && tool === 'select' && selWall) {
+    bar.style.display = 'flex';
+    const we = selWall.endBreak || 'start';
+    const blkOpts = (typeof V25_BLOCK_DB === 'object')
+      ? Object.keys(V25_BLOCK_DB).map(k => `<option${k === selWall.blockKey ? ' selected' : ''}>${k}</option>`).join('') : '';
+    bar.innerHTML =
+      `<strong>Blockwork</strong>` +
+      `<span style="color:var(--text-mute);font-size:11px">selected</span>` +
+      `<label style="display:flex;align-items:center;gap:4px"><span style="color:var(--text-mute);font-size:11px">Block</span>` +
+        `<select id="v25o-selwall-block">${blkOpts}</select></label>` +
+      `<label style="display:flex;align-items:center;gap:4px"><span style="color:var(--text-mute);font-size:11px">End break</span>` +
+        `<select id="v25o-selwall-end">` +
+          `<option value="start"${we==='start'?' selected':''}>start</option>` +
+          `<option value="end"${we==='end'?' selected':''}>finish</option>` +
+          `<option value="both"${we==='both'?' selected':''}>both</option>` +
+          `<option value="none"${we==='none'?' selected':''}>none</option></select></label>` +
+      ((typeof v25WallHatchControlsHTML === 'function') ? v25WallHatchControlsHTML(selWall, 'v25o-sel') : '') +
+      `<span style="color:var(--text-mute);margin-left:4px;font-size:11px">Edits the selected wall · also in the Settings tab</span>`;
+    const blkSel = bar.querySelector('#v25o-selwall-block');
+    if (blkSel) blkSel.addEventListener('change', e => {
+      selWall.blockKey = e.target.value;
+      if (typeof requestRender === 'function') requestRender();
+      if (typeof v25UpdateInspector === 'function') v25UpdateInspector();
+    });
+    const endSel = bar.querySelector('#v25o-selwall-end');
+    if (endSel) endSel.addEventListener('change', e => {
+      selWall.endBreak = e.target.value;
+      if (typeof requestRender === 'function') requestRender();
+      if (typeof v25UpdateInspector === 'function') v25UpdateInspector();
+    });
+    // Hatch toggles + sliders write straight onto the selected wall (no bar rebuild
+    // mid-drag, so sliders keep focus — same idiom as the selected-stud embed input).
+    if (typeof v25WallHatchWire === 'function') {
+      v25WallHatchWire(bar, 'v25o-sel', (p) => { Object.assign(selWall, p); if (typeof requestRender === 'function') requestRender(); });
+    }
+    return;
+  }
+
+  // selected-clt-bar — a single selected CLT panel surfaces its Panel /
+  // Treatment / board + grain controls in the top bar (mirrors the selected
+  // member / wall bars). Built + wired via the shared 72n control helpers.
+  const selClt = (typeof v25SelectedSingleClt === 'function') ? v25SelectedSingleClt() : null;
+  if (sheetMode === '2d' && tool === 'select' && selClt && typeof v25CltBuildControls === 'function') {
+    bar.innerHTML = '';   // clear prior bar content (mirrors every sibling branch)
+    bar.style.display = 'flex';
+    const host = document.createElement('span');
+    host.style.cssText = 'display:flex;gap:8px;align-items:center;flex-wrap:wrap';
+    const strong = document.createElement('strong'); strong.textContent = 'CLT';
+    bar.appendChild(strong);
+    host.innerHTML = v25CltBuildControls({
+      panel: selClt.panel, treatment: selClt.treatment, boardWidth: selClt.boardWidth,
+      grainSize: selClt.grainSize, grainSpacing: selClt.grainSpacing,
+      grainOpacity: selClt.grainOpacity, edgeWeight: selClt.edgeWeight,
+    }, 'v25o-selclt');
+    bar.appendChild(host);
+    if (typeof v25CltWireControls === 'function') {
+      v25CltWireControls(bar, 'v25o-selclt', function (partial) { v25CltApplyToEnt(selClt, partial); });
+    }
+    return;
+  }
+
+  // snapshot-tools (js/88) — a single selected image surfaces its Opacity dial,
+  // Multiply / Flatten toggles and Layer assignment in the top bar (mirrors the
+  // selected-member / selected-stud bars above). Scoped to the Select tool so
+  // arming a placement tool always shows placement options instead.
+  const selSnap = (typeof v25SelectedSingleSnapshot === 'function') ? v25SelectedSingleSnapshot() : null;
+  if (sheetMode === '2d' && tool === 'select' && selSnap && typeof v25BuildSnapshotOptionsBar === 'function') {
+    bar.style.display = 'flex';
+    v25BuildSnapshotOptionsBar(bar, selSnap);
+    return;
+  }
+
+  // linework-upgrade — a single selected line/polyline: surface its full style
+  // (width / colour / style / opacity / AS1100 preset / arrowheads / cap / join
+  // / closed + fill) in the top bar, bound straight to the entity. Mirrors the
+  // selected-member branch; the SAME control fragment serves placement below.
+  const selLine = (typeof v25SelectedSingleLineSet === 'function') ? v25SelectedSingleLineSet() : null;
+  if (sheetMode === '2d' && tool === 'select' && selLine) {
+    bar.style.display = 'flex';
+    const label = selLine.closed ? 'POLYGON' : (selLine.pts && selLine.pts.length > 2 ? 'POLYLINE' : 'LINE');
+    const v = {
+      lw: selLine.lw, ls: selLine.ls, lwLevel: selLine.lwLevel, colour: selLine.colour,
+      opacity: selLine.opacity, cap: selLine.cap, join: selLine.join,
+      arrowStart: selLine.arrowStart, arrowEnd: selLine.arrowEnd, closed: !!selLine.closed,
+      fillMaterial: selLine.fillMaterial, fillColour: selLine.fillColour,
+    };
+    bar.innerHTML = '<strong>' + label + '</strong>' +
+      '<span style="color:var(--text-mute);font-size:11px">selected</span>' +
+      v25LineControlsHTML(v, 'v25o-sline', { fill: true });
+    const apply = (partial) => {
+      Object.keys(partial).forEach(k => {
+        if (partial[k] === null) delete selLine[k]; else selLine[k] = partial[k];
+      });
+      if (typeof requestRender === 'function') requestRender();
+      if (typeof v25UpdateInspector === 'function') v25UpdateInspector();
+    };
+    v25LineControlsWire(bar, 'v25o-sline', apply, () => v25UpdateOptionsBar());
+    return;
+  }
+
   if (sheetMode !== '2d' || !tool || !tool.startsWith('v25-')) {
     bar.style.display = 'none'; return;
   }
@@ -279,11 +677,27 @@ function v25UpdateOptionsBar() {
         `<option value="end"${we==='end'?' selected':''}>finish</option>` +
         `<option value="both"${we==='both'?' selected':''}>both</option>` +
         `<option value="none"${we==='none'?' selected':''}>none</option></select>`);
-      html += fld('Grout', `<input id="v25o-wallgrout" type="checkbox"${v25Last.wallGrouted?' checked':''}/>`);
+      html += v25WallHatchControlsHTML(v25Last, 'v25o');
       html += `<span style="color:var(--text-mute);font-size:11px">Click start · click end · Shift = free angle</span>`;
     } else {
       html += `<span style="color:var(--text-mute);font-size:11px">Drag two corners · edges hard (double-click an edge to break it after placing)</span>`;
     }
+  } else if (tool === 'v25-clt-edge' || tool === 'v25-clt-plan') {
+    const planMode = (tool === 'v25-clt-plan');
+    const g = (v25Last && v25Last.cltGrain) || {};
+    html += `<strong>CLT</strong>`;
+    // Orientation row (Floor / Wall / Plan → / Plan ↑) — a live DOM element, so
+    // emit a placeholder and swap it in after innerHTML (like the member row).
+    html += fld('Orientation', `<span id="v25CltOrientSlot"></span>`);
+    if (typeof v25CltBuildControls === 'function') {
+      html += v25CltBuildControls({
+        panel: v25Last.cltPanel, treatment: v25Last.cltTreatment, boardWidth: v25Last.cltBoardWidth,
+        grainSize: g.size, grainSpacing: g.spacing, grainOpacity: g.opacity, edgeWeight: v25Last.cltEdge,
+      }, 'v25o-clt');
+    }
+    html += planMode
+      ? `<span style="color:var(--text-mute);font-size:11px">Drag two corners</span>`
+      : `<span style="color:var(--text-mute);font-size:11px">Click start · click end · thickness to scale · Shift = free angle</span>`;
   } else if (tool === 'v25-bar' || tool === 'v25-bar-dot') {
     html += `<strong>Reinforcement</strong>`;
     html += fld('Bar', `<select id="v25o-bar">${Object.keys(V25_REO_DB.bars).map(k => `<option ${k === v25Last.reoBar ? 'selected' : ''}>${k}</option>`).join('')}</select>`);
@@ -293,23 +707,44 @@ function v25UpdateOptionsBar() {
   } else if (tool === 'v25-mem') {
     const mt = v25State.memberType || 'ub';
     const memberLabel = mt.toUpperCase();
+    // chs-availability — CHS gets a Grade select before Section (sizes filter
+    // to the grade) and a Finish select after it (per-size availability).
+    const chsGrade = (mt === 'chs')
+      ? (v25State.chsGrade || (typeof chsGradeOfSize === 'function' && chsGradeOfSize(v25State.section)) || 'C350')
+      : null;
     // member-size-from-top-bar (2026-06-04) — section list via the shared helper
     // so the placement bar and the selected-member editor never drift.
-    const sectionNames = v25MemberSectionNames(mt);
+    const sectionNames = v25MemberSectionNames(mt, null, chsGrade);
     const curSec = v25State.section || '';
     html += `<strong>${memberLabel}</strong>`;
+    if (mt === 'chs') {
+      html += fld('Grade', `<select id="v25o-chs-grade" style="width:90px">${v25ChsGradeOptionsHTML(chsGrade)}</select>`);
+    }
+    const secLabel = (s) => (mt === 'chs' && typeof chsSizeLabel === 'function') ? chsSizeLabel(chsGrade, s) : s;
     html += fld('Section',
-      `<select id="v25o-sect" style="width:160px">` +
+      `<select id="v25o-sect" style="width:${mt === 'chs' ? 180 : 160}px">` +
       (curSec && !sectionNames.includes(curSec) ? `<option value="${curSec}" selected>${curSec}</option>` : '') +
-      sectionNames.map(s => `<option value="${s}"${s === curSec ? ' selected' : ''}>${s}</option>`).join('') +
+      sectionNames.map(s => `<option value="${s}"${s === curSec ? ' selected' : ''}>${secLabel(s)}</option>`).join('') +
       `</select>` +
       ` <button id="v25o-sect-pick" type="button" style="padding:2px 8px;font-size:11px;border:1px solid var(--border);background:var(--surface-3);color:var(--text);border-radius:4px;cursor:pointer">Pick…</button>`
     );
+    if (mt === 'chs') {
+      html += fld('Finish', v25ChsFinishSelectHTML('v25o-chs-finish', chsGrade, curSec, v25State.chsFinish));
+    }
     // Orientation row replaces the old Aspect + PFC Open-face dropdowns. It is
     // built as a live DOM element (its buttons carry click handlers) so it
     // can't be serialised into this innerHTML string — emit a placeholder span
     // here and swap in the real row after bar.innerHTML is set (see below).
     html += fld('Orientation', `<span id="v25OrientSlot"></span>`);
+    // GLT timber: grade selector + grain (size / spacing / opacity) sliders.
+    if (mt === 'glt' && typeof v25GltBuildControls === 'function') {
+      html += v25GltBuildControls({
+        grade: v25State.grade,
+        grainSize: v25State.grainSize,
+        grainSpacing: v25State.grainSpacing,
+        grainOpacity: v25State.grainOpacity,
+      }, 'v25o-glt');
+    }
   // v1 V25 plate options (Aspect / Thk) retired by architecture-v2 Phase 2.
   // v2 plate placement options will land on the v2 inspector + size picker
   // when Phase 11+ stands up the standalone v2 BB-rail.
@@ -330,26 +765,47 @@ function v25UpdateOptionsBar() {
     // real row after bar.innerHTML is set, exactly like the member Orientation.
     html += fld('Orientation', `<span id="v25OrientSlot"></span>`);
   } else if (tool === 'v25-screw') {
-    // HBS timber screw — Size (grouped by Ø, from the verified 02c catalogue) +
-    // the live orientation row (swapped in below, like the bolt). (72i-v25-screw.js)
-    const HBS = (typeof HBS_PLATE_SCREWS === 'object' && HBS_PLATE_SCREWS) ? HBS_PLATE_SCREWS : {};
-    const grp = (typeof HBS_LENGTHS_BY_D === 'object' && HBS_LENGTHS_BY_D) ? HBS_LENGTHS_BY_D : {};
+    // Rothoblaas timber screw — family-aware: the active spec id selects HBS
+    // ('HBSPL…', partial thread, 02c catalogue) or VGS ('VGS…', fully threaded,
+    // 02j catalogue). Size select (grouped by Ø / head family) + the live
+    // orientation row (swapped in below, like the bolt). (72i-v25-screw.js)
     const curSpec = v25State.screwSpec
       || (typeof lastUsedSection !== 'undefined' && lastUsedSection.screw) || 'HBSPL8120';
-    const opt = (id) => {
-      const s = HBS[id];
-      const lab = s ? ('Ø' + s.d + ' × ' + s.L) : id;
-      return `<option value="${id}"${id === curSpec ? ' selected' : ''}>${lab}</option>`;
-    };
+    const isVgs = (typeof isVgsSpec === 'function') && isVgsSpec(curSpec);
     let sizeOpts = '';
-    [8, 10, 12].forEach(dia => {
-      const ids = grp[dia] || [];
-      if (!ids.length) return;
-      sizeOpts += `<optgroup label="Ø${dia} (${(HBS[ids[0]] || {}).bit || 'TX'})">` +
-        ids.map(opt).join('') + `</optgroup>`;
-    });
-    if (!sizeOpts) sizeOpts = Object.keys(HBS).map(opt).join('');
+    if (isVgs) {
+      // VGS — optgroups straight from VGS_SIZE_GROUPS (csk ≤600 / hex >600).
+      const VGS = (typeof VGS_SCREWS === 'object' && VGS_SCREWS) ? VGS_SCREWS : {};
+      const vgrps = (typeof VGS_SIZE_GROUPS !== 'undefined' && VGS_SIZE_GROUPS) ? VGS_SIZE_GROUPS : [];
+      const vopt = (id) => {
+        const s = VGS[id];
+        const lab = s ? ('Ø' + s.d + ' × ' + s.L) : id;
+        return `<option value="${id}"${id === curSpec ? ' selected' : ''}>${lab}</option>`;
+      };
+      vgrps.forEach(g => {
+        if (!g.ids || !g.ids.length) return;
+        sizeOpts += `<optgroup label="${g.label}">` + g.ids.map(vopt).join('') + `</optgroup>`;
+      });
+      if (!sizeOpts) sizeOpts = Object.keys(VGS).map(vopt).join('');
+    } else {
+      // HBS — grouped by Ø, from the verified 02c catalogue (unchanged path).
+      const HBS = (typeof HBS_PLATE_SCREWS === 'object' && HBS_PLATE_SCREWS) ? HBS_PLATE_SCREWS : {};
+      const grp = (typeof HBS_LENGTHS_BY_D === 'object' && HBS_LENGTHS_BY_D) ? HBS_LENGTHS_BY_D : {};
+      const opt = (id) => {
+        const s = HBS[id];
+        const lab = s ? ('Ø' + s.d + ' × ' + s.L) : id;
+        return `<option value="${id}"${id === curSpec ? ' selected' : ''}>${lab}</option>`;
+      };
+      [8, 10, 12].forEach(dia => {
+        const ids = grp[dia] || [];
+        if (!ids.length) return;
+        sizeOpts += `<optgroup label="Ø${dia} (${(HBS[ids[0]] || {}).bit || 'TX'})">` +
+          ids.map(opt).join('') + `</optgroup>`;
+      });
+      if (!sizeOpts) sizeOpts = Object.keys(HBS).map(opt).join('');
+    }
     html += `<strong>Screw</strong>`;
+    html += `<span style="color:var(--text-mute);font-size:11px;margin-left:4px">${isVgs ? 'VGS' : 'HBS'}</span>`;
     html += fld('Size', `<select id="v25o-screw-size" style="width:120px">${sizeOpts}</select>`);
     html += fld('Orientation', `<span id="v25OrientSlot"></span>`);
   } else if (tool === 'v25-stud') {
@@ -368,6 +824,9 @@ function v25UpdateOptionsBar() {
     html += `<strong>Stud</strong>`;
     html += fld('Size', `<select id="v25o-stud-size" style="width:120px">${studOpts}</select>`);
     html += fld('Orientation', `<span id="v25OrientSlot"></span>`);
+    // Auto-note: on first stud in a view, auto-drop the linked chemical-anchor
+    // callout note (js/89). Default ON; toggling writes window.v25AutoAnchorNote.
+    html += fld('Auto-note', `<input id="v25o-stud-autonote" type="checkbox"${(window.v25AutoAnchorNote !== false) ? ' checked' : ''}/>`);
   } else if (tool === 'v25-leader') {
     html += `<strong>Leader</strong>`;
     html += fld('Default text', `<input id="v25o-leadertxt" value="${(v25Last.leaderText || 'CALLOUT').replace(/"/g, '&quot;')}" style="width:200px"/>`);
@@ -380,14 +839,27 @@ function v25UpdateOptionsBar() {
     html += fld('Precision', `<select id="v25o-dimprec">${['0','1','2','3'].map(p => `<option value="${p}"${String(v25Last.dimPrec!=null?v25Last.dimPrec:0)===p?' selected':''}>${p}</option>`).join('')}</select>`);
     html += fld('Units', `<select id="v25o-dimunits">${['mm','m'].map(u => `<option value="${u}"${(v25Last.dimUnits||'mm')===u?' selected':''}>${u}</option>`).join('')}</select>`);
     html += fld('Offset (mm)', `<input id="v25o-dimoffset" type="number" step="1" value="${(typeof v25Last.dimOffset === 'number' ? v25Last.dimOffset : 12)}" style="width:60px"/>`);
-    html += `<span style="color:var(--text-mute);font-size:11px">Click two points · type a length or label · drag to re-offset · Shift = free angle</span>`;
+    html += fld('Text offset', `<input id="v25o-dimtxtoff" type="checkbox"${v25Last.dimTextOffset ? ' checked' : ''}/>`);
+    html += `<span style="color:var(--text-mute);font-size:11px">Click two points · type a length or label · drag to re-offset · Text offset = label beside the arrows · Shift = free angle</span>`;
   } else if (tool === 'v25-frame') {
     html += `<strong>Detail frame</strong> — drag two corners`;
   } else if (tool === 'v25-line') {
-    html += `<strong>Polyline</strong>`;
-    html += fld('Lineweight (mm)', `<input id="v25o-linelw" type="number" step="0.05" value="${v25Last.lineLw || 0.35}" style="width:60px"/>`);
-    html += fld('Style', `<select id="v25o-linels"><option value="solid"${(v25Last.lineLs||'solid')==='solid'?' selected':''}>solid</option><option value="dotted"${v25Last.lineLs==='dotted'?' selected':''}>dotted</option><option value="dashed"${v25Last.lineLs==='dashed'?' selected':''}>dashed</option><option value="centre"${v25Last.lineLs==='centre'?' selected':''}>centre</option><option value="phantom"${v25Last.lineLs==='phantom'?' selected':''}>phantom</option></select>`);
-    html += `<span style="color:var(--text-mute);font-size:11px">Click to add points · Enter / right-click to finish · Shift bypasses ortho</span>`;
+    const single = (v25State && v25State.lineMode === 'single');
+    html += `<strong>${single ? 'Line' : 'Polyline'}</strong>`;
+    // linework-upgrade — full style controls (shared with the selected-line bar
+    // + inspector), reading the v25Last.line* mirrors so the NEXT line drawn
+    // inherits them. No Closed/fill here (a polyline closes by clicking its
+    // first vertex; fill is set on the selected polygon afterwards).
+    html += v25LineControlsHTML({
+      lw: v25Last.lineLw, ls: v25Last.lineLs, lwLevel: v25Last.lineLwLevel,
+      colour: v25Last.lineColour, opacity: v25Last.lineOpacity,
+      cap: v25Last.lineCap, join: v25Last.lineJoin,
+      arrowStart: v25Last.lineArrowStart, arrowEnd: v25Last.lineArrowEnd,
+    }, 'v25o-pline', { fill: false });
+    html += `<span style="color:var(--text-mute);font-size:11px">${single ? 'Click start · click end · Shift = ortho/45°' : 'Click to add points · Enter / right-click / click first point to finish · Shift = ortho/45°'}</span>`;
+  } else if (tool === 'v25-notch') {
+    html += `<strong>Notch</strong>`;
+    html += `<span style="color:var(--text-mute);font-size:11px">Mark the cut: click each corner · Shift = ortho/45° · type a length to lock a segment · click the first dot to close · double-click / Enter = saw off · double-click empty space = sized void</span>`;
   } else if (tool === 'v25-text') {
     html += `<strong>Text</strong>`;
     html += fld('Default text', `<input id="v25o-textdef" value="${(v25Last.textDefault || 'TEXT').replace(/"/g, '&quot;')}" style="width:200px"/>`);
@@ -406,12 +878,12 @@ function v25UpdateOptionsBar() {
     html += fld('Weld both sides', `<input id="v25o-stiff-weld" type="checkbox"${_stWeld ? ' checked' : ''}/>`);
     html += fld('Steel hatch', `<input id="v25o-stiff-hatch" type="checkbox"${_stHatch ? ' checked' : ''}/>`);
     html += `<span style="color:var(--text-mute);font-size:11px">Hover a beam under a column · click to place · Shift = free X · drag an end to shorten</span>`;
-  } else if (tool === 'v25-notebox' || tool === 'v25-note') {
+  } else if (tool === 'v25-notebox' || tool === 'v25-note' || tool === 'v25-textplain') {
     html += (typeof nbOptionsBarHTML === 'function') ? nbOptionsBarHTML() : '<strong>Note</strong>';
   }
   bar.innerHTML = html + ` <span style="color:var(--text-mute);margin-left:8px;font-size:11px">Esc to cancel</span>`;
 
-  if ((tool === 'v25-notebox' || tool === 'v25-note') && typeof nbBindOptionsBar === 'function') nbBindOptionsBar(bar);
+  if ((tool === 'v25-notebox' || tool === 'v25-note' || tool === 'v25-textplain') && typeof nbBindOptionsBar === 'function') nbBindOptionsBar(bar);
 
   // Swap the orientation-row placeholder for the live element (built with click
   // handlers, so it can't live inside the innerHTML string). mt is out of scope
@@ -420,6 +892,20 @@ function v25UpdateOptionsBar() {
     const slot = bar.querySelector('#v25OrientSlot');
     if (slot && typeof v25BuildOrientationRow === 'function') {
       slot.replaceWith(v25BuildOrientationRow(v25State.memberType || 'ub'));
+    }
+    // GLT grade + grain sliders → v25State + module latches (placement preview).
+    if (v25State.memberType === 'glt' && typeof v25GltWireControls === 'function') {
+      v25GltWireControls(bar, 'v25o-glt', function (partial) { v25GltApplyToState(partial); });
+    }
+  }
+  // CLT placement controls → v25Last latches (so the next placed panel + the
+  // ghost reflect the choice). Swap the orientation-row placeholder for the live
+  // icon row (Floor / Wall / Plan → / Plan ↑), mirroring the member row.
+  if (tool === 'v25-clt-edge' || tool === 'v25-clt-plan') {
+    const slot = bar.querySelector('#v25CltOrientSlot');
+    if (slot && typeof v25BuildCltOrientRow === 'function') slot.replaceWith(v25BuildCltOrientRow());
+    if (typeof v25CltWireControls === 'function') {
+      v25CltWireControls(bar, 'v25o-clt', function (partial) { if (typeof v25CltApplyToState === 'function') v25CltApplyToState(partial); });
     }
   }
   // Swap the bolt orientation-row placeholder for the live element (mirrors the
@@ -454,6 +940,14 @@ function v25UpdateOptionsBar() {
       slot.replaceWith(v25BuildWallModeRow());
     }
   }
+  // blockwork-section-hatch — live grout/cross-hatch toggles + sliders write
+  // v25Last (the placement defaults) and re-render so the drag-preview tracks them.
+  if (tool === 'v25-wall-sec' && typeof v25WallHatchWire === 'function') {
+    v25WallHatchWire(bar, 'v25o', (p) => {
+      Object.assign(v25Last, p);
+      if (typeof requestRender === 'function') requestRender();
+    });
+  }
 
   // Wire change events
   const wire = (id, fn) => { const el = bar.querySelector('#' + id); if (el) el.addEventListener('change', fn); };
@@ -468,7 +962,7 @@ function v25UpdateOptionsBar() {
   wire('v25o-stiff-hatch', e => { v25Last.stiffHatch = !!e.target.checked; });
   wire('v25o-block', e => { v25Last.blockThk = e.target.value; });
   wire('v25o-wallend', e => { v25Last.wallEnd = e.target.value; });
-  wire('v25o-wallgrout', e => { v25Last.wallGrouted = e.target.checked; });
+  // (Grout / cross-hatch controls are wired above via v25WallHatchWire.)
   wire('v25o-bar', e => { v25Last.reoBar = e.target.value; });
   wire('v25o-mesh', e => { v25Last.mesh = e.target.value; });
   wire('v25o-sect', e => {
@@ -476,6 +970,32 @@ function v25UpdateOptionsBar() {
     if (v25State.memberType) lastUsedSection[v25State.memberType] = v25State.section;
     if (typeof populateTilePalette === 'function') populateTilePalette();
     if (typeof highlightActiveTile === 'function') highlightActiveTile();
+    // chs-availability — keep the finish legal for the new size and rebuild the
+    // bar so the Finish dropdown lists that size's availability.
+    if (v25State.memberType === 'chs' && typeof chsValidFinish === 'function') {
+      v25State.chsFinish = chsValidFinish(v25State.chsGrade || 'C350', v25State.section, v25State.chsFinish);
+      if (typeof lastChsFinish !== 'undefined') lastChsFinish = v25State.chsFinish;
+      v25UpdateOptionsBar();
+    }
+  });
+  // chs-availability — Grade re-filters the size list (same-OD migration) and
+  // revalidates the finish; Finish just latches for the next placement.
+  wire('v25o-chs-grade', e => {
+    const g = e.target.value;
+    v25State.chsGrade = g;
+    if (typeof lastChsGrade !== 'undefined') lastChsGrade = g;
+    v25State.section = v25ChsMigrateSize(g, v25State.section);
+    lastUsedSection.chs = v25State.section;
+    if (typeof chsValidFinish === 'function') {
+      v25State.chsFinish = chsValidFinish(g, v25State.section, v25State.chsFinish);
+      if (typeof lastChsFinish !== 'undefined') lastChsFinish = v25State.chsFinish;
+    }
+    if (typeof populateTilePalette === 'function') populateTilePalette();
+    v25UpdateOptionsBar();
+  });
+  wire('v25o-chs-finish', e => {
+    v25State.chsFinish = e.target.value;
+    if (typeof lastChsFinish !== 'undefined') lastChsFinish = v25State.chsFinish;
   });
   wire('v25o-bolt-size', e => {
     v25State.boltSize = e.target.value;
@@ -489,7 +1009,15 @@ function v25UpdateOptionsBar() {
   });
   wire('v25o-screw-size', e => {
     v25State.screwSpec = e.target.value;
-    if (typeof lastUsedSection !== 'undefined') lastUsedSection.screw = v25State.screwSpec;
+    // Family-aware persistence: VGS sizes latch onto lastUsedSection.vgs so the
+    // HBS tile's last-used size survives a VGS session (and vice versa).
+    if (typeof lastUsedSection !== 'undefined') {
+      if (typeof isVgsSpec === 'function' && isVgsSpec(v25State.screwSpec)) {
+        lastUsedSection.vgs = v25State.screwSpec;
+      } else {
+        lastUsedSection.screw = v25State.screwSpec;
+      }
+    }
     if (typeof highlightActiveTile === 'function') highlightActiveTile();
     if (typeof requestRender === 'function') requestRender();
   });
@@ -499,6 +1027,7 @@ function v25UpdateOptionsBar() {
     if (typeof highlightActiveTile === 'function') highlightActiveTile();
     if (typeof requestRender === 'function') requestRender();
   });
+  wire('v25o-stud-autonote', e => { window.v25AutoAnchorNote = !!e.target.checked; });
   // v25o-aspect / v25o-openside wires retired — orientation is now set through
   // the orientation row (v25BuildOrientationRow → v25SetOrientation), which
   // writes v25State.aspect / rot / openSide and refreshes the bar itself.
@@ -516,8 +1045,18 @@ function v25UpdateOptionsBar() {
   });
   wire('v25o-leadertxt', e => { v25Last.leaderText = e.target.value; });
   const wireInput = (id, fn) => { const el = bar.querySelector('#' + id); if (el) el.addEventListener('input', fn); };
-  wireInput('v25o-linelw', e => { v25Last.lineLw = parseFloat(e.target.value) || 0.35; });
-  wireInput('v25o-linels', e => { v25Last.lineLs = e.target.value; });
+  // linework-upgrade — placement line controls write the v25Last.line* mirrors
+  // so the next drawn line inherits them (v25StampLineStyle maps them onto the
+  // new entity at commit). Map normalised control keys → line*-prefixed latches.
+  if (tool === 'v25-line') {
+    const _lk = { lw: 'lineLw', ls: 'lineLs', lwLevel: 'lineLwLevel', colour: 'lineColour',
+      opacity: 'lineOpacity', cap: 'lineCap', join: 'lineJoin',
+      arrowStart: 'lineArrowStart', arrowEnd: 'lineArrowEnd' };
+    v25LineControlsWire(bar, 'v25o-pline', (partial) => {
+      Object.keys(partial).forEach(k => { if (_lk[k]) v25Last[_lk[k]] = partial[k]; });
+      if (typeof requestRender === 'function') requestRender();
+    }, () => v25UpdateOptionsBar());
+  }
   wireInput('v25o-textdef', e => { v25Last.textDefault = e.target.value; });
   wireInput('v25o-textsz', e => { v25Last.textSize = parseFloat(e.target.value) || 3; });
   // Dimension / Measure tool defaults (js/82).
@@ -527,6 +1066,7 @@ function v25UpdateOptionsBar() {
   wire('v25o-dimprec', e => { v25Last.dimPrec = parseInt(e.target.value) || 0; });
   wire('v25o-dimunits', e => { v25Last.dimUnits = e.target.value; });
   wireInput('v25o-dimoffset', e => { v25Last.dimOffset = parseFloat(e.target.value) || 12; });
+  wire('v25o-dimtxtoff', e => { v25Last.dimTextOffset = !!e.target.checked; if (typeof requestRender === 'function') requestRender(); });
 }
 
 // Update v25TryHandleClick to use the latest options-bar values for anchors

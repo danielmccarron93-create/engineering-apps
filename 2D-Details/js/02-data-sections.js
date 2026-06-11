@@ -159,28 +159,231 @@ const RHS_DB = {
   "50x25x2":      { d:  50, bf:  25, t: 2.0 },
 };
 
-// AS 1163 Circular Hollow Sections (CHS). D = outside diameter.
+// AS 1163 Circular Hollow Sections (CHS). D = outside diameter, t = wall.
+// Source: ASI Design Capacity Tables Vol 2 (Hollow Sections), Tables
+// 3.1-1(1)/(2) (Grade C250) and 3.1-2(1)/(2)/(3) (Grade C350). `grade` records
+// the AS 1163 grade the size is rolled in (geometry is grade-independent).
+// Keys are "ODxt" as designated in the DCT. Descending OD, then descending t.
 const CHS_DB = {
-  "219.1x12.7":   { D: 219.1, t: 12.7 },
-  "219.1x8.2":    { D: 219.1, t:  8.2 },
-  "168.3x11":     { D: 168.3, t: 11.0 },
-  "168.3x7.1":    { D: 168.3, t:  7.1 },
-  "139.7x10":     { D: 139.7, t: 10.0 },
-  "139.7x5.4":    { D: 139.7, t:  5.4 },
-  "114.3x9.5":    { D: 114.3, t:  9.5 },
-  "114.3x6.0":    { D: 114.3, t:  6.0 },
-  "101.6x6.3":    { D: 101.6, t:  6.3 },
-  "101.6x4.0":    { D: 101.6, t:  4.0 },
-  "88.9x5.9":     { D:  88.9, t:  5.9 },
-  "76.1x5.9":     { D:  76.1, t:  5.9 },
-  "76.1x3.6":     { D:  76.1, t:  3.6 },
-  "60.3x5.4":     { D:  60.3, t:  5.4 },
-  "60.3x3.6":     { D:  60.3, t:  3.6 },
-  "48.3x5.4":     { D:  48.3, t:  5.4 },
-  "48.3x4.0":     { D:  48.3, t:  4.0 },
-  "42.4x4.9":     { D:  42.4, t:  4.9 },
-  "33.7x4.0":     { D:  33.7, t:  4.0 },
+  "610.0x12.7":   { D: 610.0, t: 12.7, grade: 'C250' },
+  "610.0x9.5":    { D: 610.0, t:  9.5, grade: 'C250' },
+  "610.0x6.4":    { D: 610.0, t:  6.4, grade: 'C250' },
+  "508.0x12.7":   { D: 508.0, t: 12.7, grade: 'C250' },
+  "508.0x9.5":    { D: 508.0, t:  9.5, grade: 'C250' },
+  "508.0x6.4":    { D: 508.0, t:  6.4, grade: 'C250' },
+  "457.0x12.7":   { D: 457.0, t: 12.7, grade: 'C350' },
+  "457.0x9.5":    { D: 457.0, t:  9.5, grade: 'C350' },
+  "457.0x6.4":    { D: 457.0, t:  6.4, grade: 'C350' },
+  "406.4x12.7":   { D: 406.4, t: 12.7, grade: 'C350' },
+  "406.4x9.5":    { D: 406.4, t:  9.5, grade: 'C350' },
+  "406.4x6.4":    { D: 406.4, t:  6.4, grade: 'C350' },
+  "355.6x12.7":   { D: 355.6, t: 12.7, grade: 'C350' },
+  "355.6x9.5":    { D: 355.6, t:  9.5, grade: 'C350' },
+  "355.6x6.4":    { D: 355.6, t:  6.4, grade: 'C350' },
+  "355.6x4.0":    { D: 355.6, t:  4.0, grade: 'C350' },
+  "323.9x12.7":   { D: 323.9, t: 12.7, grade: 'C350' },
+  "323.9x9.5":    { D: 323.9, t:  9.5, grade: 'C350' },
+  "323.9x6.4":    { D: 323.9, t:  6.4, grade: 'C350' },
+  "323.9x4.8":    { D: 323.9, t:  4.8, grade: 'C350' },
+  "323.9x4.0":    { D: 323.9, t:  4.0, grade: 'C350' },
+  "273.1x12.7":   { D: 273.1, t: 12.7, grade: 'C350' },
+  "273.1x9.3":    { D: 273.1, t:  9.3, grade: 'C350' },
+  "273.1x6.4":    { D: 273.1, t:  6.4, grade: 'C350' },
+  "273.1x4.8":    { D: 273.1, t:  4.8, grade: 'C350' },
+  "219.1x12.7":   { D: 219.1, t: 12.7, grade: 'C350' },
+  "219.1x8.2":    { D: 219.1, t:  8.2, grade: 'C350' },
+  "219.1x6.4":    { D: 219.1, t:  6.4, grade: 'C350' },
+  "219.1x4.8":    { D: 219.1, t:  4.8, grade: 'C350' },
+  "219.1x4.0":    { D: 219.1, t:  4.0, grade: 'C350' },
+  "193.7x8.0":    { D: 193.7, t:  8.0, grade: 'C350' },
+  "193.7x6.0":    { D: 193.7, t:  6.0, grade: 'C350' },
+  "178.0x6.0":    { D: 178.0, t:  6.0, grade: 'C350' },
+  "168.3x11":     { D: 168.3, t: 11.0, grade: 'C350' }, // legacy key (DCT "11.0")
+  "168.3x7.1":    { D: 168.3, t:  7.1, grade: 'C350' },
+  "168.3x6.4":    { D: 168.3, t:  6.4, grade: 'C350' },
+  "168.3x4.8":    { D: 168.3, t:  4.8, grade: 'C350' },
+  "168.3x3.2":    { D: 168.3, t:  3.2, grade: 'C350' },
+  "165.1x5.4":    { D: 165.1, t:  5.4, grade: 'C250' },
+  "165.1x5.0":    { D: 165.1, t:  5.0, grade: 'C250' },
+  "165.1x3.5":    { D: 165.1, t:  3.5, grade: 'C350' },
+  "165.1x3.0":    { D: 165.1, t:  3.0, grade: 'C350' },
+  "152.4x6.0":    { D: 152.4, t:  6.0, grade: 'C350' },
+  "152.4x4.8":    { D: 152.4, t:  4.8, grade: 'C350' },
+  "152.4x4.0":    { D: 152.4, t:  4.0, grade: 'C350' },
+  "139.7x10":     { D: 139.7, t: 10.0 }, // legacy — not in current DCT range
+  "139.7x5.4":    { D: 139.7, t:  5.4, grade: 'C250' },
+  "139.7x5.0":    { D: 139.7, t:  5.0, grade: 'C250' },
+  "139.7x3.5":    { D: 139.7, t:  3.5, grade: 'C350' },
+  "139.7x3.0":    { D: 139.7, t:  3.0, grade: 'C350' },
+  "127.0x6.0":    { D: 127.0, t:  6.0, grade: 'C350' },
+  "127.0x4.76":   { D: 127.0, t:  4.76, grade: 'C350' },
+  "127.0x4.0":    { D: 127.0, t:  4.0, grade: 'C350' },
+  "127.0x3.6":    { D: 127.0, t:  3.6, grade: 'C350' },
+  "127.0x3.2":    { D: 127.0, t:  3.2, grade: 'C350' },
+  "114.3x9.5":    { D: 114.3, t:  9.5 }, // legacy — not in current DCT range
+  "114.3x6.0":    { D: 114.3, t:  6.0, grade: 'C350' },
+  "114.3x5.4":    { D: 114.3, t:  5.4, grade: 'C250' },
+  "114.3x4.8":    { D: 114.3, t:  4.8, grade: 'C350' },
+  "114.3x4.5":    { D: 114.3, t:  4.5, grade: 'C250' },
+  "114.3x3.6":    { D: 114.3, t:  3.6, grade: 'C350' },
+  "114.3x3.2":    { D: 114.3, t:  3.2, grade: 'C350' },
+  "114.3x2.9":    { D: 114.3, t:  2.9, grade: 'C350' },
+  "114.0x3.6":    { D: 114.0, t:  3.6, grade: 'C250' },
+  "101.6x6.4":    { D: 101.6, t:  6.4, grade: 'C350' },
+  "101.6x6.3":    { D: 101.6, t:  6.3 }, // legacy — DCT size is 6.4
+  "101.6x5.0":    { D: 101.6, t:  5.0, grade: 'C250' },
+  "101.6x4.0":    { D: 101.6, t:  4.0, grade: 'C250/C350' },
+  "101.6x3.6":    { D: 101.6, t:  3.6, grade: 'C350' },
+  "101.6x3.2":    { D: 101.6, t:  3.2, grade: 'C350' },
+  "101.6x2.6":    { D: 101.6, t:  2.6, grade: 'C350' },
+  "88.9x5.9":     { D:  88.9, t:  5.9, grade: 'C250' },
+  "88.9x5.5":     { D:  88.9, t:  5.5, grade: 'C350' },
+  "88.9x5.0":     { D:  88.9, t:  5.0, grade: 'C250' },
+  "88.9x4.8":     { D:  88.9, t:  4.8, grade: 'C350' },
+  "88.9x4.0":     { D:  88.9, t:  4.0, grade: 'C250' },
+  "88.9x3.2":     { D:  88.9, t:  3.2, grade: 'C350' },
+  "88.9x2.6":     { D:  88.9, t:  2.6, grade: 'C350' },
+  "76.1x5.9":     { D:  76.1, t:  5.9, grade: 'C250' },
+  "76.1x4.5":     { D:  76.1, t:  4.5, grade: 'C250' },
+  "76.1x3.6":     { D:  76.1, t:  3.6, grade: 'C250' },
+  "76.1x3.2":     { D:  76.1, t:  3.2, grade: 'C350' },
+  "76.1x2.3":     { D:  76.1, t:  2.3, grade: 'C350' },
+  "60.3x5.4":     { D:  60.3, t:  5.4, grade: 'C250' },
+  "60.3x4.5":     { D:  60.3, t:  4.5, grade: 'C250' },
+  "60.3x3.6":     { D:  60.3, t:  3.6, grade: 'C250' },
+  "60.3x2.9":     { D:  60.3, t:  2.9, grade: 'C350' },
+  "60.3x2.3":     { D:  60.3, t:  2.3, grade: 'C350' },
+  "48.3x5.4":     { D:  48.3, t:  5.4, grade: 'C250' },
+  "48.3x4.0":     { D:  48.3, t:  4.0, grade: 'C250' },
+  "48.3x3.2":     { D:  48.3, t:  3.2, grade: 'C250/C350' },
+  "48.3x2.9":     { D:  48.3, t:  2.9, grade: 'C350' },
+  "48.3x2.3":     { D:  48.3, t:  2.3, grade: 'C350' },
+  "42.4x4.9":     { D:  42.4, t:  4.9, grade: 'C250' },
+  "42.4x4.0":     { D:  42.4, t:  4.0, grade: 'C250' },
+  "42.4x3.2":     { D:  42.4, t:  3.2, grade: 'C250' },
+  "42.4x2.6":     { D:  42.4, t:  2.6, grade: 'C350' },
+  "42.4x2.0":     { D:  42.4, t:  2.0, grade: 'C350' },
+  "33.7x4.5":     { D:  33.7, t:  4.5, grade: 'C250' },
+  "33.7x4.0":     { D:  33.7, t:  4.0, grade: 'C250' },
+  "33.7x3.2":     { D:  33.7, t:  3.2, grade: 'C250' },
+  "33.7x2.6":     { D:  33.7, t:  2.6, grade: 'C350' },
+  "33.7x2.0":     { D:  33.7, t:  2.0, grade: 'C350' },
+  "26.9x4.0":     { D:  26.9, t:  4.0, grade: 'C250' },
+  "26.9x3.2":     { D:  26.9, t:  3.2, grade: 'C250' },
+  "26.9x2.6":     { D:  26.9, t:  2.6, grade: 'C250' },
+  "26.9x2.3":     { D:  26.9, t:  2.3, grade: 'C350' },
+  "26.9x2.0":     { D:  26.9, t:  2.0, grade: 'C350' },
+  "21.3x3.6":     { D:  21.3, t:  3.6, grade: 'C250' },
+  "21.3x3.2":     { D:  21.3, t:  3.2, grade: 'C250' },
+  "21.3x2.6":     { D:  21.3, t:  2.6, grade: 'C250/C350' },
+  "21.3x2.0":     { D:  21.3, t:  2.0, grade: 'C350' },
 };
+
+// chs-availability (2026-06-12) — Austube Mills Product Availability Guide
+// (Apr 2018, pipe and tube structural products), CHS pages 3–5. This is the
+// authoritative list of what can actually be BOUGHT, so the CHS pickers offer
+// only these sizes; CHS_DB above keeps the full DCT geometry so legacy saves
+// still render. Keyed by AS/NZS 1163 grade:
+//   C350 — Extra Light (XL) + Light (L) pipe, guide p3.
+//   C250 — Medium (M) + Heavy (H) + Extra Heavy (XH) pipe, guide p4–5
+//          (dual specified AS 1074 / AS/NZS 1163 C250L0).
+// `dn` is the guide's nominal size + wall class (e.g. '80 L' = DN80 Light).
+// `fin` maps finish → availability mark: 'S' ex-stock ✓, 'R' ex-rolling only,
+// 'M' ex-rolling + minimum order quantity. Finishes absent from `fin` are not
+// offered for that size. Finish ids: clear / oiled / hdg (hot-dip gal to
+// AS/NZS 4680) / dgp (DuraGalPlus, AS/NZS 4792 ZB 100/100).
+const CHS_AVAIL = {
+  C350: [
+    { key: '165.1x3.5', dn: '150 L',  fin: { oiled: 'S', hdg: 'M' } },
+    { key: '165.1x3.0', dn: '150 XL', fin: { oiled: 'M', hdg: 'M' } },
+    { key: '139.7x3.5', dn: '125 L',  fin: { oiled: 'S', hdg: 'M' } },
+    { key: '139.7x3.0', dn: '125 XL', fin: { oiled: 'M', hdg: 'M' } },
+    { key: '114.3x3.6', dn: '100 L',  fin: { clear: 'S', hdg: 'M', dgp: 'M' } },
+    { key: '114.3x3.2', dn: '100 XL', fin: { clear: 'M', hdg: 'M' } },
+    { key: '101.6x3.2', dn: '90 L',   fin: { clear: 'S', hdg: 'M', dgp: 'M' } },
+    { key: '101.6x2.6', dn: '90 XL',  fin: { clear: 'M', hdg: 'M' } },
+    { key: '88.9x3.2',  dn: '80 L',   fin: { clear: 'S', hdg: 'M', dgp: 'M' } },
+    { key: '88.9x2.6',  dn: '80 XL',  fin: { clear: 'M', hdg: 'M', dgp: 'M' } },
+    { key: '76.1x3.2',  dn: '65 L',   fin: { clear: 'M', dgp: 'M' } },
+    { key: '76.1x2.3',  dn: '65 XL',  fin: { clear: 'M', dgp: 'M' } },
+    { key: '60.3x2.9',  dn: '50 L',   fin: { clear: 'S', dgp: 'M' } },
+    { key: '60.3x2.3',  dn: '50 XL',  fin: { clear: 'R', dgp: 'M' } },
+    { key: '48.3x2.9',  dn: '40 L',   fin: { clear: 'S', dgp: 'M' } },
+    { key: '48.3x2.3',  dn: '40 XL',  fin: { clear: 'M', dgp: 'M' } },
+    { key: '42.4x2.6',  dn: '32 L',   fin: { clear: 'S', dgp: 'M' } },
+    { key: '42.4x2.0',  dn: '32 XL',  fin: { clear: 'M', dgp: 'S' } },
+    { key: '33.7x2.6',  dn: '25 L',   fin: { clear: 'S', dgp: 'M' } },
+    { key: '33.7x2.0',  dn: '25 XL',  fin: { clear: 'M', dgp: 'S' } },
+  ],
+  C250: [
+    { key: '165.1x5.4', dn: '150 H',  fin: { oiled: 'S', hdg: 'M' } },
+    { key: '165.1x5.0', dn: '150 M',  fin: { oiled: 'S', hdg: 'M' } },
+    { key: '139.7x5.4', dn: '125 H',  fin: { oiled: 'S', hdg: 'M' } },
+    { key: '139.7x5.0', dn: '125 M',  fin: { oiled: 'S', hdg: 'M' } },
+    { key: '114.3x5.4', dn: '100 H',  fin: { clear: 'S', hdg: 'M' } },
+    { key: '114.3x4.5', dn: '100 M',  fin: { clear: 'S', hdg: 'M', dgp: 'M' } },
+    { key: '101.6x5.0', dn: '90 H',   fin: { clear: 'S', hdg: 'M' } },
+    { key: '101.6x4.0', dn: '90 M',   fin: { clear: 'S', hdg: 'M', dgp: 'M' } },
+    { key: '88.9x5.9',  dn: '80 XH',  fin: { clear: 'S' } },
+    { key: '88.9x5.0',  dn: '80 H',   fin: { clear: 'S', hdg: 'M' } },
+    { key: '88.9x4.0',  dn: '80 M',   fin: { clear: 'S', hdg: 'M', dgp: 'M' } },
+    { key: '76.1x5.9',  dn: '65 XH',  fin: { clear: 'S' } },
+    { key: '76.1x4.5',  dn: '65 H',   fin: { clear: 'S', hdg: 'M' } },
+    { key: '76.1x3.6',  dn: '65 M',   fin: { clear: 'S', hdg: 'M', dgp: 'M' } },
+    { key: '60.3x5.4',  dn: '50 XH',  fin: { clear: 'S' } },
+    { key: '60.3x4.5',  dn: '50 H',   fin: { clear: 'S', hdg: 'M' } },
+    { key: '60.3x3.6',  dn: '50 M',   fin: { clear: 'S', hdg: 'M', dgp: 'M' } },
+    { key: '48.3x5.4',  dn: '40 XH',  fin: { clear: 'S' } },
+    { key: '48.3x4.0',  dn: '40 H',   fin: { clear: 'S', hdg: 'M' } },
+    { key: '48.3x3.2',  dn: '40 M',   fin: { clear: 'S', dgp: 'M' } },
+    { key: '42.4x4.0',  dn: '32 H',   fin: { clear: 'S', hdg: 'M' } },
+    { key: '42.4x3.2',  dn: '32 M',   fin: { clear: 'S', dgp: 'M' } },
+    { key: '33.7x4.0',  dn: '25 H',   fin: { clear: 'S' } },
+    { key: '33.7x3.2',  dn: '25 M',   fin: { clear: 'S', dgp: 'M' } },
+  ],
+};
+
+const CHS_FINISH_LABELS = { clear: 'Clear', oiled: 'Oiled', hdg: 'Hot-dip gal', dgp: 'DuraGalPlus' };
+const CHS_GRADES = [{ v: 'C350', l: 'C350L0' }, { v: 'C250', l: 'C250L0' }];
+
+// Guide-available size keys for a grade, in catalogue order (descending OD).
+function chsAvailSizes(grade) {
+  return (CHS_AVAIL[grade] || []).map(r => r.key);
+}
+function chsAvailEntry(grade, key) {
+  return (CHS_AVAIL[grade] || []).find(r => r.key === key) || null;
+}
+// Which grade the guide lists a size under (C350 wins the tie — none exist).
+function chsGradeOfSize(key) {
+  if (chsAvailEntry('C350', key)) return 'C350';
+  if (chsAvailEntry('C250', key)) return 'C250';
+  return null;
+}
+// Dropdown label: "88.9x3.2 · 80 L". Falls back to the bare key for legacy
+// sizes that aren't in the availability guide.
+function chsSizeLabel(grade, key) {
+  const e = chsAvailEntry(grade, key) || chsAvailEntry(grade === 'C350' ? 'C250' : 'C350', key);
+  return e ? (key + ' · ' + e.dn) : key;
+}
+// [{v, l}] finish options for a size — the label carries the supply route so
+// the engineer can see ex-stock vs ex-rolling (R) vs ex-rolling + MOQ (M).
+function chsFinishOptions(grade, key) {
+  const e = chsAvailEntry(grade, key);
+  if (!e) return [];
+  return Object.keys(e.fin).map(f => {
+    const mark = e.fin[f];
+    const tag = mark === 'R' ? ' (ex-rolling)' : mark === 'M' ? ' (MOQ)' : '';
+    return { v: f, l: (CHS_FINISH_LABELS[f] || f) + tag };
+  });
+}
+// pref if it is offered for this grade+size, else the first offered finish,
+// else '' (size not in the guide).
+function chsValidFinish(grade, key, pref) {
+  const opts = chsFinishOptions(grade, key);
+  if (!opts.length) return '';
+  if (pref && opts.some(o => o.v === pref)) return pref;
+  return opts[0].v;
+}
 
 // AS/NZS 3679.1 Equal Angles (EA). a = leg, t = thickness, r1 = root radius.
 // Source: AISC Design Capacity Tables Vol 1, Tables 3.1-9(A)-1 and 3.1-9(A)-2.
@@ -225,6 +428,12 @@ const EA_DB = {
   "EA40x40x6":    { a:  40, t:  6, r1:  5 },
   "EA40x40x5":    { a:  40, t:  5, r1:  5 },
   "EA40x40x3":    { a:  40, t:  3, r1:  5 },
+  "EA30x30x6":    { a:  30, t:  6, r1:  5 },
+  "EA30x30x5":    { a:  30, t:  5, r1:  5 },
+  "EA30x30x3":    { a:  30, t:  3, r1:  5 },
+  "EA25x25x6":    { a:  25, t:  6, r1:  5 },
+  "EA25x25x5":    { a:  25, t:  5, r1:  5 },
+  "EA25x25x3":    { a:  25, t:  3, r1:  5 },
 };
 
 // AS/NZS 3679.1 Unequal Angles (UA). a = long leg, b = short leg.

@@ -4,19 +4,38 @@
 // Extracted from dev/index.html lines 19031-19752 (2026-05-02 modular split)
 
 // ---- DISPATCH HOOK ----
+// Free rotation for the to-scale fixings (bolt2 / screw / stud): the drawers
+// build the glyph axis-aligned (orientation presets + bearing/clamp detection),
+// then this wrapper spins the finished glyph rigidly about the anchor (ent.u,
+// ent.v) by ent.rot — the same convention as mem2 (degrees, CCW in world
+// coords). Canvas y is flipped vs world v, so a world-CCW spin is a NEGATIVE
+// canvas angle. The vector-PDF shim (44) implements save/translate/rotate, so
+// exports match the screen.
+function v25FixingRotWrap(blk, ent, drawFn, cs) {
+  const deg = Number(ent.rot) || 0;
+  if (!deg) { drawFn(blk, ent, cs); return; }
+  const p = real2px(blk, ent.u, ent.v);
+  ctx.save();
+  ctx.translate(p.x, p.y);
+  ctx.rotate(-deg * Math.PI / 180);
+  ctx.translate(-p.x, -p.y);
+  try { drawFn(blk, ent, cs); } finally { ctx.restore(); }
+}
+
 // Called from drawEnt2D for the new entity types.
 function v25DrawEnt(blk, ent, cs) {
   if (ent.type === 'frame') { drawFrame2D(blk, ent, cs); return true; }
   if (ent.type === 'mat') { drawMat2D(blk, ent, cs); return true; }
   if (ent.type === 'blockWall') { drawBlockWall2D(blk, ent, cs); return true; }
   if (ent.type === 'anchor') { drawAnchor2D(blk, ent, cs); return true; }
-  if (ent.type === 'bolt2' && typeof drawBolt2D === 'function') { drawBolt2D(blk, ent, cs); return true; }
-  if (ent.type === 'screw' && typeof drawScrew2D === 'function') { drawScrew2D(blk, ent, cs); return true; }
-  if (ent.type === 'stud' && typeof drawStud2D === 'function') { drawStud2D(blk, ent, cs); return true; }
+  if (ent.type === 'bolt2' && typeof drawBolt2D === 'function') { v25FixingRotWrap(blk, ent, drawBolt2D, cs); return true; }
+  if (ent.type === 'screw' && typeof drawScrew2D === 'function') { v25FixingRotWrap(blk, ent, drawScrew2D, cs); return true; }
+  if (ent.type === 'stud' && typeof drawStud2D === 'function') { v25FixingRotWrap(blk, ent, drawStud2D, cs); return true; }
   if (ent.type === 'reoBar') { drawReoBar2D(blk, ent, cs); return true; }
   if (ent.type === 'mesh') { drawMesh2D(blk, ent, cs); return true; }
   if (ent.type === 'leader2') { drawLeader2D(blk, ent, cs); return true; }
   if (ent.type === 'mem2') { drawMem2D(blk, ent, cs); return true; }
+  if (ent.type === 'clt' && typeof drawClt2D === 'function') { drawClt2D(blk, ent, cs); return true; }
   if (ent.type === 'lineSet' && typeof drawLineSet2D === 'function') { drawLineSet2D(blk, ent, cs); return true; }
   if (ent.type === 'txtBox' && typeof drawTxtBox2D === 'function') { drawTxtBox2D(blk, ent, cs); return true; }
   if (ent.type === 'noteBox' && typeof drawNoteBox2D === 'function') { drawNoteBox2D(blk, ent, cs); return true; }
@@ -72,12 +91,29 @@ function getPaletteDef2D() {
         { id: 'v25-rhs-2d', kind: 'member', label: 'RHS', sub: lastUsedSection.rhs || '100x50x5', icon: 'icon-rhs',
           onClick: () => v25PickAndSetMember('rhs'),
           picker: { kind: 'rhs' } },
+        { id: 'v25-chs-2d', kind: 'member', label: 'CHS', sub: lastUsedSection.chs || '88.9x3.2', icon: 'icon-chs', chord: 'M-O',
+          onClick: () => v25PickAndSetMember('chs'),
+          picker: { kind: 'chs' } },
+        { id: 'v25-ea-2d', kind: 'member', label: 'EA',  sub: lastUsedSection.ea  || 'EA75x75x6', icon: 'icon-ea', chord: 'M-E',
+          onClick: () => v25PickAndSetMember('ea'),
+          picker: { kind: 'ea' } },
+        { id: 'v25-ua-2d', kind: 'member', label: 'UA',  sub: lastUsedSection.ua  || 'UA100x75x8', icon: 'icon-ua', chord: 'M-A',
+          onClick: () => v25PickAndSetMember('ua'),
+          picker: { kind: 'ua' } },
       ]},
-      { title: 'Walls (W-)', tiles: [
-        { id: 'v25-wall-90',  kind: 'tool', label: '90 BLK',  icon: 'icon-rect', chord: 'W-9', onClick: () => v25SetWallBlock('90') },
-        { id: 'v25-wall-140', kind: 'tool', label: '140 BLK', icon: 'icon-rect', chord: 'W-1', onClick: () => v25SetWallBlock('140') },
-        { id: 'v25-wall-190', kind: 'tool', label: '190 BLK', icon: 'icon-rect', chord: 'W-2', onClick: () => v25SetWallBlock('190') },
-        { id: 'v25-wall-290', kind: 'tool', label: '290 BLK', icon: 'icon-rect', chord: 'W-3', onClick: () => v25SetWallBlock('290') },
+      { title: 'Timber Members', tiles: [
+        { id: 'v25-glt-2d', kind: 'member', label: 'GLT', sub: lastUsedSection.glt || '165 × 480', icon: 'icon-glt', chord: 'M-G',
+          onClick: () => v25PickAndSetMember('glt'),
+          picker: { kind: 'glt' } },
+        { id: 'd-clt', kind: 'member', label: 'CLT', sub: lastUsedSection.clt || (typeof CLT_DEFAULT_PANEL !== 'undefined' ? CLT_DEFAULT_PANEL : 'NX 5-150'), icon: 'icon-clt-edge', chord: 'M-T',
+          onClick: () => v25ArmClt(),
+          picker: { kind: 'clt' } },
+      ]},
+      { title: 'Walls', tiles: [
+        { id: 'v25-wall-90',  kind: 'tool', label: '90 BLK',  icon: 'icon-rect', onClick: () => v25SetWallBlock('90') },
+        { id: 'v25-wall-140', kind: 'tool', label: '140 BLK', icon: 'icon-rect', onClick: () => v25SetWallBlock('140') },
+        { id: 'v25-wall-190', kind: 'tool', label: '190 BLK', icon: 'icon-rect', onClick: () => v25SetWallBlock('190') },
+        { id: 'v25-wall-290', kind: 'tool', label: '290 BLK', icon: 'icon-rect', onClick: () => v25SetWallBlock('290') },
       ]},
       { title: 'Materials (H-)', tiles: [
         { id: 'v25-mat-conc',  kind: 'tool', label: 'Concrete',    materialPreview: 'concrete',    icon: 'icon-hatch', chord: 'H-C', onClick: () => v25SetMaterial('concrete') },
@@ -168,6 +204,17 @@ function v25SetTool(t) {
 // from scratch). The 72c-v25-bolt picker writes v25State.bolt* directly; these
 // module-level latches keep the last choice so re-arming the tool restores it.
 let lastBoltOrient = 'end', lastBoltSize = 'M20', lastBoltGrade = '8.8', lastBoltCat = 'S';
+// GLT timber-member latches — persist grade + grain knobs across v25SetTool
+// resets (which rebuild v25State from scratch), exactly like the bolt latches.
+let lastGltGrade = (typeof GLT_DEFAULT_GRADE !== 'undefined' ? GLT_DEFAULT_GRADE : 'M45');
+let lastGltGrain = (typeof GLT_GRAIN_DEFAULTS === 'object')
+  ? { size: GLT_GRAIN_DEFAULTS.size, spacing: GLT_GRAIN_DEFAULTS.spacing, opacity: GLT_GRAIN_DEFAULTS.opacity }
+  : { size: 50, spacing: 50, opacity: 35 };
+let lastGltEdge = (typeof GLT_EDGE_DEFAULT === 'number') ? GLT_EDGE_DEFAULT : 50;
+// chs-availability — CHS grade + finish latches (Austube availability guide,
+// 02-data-sections.js CHS_AVAIL). Persist across v25SetTool resets exactly
+// like the bolt/GLT latches; grade 350 is the arming default.
+let lastChsGrade = 'C350', lastChsFinish = '';
 let v25State = { polyPts: [], dragStart: null, boltOrient: lastBoltOrient, boltSize: lastBoltSize, boltGrade: lastBoltGrade, boltCat: lastBoltCat };
 
 function v25SetMember(type, section, aspect) {
@@ -176,6 +223,25 @@ function v25SetMember(type, section, aspect) {
   v25State.section = section;
   v25State.aspect = aspect || v25State.aspect || 'elev';
   lastUsedSection[type] = section;
+  // GLT carries a grade + grain knobs in v25State so the placement preview and
+  // the placed entity reflect the last choices (latched module-side above).
+  if (type === 'glt') {
+    v25State.grade = lastGltGrade;
+    v25State.grainSize = lastGltGrain.size;
+    v25State.grainSpacing = lastGltGrain.spacing;
+    v25State.grainOpacity = lastGltGrain.opacity;
+    v25State.edgeWeight = lastGltEdge;
+  }
+  // chs-availability — CHS carries a grade + finish in v25State so the options
+  // bar can list grade-filtered guide sizes and per-size finishes. The grade is
+  // inferred from the armed size when the guide knows it (so a latched C250
+  // size reopens on C250), else the latch (arming default C350).
+  if (type === 'chs') {
+    v25State.chsGrade = (typeof chsGradeOfSize === 'function' && chsGradeOfSize(section)) || lastChsGrade || 'C350';
+    lastChsGrade = v25State.chsGrade;
+    v25State.chsFinish = (typeof chsValidFinish === 'function') ? chsValidFinish(v25State.chsGrade, section, lastChsFinish) : '';
+    lastChsFinish = v25State.chsFinish;
+  }
   // Restore the orientation this member type was last placed at (web-horiz,
   // toes-up, …) so re-picking the tile reopens where the user left off. Pure
   // mutator — no bar rebuild / render here; the v25UpdateOptionsBar below does
@@ -202,8 +268,9 @@ const V25_MEM_DEFAULTS = {
   shs: '89x5',
   rhs: '150x100x4',
   wb:  '700WB130',
+  glt: '165 × 480', // ASH MASSLAM GLT (mirrors GLT_DEFAULT_SIZE in 02h-data-glt.js)
   pfc: '200PFC 22.9',
-  chs: '88.9x5.9',
+  chs: '88.9x3.2', // 80 L — C350L0 Light pipe, clear finish ex-stock (Austube guide p3)
   ea:  'EA75x75x6',
   ua:  'UA100x75x8',
 };
@@ -216,6 +283,33 @@ function v25PickAndSetMember(type) {
   const def = (typeof lastUsedSection !== 'undefined' && lastUsedSection[type])
             || V25_MEM_DEFAULTS[type] || '';
   if (def) v25SetMember(type, def);
+}
+// Stamp the active GLT placement state (grade + grain knobs from v25State) onto
+// a new mem2 props object, so the placed timber member matches the cursor ghost.
+// No-op for every other member type.
+function v25GltApplyPlacementState(props) {
+  if (!props || props.memberType !== 'glt') return props;
+  props.grade = (typeof v25State === 'object' && v25State.grade)
+    || (typeof GLT_DEFAULT_GRADE !== 'undefined' ? GLT_DEFAULT_GRADE : 'M45');
+  if (typeof v25State === 'object') {
+    if (typeof v25State.grainSize    === 'number') props.grainSize    = v25State.grainSize;
+    if (typeof v25State.grainSpacing === 'number') props.grainSpacing = v25State.grainSpacing;
+    if (typeof v25State.grainOpacity === 'number') props.grainOpacity = v25State.grainOpacity;
+    if (typeof v25State.edgeWeight   === 'number') props.edgeWeight   = v25State.edgeWeight;
+  }
+  return props;
+}
+// chs-availability — stamp the active CHS grade + finish (v25State, seeded by
+// v25SetMember from the Austube availability latches) onto a new mem2 props
+// object, so the placed pipe records what was actually specified. No-op for
+// every other member type.
+function v25ChsApplyPlacementState(props) {
+  if (!props || props.memberType !== 'chs') return props;
+  if (typeof v25State === 'object') {
+    if (v25State.chsGrade)  props.grade  = v25State.chsGrade;
+    if (v25State.chsFinish) props.finish = v25State.chsFinish;
+  }
+  return props;
 }
 function v25SetMaterial(material) {
   v25Last.material = material;
@@ -264,10 +358,30 @@ function v25SetMesh(meshKey) {
   v25Last.mesh = meshKey;
   v25SetTool('v25-mesh');
 }
-function v25SetLine(lw, ls) {
+function v25SetLine(lw, ls, lineMode) {
   v25Last.lineLw = lw;
   v25Last.lineLs = ls;
   v25SetTool('v25-line');
+  // 'single' = one straight segment (keyboard 'l'); 'poly' = multi-vertex
+  // polyline (keyboard 'p' / the palette tiles, which default to poly).
+  // v25SetTool wiped v25State, so set the mode after arming the tool.
+  v25State.lineMode = (lineMode === 'single') ? 'single' : 'poly';
+}
+
+// Stamp the active linework style (v25Last.line* mirrors) onto a freshly
+// created lineSet entity so options-bar / palette changes made BEFORE drawing
+// carry through. Only non-null fields are applied, leaving the renderer's
+// own fallbacks for anything the user never touched.
+function v25StampLineStyle(ent) {
+  if (!ent || typeof v25Last !== 'object') return ent;
+  if (v25Last.lineLwLevel != null)   ent.lwLevel = v25Last.lineLwLevel;
+  if (v25Last.lineColour != null)    ent.colour = v25Last.lineColour;
+  if (v25Last.lineOpacity != null)   ent.opacity = v25Last.lineOpacity;
+  if (v25Last.lineCap != null)       ent.cap = v25Last.lineCap;
+  if (v25Last.lineJoin != null)      ent.join = v25Last.lineJoin;
+  if (v25Last.lineArrowStart != null) ent.arrowStart = v25Last.lineArrowStart;
+  if (v25Last.lineArrowEnd != null)   ent.arrowEnd = v25Last.lineArrowEnd;
+  return ent;
 }
 
 // Click dispatch — called from the existing canvas mousedown (after the
@@ -278,6 +392,9 @@ function v25TryHandleClick(blk, cu, cv, e) {
 
   if (tool === 'v25-notebox') return (typeof nbToolClick === 'function') ? nbToolClick(blk, cu, cv, e) : false;
   if (tool === 'v25-note') return (typeof nbTextToolClick === 'function') ? nbTextToolClick(blk, cu, cv, e) : false;
+  // v25-textplain: plain text, no outline (keyboard 'w'). Same plain-box
+  // placement as v25-note; nbTextToolCommit forces boxed:false for this tool.
+  if (tool === 'v25-textplain') return (typeof nbTextToolClick === 'function') ? nbTextToolClick(blk, cu, cv, e) : false;
   if (tool === 'v25-stiffener') return (typeof v25PlaceStiffener === 'function') ? v25PlaceStiffener(blk, cu, cv, e) : false;
 
   if (tool === 'v25-frame') {
@@ -409,12 +526,67 @@ function v25TryHandleClick(blk, cu, cv, e) {
         const ent = v25Add('blockWall', {
           blockKey: v25Last.blockThk, wallMode: 'sec',
           u: a.u, v: a.v, lengthMM: length, rot,
-          endBreak: v25Last.wallEnd || 'start', grouted: !!v25Last.wallGrouted,
+          endBreak: v25Last.wallEnd || 'start',
+          ...((typeof v25WallHatchFields === 'function') ? v25WallHatchFields(v25Last) : { grouted: !!v25Last.wallGrouted }),
         });
         if (ent) {
           v25Selected = [ent.id];
           if (typeof v25UpdateInspector === 'function') v25UpdateInspector();
         }
+      }
+      v25State.dragStart = null;
+    }
+    return true;
+  }
+
+  if (tool === 'v25-clt-edge') {
+    // Two-click EDGE/SECTION strip — like the blockwork section strip. First
+    // click = panel face start, second = far end. Thickness (across the strip)
+    // is the panel layup total, drawn to scale and centred on the line. Strict
+    // H/V ortho by default (Shift = free angle). Start end carries the section
+    // break-line by default (the panel continues past the detail).
+    if (!v25State.dragStart) {
+      v25State.dragStart = { u: cu, v: cv, blk };
+    } else {
+      const a = v25State.dragStart;
+      let eu = cu, ev = cv;
+      if (!(typeof shiftHeld !== 'undefined' && shiftHeld)) {
+        const o = v25OrthoSnap(a.u, a.v, cu, cv); eu = o.u; ev = o.v;
+      }
+      const dx = eu - a.u, dy = ev - a.v;
+      const length = Math.hypot(dx, dy);
+      const rot = Math.atan2(dy, dx) * 180 / Math.PI;
+      if (length > 5) {
+        const props = Object.assign(
+          (typeof cltDefaults === 'function') ? cltDefaults() : {},
+          { mode: 'edge', u: a.u, v: a.v, lengthMM: length, rot: rot, endBreak: 'start' }
+        );
+        const ent = v25Add('clt', props);
+        if (ent) { v25Selected = [ent.id]; if (typeof v25UpdateInspector === 'function') v25UpdateInspector(); }
+      }
+      v25State.dragStart = null;
+    }
+    return true;
+  }
+
+  if (tool === 'v25-clt-plan') {
+    // Two-click FACE/PLAN rectangle (length × width). The visible top lamella
+    // boards run along the chosen box axis (v25Last.cltBoardAxis); the layup is
+    // into the page and not drawn.
+    if (!v25State.dragStart) {
+      v25State.dragStart = { u: cu, v: cv, blk };
+    } else {
+      const a = v25State.dragStart;
+      const u = Math.min(a.u, cu), v = Math.min(a.v, cv);
+      const lengthMM = Math.abs(cu - a.u), widthMM = Math.abs(cv - a.v);
+      if (lengthMM > 5 && widthMM > 5) {
+        const props = Object.assign(
+          (typeof cltDefaults === 'function') ? cltDefaults() : {},
+          { mode: 'plan', u: u, v: v, lengthMM: lengthMM, widthMM: widthMM, rot: 0,
+            boardAxis: (v25Last && v25Last.cltBoardAxis === 'width') ? 'width' : 'length' }
+        );
+        const ent = v25Add('clt', props);
+        if (ent) { v25Selected = [ent.id]; if (typeof v25UpdateInspector === 'function') v25UpdateInspector(); }
       }
       v25State.dragStart = null;
     }
@@ -440,6 +612,8 @@ function v25TryHandleClick(blk, cu, cv, e) {
         roll: v25State.roll || 0,
         aspect: 'sec',
       };
+      v25GltApplyPlacementState(props);
+      v25ChsApplyPlacementState(props);
       const ent = v25Add('mem2', props);
       if (ent) {
         v25Selected = [ent.id];
@@ -483,6 +657,8 @@ function v25TryHandleClick(blk, cu, cv, e) {
           props.endBJoin = { hostId: hitB.ent.id };
           props.endB = 'mitre';
         }
+        v25GltApplyPlacementState(props);
+        v25ChsApplyPlacementState(props);
         const ent = v25Add('mem2', props);
         // V25-layout-overhaul Phase 6.5 — snap on initial placement. If the
         // new member's edges land within the catch zone of an existing
@@ -563,14 +739,27 @@ function v25TryHandleClick(blk, cu, cv, e) {
     // 72j-v25-stud.js). The glyph self-orients via ent.studOrient; section
     // orientations snap the washer underside to a detected plate/member outside
     // face at draw time (v25StudBearingFace), so the placed u,v is just the click.
-    const ent = v25Add('stud', {
-      studSpec: v25State.studSpec
-        || (typeof lastUsedSection !== 'undefined' && lastUsedSection.stud)
-        || (typeof V25_STUD_DEFAULT_SPEC !== 'undefined' ? V25_STUD_DEFAULT_SPEC : 'M16'),
+    const studSize = v25State.studSpec
+      || (typeof lastUsedSection !== 'undefined' && lastUsedSection.stud)
+      || (typeof V25_STUD_DEFAULT_SPEC !== 'undefined' ? V25_STUD_DEFAULT_SPEC : 'M16');
+    const studProps = {
+      studSpec: studSize,
       studOrient: v25State.studOrient
         || (typeof lastUsedOrientation !== 'undefined' && lastUsedOrientation.stud) || 'v-nutT',
       u: cu, v: cv, rot: 0,
-    });
+    };
+    // Stamp the per-size design embedment at placement (anchor-callout-note):
+    // a newly placed M16 starts at 150 so drawing + callout agree. Existing
+    // saved studs (no embedDepth) keep studSectionGeom's zero-regression default.
+    if (typeof V25_STUD_DESIGN_EMBED !== 'undefined' && V25_STUD_DESIGN_EMBED[studSize] != null) {
+      studProps.embedDepth = V25_STUD_DESIGN_EMBED[studSize];
+    }
+    const ent = v25Add('stud', studProps);
+    // Auto-create the chemical-anchor callout on the first stud in this view
+    // (toggle defaults ON; window prop is read directly so there's no TDZ).
+    if ((window.v25AutoAnchorNote !== false) && typeof v25AnchorNoteOnStudPlaced === 'function') {
+      v25AnchorNoteOnStudPlaced(ent);
+    }
     v25Selected = [ent.id];
     if (typeof v25UpdateInspector === 'function') v25UpdateInspector();
     return true;
@@ -633,6 +822,7 @@ function v25TryHandleClick(blk, cu, cv, e) {
         term:  seed.dimTerm  || 'tick',
         prec:  (typeof seed.dimPrec === 'number') ? seed.dimPrec : 0,
         units: seed.dimUnits || 'mm',
+        txtOffset: !!seed.dimTextOffset,   // "beside, past the arrows" label (off by default)
         // Independently-editable line properties (Properties tab); colours stay
         // unset → theme default until the user overrides them.
         dimLw: 0.18, dimLs: 'solid',
@@ -668,22 +858,60 @@ function v25TryHandleClick(blk, cu, cv, e) {
   }
 
   if (tool === 'v25-line') {
-    // Polyline: each click extends. Right-click / Enter / Esc finishes.
-    // V25 — if the user clicks the FIRST vertex (within snap distance), close
-    // the shape and finish — gives the user a proper polygon they can fill.
+    const mode = (v25State && v25State.lineMode === 'single') ? 'single' : 'poly';
+    // SINGLE straight line (keyboard 'l'): first click drops the start, second
+    // click commits a 2-point lineSet, auto-selects it, and returns to the
+    // Select tool so it is immediately editable. Mirrors the two-click frame
+    // pattern. Hold Shift on the second click for a clean 0/45/90° segment.
+    if (mode === 'single') {
+      if (!v25State.dragStart) {
+        v25State.dragStart = { u: cu, v: cv };
+        requestRender();
+        return true;
+      }
+      const a = v25State.dragStart;
+      let eu = cu, ev = cv;
+      if ((typeof shiftHeld !== 'undefined' && shiftHeld) && typeof v25OrthoSnap === 'function') {
+        const o = v25OrthoSnap(a.u, a.v, cu, cv); eu = o.u; ev = o.v;
+      }
+      // Reject a degenerate zero-length line (accidental double-click, or Shift
+      // snapping the second click back onto the start). Stay armed for a fresh
+      // second click — mirrors the two-click guards on the measure / frame /
+      // member tools (0.1 mm threshold).
+      if (Math.hypot(eu - a.u, ev - a.v) <= 0.1) {
+        requestRender();
+        return true;
+      }
+      const ent = v25StampLineStyle(v25Add('lineSet', {
+        pts: [{ u: a.u, v: a.v }, { u: eu, v: ev }],
+        lw: v25Last.lineLw || 0.35,
+        ls: v25Last.lineLs || 'solid',
+        closed: false,
+      }));
+      v25State.dragStart = null;
+      v25Selected = [ent.id];
+      if (typeof v25SetTool === 'function') v25SetTool('select');
+      if (typeof v25UpdateInspector === 'function') v25UpdateInspector();
+      requestRender();
+      return true;
+    }
+    // POLYLINE (keyboard 'p' / palette tiles): each click extends. Right-click /
+    // Enter / Esc finishes. Clicking the FIRST vertex (within snap distance)
+    // closes the shape into a proper polygon the user can fill.
     if (v25State.polyPts.length >= 2) {
       const first = v25State.polyPts[0];
       const cursorPx = real2px(blk, cu, cv);
       const firstPx = real2px(blk, first.u, first.v);
       if (Math.hypot(cursorPx.x - firstPx.x, cursorPx.y - firstPx.y) < 14) {
-        const ent = v25Add('lineSet', {
+        const ent = v25StampLineStyle(v25Add('lineSet', {
           pts: [...v25State.polyPts],
           lw: v25Last.lineLw || 0.35,
           ls: v25Last.lineLs || 'solid',
           closed: true,
-        });
+        }));
         v25State.polyPts = [];
         v25Selected = [ent.id];
+        if (typeof v25SetTool === 'function') v25SetTool('select');
         if (typeof v25UpdateInspector === 'function') v25UpdateInspector();
         return true;
       }
@@ -711,16 +939,17 @@ function v25TryHandleClick(blk, cu, cv, e) {
 // Finish the current v25-line polyline (called from Enter or right-click).
 function v25FinishLineSet() {
   if (tool !== 'v25-line' || v25State.polyPts.length < 2) {
-    v25State.polyPts = []; requestRender(); return;
+    v25State.polyPts = []; v25State.dragStart = null; requestRender(); return;
   }
-  const ent = v25Add('lineSet', {
+  const ent = v25StampLineStyle(v25Add('lineSet', {
     pts: [...v25State.polyPts],
     lw: v25Last.lineLw || 0.35,
     ls: v25Last.lineLs || 'solid',
     closed: false,
-  });
+  }));
   v25State.polyPts = [];
   v25Selected = [ent.id];
+  if (typeof v25SetTool === 'function') v25SetTool('select');
   if (typeof v25UpdateInspector === 'function') v25UpdateInspector();
 }
 
@@ -796,7 +1025,7 @@ function v25DrawPreview(blk, cs) {
   ctx.strokeStyle = colorAlpha(col, 0.55);
   ctx.lineWidth = 1;
   ctx.setLineDash([4, 4]);
-  if (v25State.dragStart && (tool === 'v25-frame' || tool === 'v25-mat' || tool === 'v25-wall' || tool === 'v25-mesh')) {
+  if (v25State.dragStart && (tool === 'v25-frame' || tool === 'v25-mat' || tool === 'v25-wall' || tool === 'v25-mesh' || tool === 'v25-clt-plan')) {
     const a = v25State.dragStart;
     const u = Math.min(a.u, cu), v = Math.min(a.v, cv);
     const w = Math.abs(cu - a.u), h = Math.abs(cv - a.v);
@@ -854,7 +1083,8 @@ function v25DrawPreview(blk, cs) {
       const previewEnt = {
         type: 'blockWall', wallMode: 'sec', blockKey: v25Last.blockThk,
         u: a.u, v: a.v, lengthMM: length, rot: Math.atan2(dy, dx) * 180 / Math.PI,
-        endBreak: v25Last.wallEnd || 'start', grouted: !!v25Last.wallGrouted,
+        endBreak: v25Last.wallEnd || 'start',
+        ...((typeof v25WallHatchFields === 'function') ? v25WallHatchFields(v25Last) : { grouted: !!v25Last.wallGrouted }),
         showTag: false, opacity: 0.5, id: -1, _v25: true, _preview: true,
       };
       ctx.save();
@@ -863,6 +1093,28 @@ function v25DrawPreview(blk, cs) {
       ctx.restore();
     }
   }
+  // CLT EDGE-strip ghost — reuse the real drawer so the preview matches the
+  // placed panel (thickness to scale, layup grain). Same H/V-ortho-unless-Shift
+  // as the commit path.
+  if (tool === 'v25-clt-edge' && v25State.dragStart && typeof drawClt2D === 'function') {
+    const a = v25State.dragStart;
+    let eu = cu, ev = cv;
+    if (!(typeof shiftHeld !== 'undefined' && shiftHeld)) {
+      const o = v25OrthoSnap(a.u, a.v, cu, cv); eu = o.u; ev = o.v;
+    }
+    const dx = eu - a.u, dy = ev - a.v;
+    const length = Math.hypot(dx, dy);
+    if (length > 1) {
+      const previewEnt = Object.assign(
+        (typeof cltDefaults === 'function') ? cltDefaults() : {},
+        { type: 'clt', mode: 'edge', u: a.u, v: a.v, lengthMM: length,
+          rot: Math.atan2(dy, dx) * 180 / Math.PI, endBreak: 'start',
+          opacity: 0.5, id: -1, _v25: true, _preview: true }
+      );
+      ctx.save(); ctx.setLineDash([]); drawClt2D(blk, previewEnt, cs); ctx.restore();
+    }
+  }
+
   // v1 V25 plate placement preview retired by architecture-v2 Phase 2. The
   // v2 PlacePlateTool owns ghost-preview rendering; until the Phase 3+
   // Canvas2DRenderer wire-up, the v2 live-render shim (js/v2/ui/live-render.js)
@@ -903,6 +1155,15 @@ function v25DrawPreview(blk, cs) {
   if (v25State.dragStart && (tool === 'v25-anchor' || tool === 'v25-leader')) {
     const a = v25State.dragStart;
     rLine(blk, a.u, a.v, cu, cv);
+  }
+  // Single straight-line rubber band (keyboard 'l' — uses dragStart, not polyPts).
+  if (tool === 'v25-line' && v25State.lineMode === 'single' && v25State.dragStart) {
+    const a = v25State.dragStart;
+    let eu = cu, ev = cv;
+    if ((typeof shiftHeld !== 'undefined' && shiftHeld) && typeof v25OrthoSnap === 'function') {
+      const o = v25OrthoSnap(a.u, a.v, cu, cv); eu = o.u; ev = o.v;
+    }
+    rLine(blk, a.u, a.v, eu, ev);
   }
   if ((tool === 'v25-bar' || tool === 'v25-line') && v25State.polyPts.length) {
     for (let i = 0; i < v25State.polyPts.length - 1; i++) {
@@ -974,15 +1235,23 @@ function v25ActiveTileId() {
   // (The legacy per-thickness "Walls (W-)" tiles stay clickable but are the
   // secondary surface, so they don't carry the active ring.)
   if (tool === 'v25-wall' || tool === 'v25-wall-sec') return 'd-blk-wall';
+  if (tool === 'v25-clt-edge' || tool === 'v25-clt-plan') return 'd-clt';
   if (tool === 'v25-mem' && v25State && v25State.memberType) return 'v25-' + v25State.memberType + '-2d';
   if (tool === 'v25-anchor') return 'v25-anc-' + (v25Last.anchor === 'selftap' ? 'tek' : (v25Last.anchor === 'through' ? 'thru' : v25Last.anchor));
   if (tool === 'v25-bar') return 'v25-bar-' + v25Last.reoBar;
   if (tool === 'v25-bar-dot') return 'v25-bar-dot';
   if (tool === 'v25-mesh') return 'v25-mesh-' + (v25Last.mesh.replace('SL', '').replace('RL', ''));
-  if (tool === 'v25-screw') return 'd-screw';
+  if (tool === 'v25-screw') {
+    // Family-aware: VGS specs light the d-vgs tile, HBS specs d-screw. Same
+    // fallback chain as the placement branch (v25State → lastUsedSection → HBS).
+    const _ss = (v25State && v25State.screwSpec)
+      || (typeof lastUsedSection !== 'undefined' && lastUsedSection.screw) || 'HBSPL8120';
+    return (typeof isVgsSpec === 'function' && isVgsSpec(_ss)) ? 'd-vgs' : 'd-screw';
+  }
   if (tool === 'v25-stud') return 'd-stud';
   if (tool === 'v25-leader') return 'v25-leader';
   if (tool === 'v25-text') return 'v25-text';
+  if (tool === 'v25-textplain') return 'v25-textplain';
   if (tool === 'v25-notebox') return 'v25-notebox';
   if (tool === 'v25-note') return 'v25-note';
   if (tool === 'v25-line') {
@@ -1042,15 +1311,11 @@ function v25InstallChords() {
       { key: '9', label: 'SL92 mesh',   run: () => v25SetMesh('SL92') },
     ],
   };
-  CHORD_BINDINGS.W = {
-    label: 'Walls (Blockwork)',
-    items: [
-      { key: '9', label: '90 series',   run: () => v25SetWallBlock('90') },
-      { key: '1', label: '140 series',  run: () => v25SetWallBlock('140') },
-      { key: '2', label: '190 series',  run: () => v25SetWallBlock('190') },
-      { key: '3', label: '290 series',  run: () => v25SetWallBlock('290') },
-    ],
-  };
+  // W chord (Walls / Blockwork) retired 2026-06-05: the 'w' key now drops a plain
+  // text note (js/42 -> v25-textplain). Blockwork stays reachable via the palette
+  // "Walls" tiles (90/140/190/290 BLK) above. Mirrors the M-chord retirement
+  // (members moved to the palette). Leaving CHORD_BINDINGS.W undefined is what
+  // frees 'w' — the js/57 chord layer only reacts to keys it finds in the table.
   // Extend existing A (annotate) chord with leader
   if (CHORD_BINDINGS.A && CHORD_BINDINGS.A.items) {
     if (!CHORD_BINDINGS.A.items.some(i => i.key === 'L')) {

@@ -325,6 +325,9 @@
         { id: 'v25-note', kind: 'tool', label: 'Text',
           icon: 'icon-text',
           onClick: () => { if (typeof v25SetTool === 'function') v25SetTool('v25-note'); } },
+        { id: 'v25-textplain', kind: 'tool', label: 'Plain text',
+          icon: 'icon-text',
+          onClick: () => { if (typeof v25SetTool === 'function') v25SetTool('v25-textplain'); } },
         { id: 'v25-leader', kind: 'tool', label: 'Leader',
           icon: 'icon-note', onClick: () => v25SetTool('v25-leader') },
         { id: 'd-text', kind: 'tool', label: 'Text',
@@ -334,7 +337,7 @@
         // Order = user's frequency-of-use, most → least:
         // Row 1: UB · PFC · SHS · RHS
         // Row 2: CHS · EA · UA · UC
-        // Row 3: WB · BOLT · BOLT GRP · PLATE
+        // Row 3: WB · GLT · BOLT · BOLT GRP · PLATE
         { id: 'v25-ub-2d', kind: 'member', label: 'UB',
           sub: 'UB', icon: 'icon-ub',
           onClick: () => v25PickAndSetMember('ub'),
@@ -351,15 +354,18 @@
           sub: 'RHS', icon: 'icon-rhs',
           onClick: () => v25PickAndSetMember('rhs'),
           picker: { kind: 'rhs' } },
-        { id: 'd-chs', kind: 'soon', label: 'CHS',
-          sub: 'CHS', icon: 'icon-chs', soonTag: 'soon',
-          soonNote: 'CHS drawing — coming in a follow-on build.' },
-        { id: 'd-ea', kind: 'soon', label: 'EA',
-          sub: 'EA', icon: 'icon-ea', soonTag: 'soon',
-          soonNote: 'Equal Angle drawing — coming in a follow-on build.' },
-        { id: 'd-ua', kind: 'soon', label: 'UA',
-          sub: 'UA', icon: 'icon-ua', soonTag: 'soon',
-          soonNote: 'Unequal Angle drawing — coming in a follow-on build.' },
+        { id: 'v25-chs-2d', kind: 'member', label: 'CHS',
+          sub: 'CHS', icon: 'icon-chs',
+          onClick: () => v25PickAndSetMember('chs'),
+          picker: { kind: 'chs' } },
+        { id: 'v25-ea-2d', kind: 'member', label: 'EA',
+          sub: 'EA', icon: 'icon-ea',
+          onClick: () => v25PickAndSetMember('ea'),
+          picker: { kind: 'ea' } },
+        { id: 'v25-ua-2d', kind: 'member', label: 'UA',
+          sub: 'UA', icon: 'icon-ua',
+          onClick: () => v25PickAndSetMember('ua'),
+          picker: { kind: 'ua' } },
         { id: 'v25-uc-2d', kind: 'member', label: 'UC',
           sub: 'UC', icon: 'icon-uc',
           onClick: () => v25PickAndSetMember('uc'),
@@ -368,6 +374,14 @@
           sub: 'WB', icon: 'icon-ub',
           onClick: () => v25PickAndSetMember('wb'),
           picker: { kind: 'wb' } },
+        { id: 'v25-glt-2d', kind: 'member', label: 'GLT',
+          sub: 'GLT', icon: 'icon-glt',
+          onClick: () => v25PickAndSetMember('glt'),
+          picker: { kind: 'glt' } },
+        { id: 'd-clt', kind: 'member', label: 'CLT',
+          sub: 'CLT', icon: 'icon-clt-edge',
+          onClick: () => { if (typeof v25ArmClt === 'function') v25ArmClt(); },
+          picker: { kind: 'clt' } },
         { id: 'd-bolt', kind: 'tool', label: 'Bolts',
           sub: 'BOLT', icon: 'icon-bolt',
           onClick: () => {
@@ -391,6 +405,20 @@
               v25PickAndSetScrew(lastUsedSection.screw || 'HBSPL8120');
             } else if (typeof setStatus === 'function') {
               setStatus('HBS screw: switch to 2D paper-space mode to place (3D coming soon)');
+            }
+          } },
+        { id: 'd-vgs', kind: 'tool', label: 'Screw',
+          sub: 'VGS', icon: 'icon-vgs',
+          onClick: () => {
+            // 2D mode → V25 VGS fully-threaded timber-screw fixing (same 'screw'
+            //   entity + tool as HBS — the 'VGS…' spec id selects the family,
+            //   02j catalogue) via v25PickAndSetScrew (js/72i-v25-screw.js).
+            //   3D-mode screw is a planned follow-on, so other modes just hint.
+            if (sheetMode === '2d' && typeof v25PickAndSetScrew === 'function') {
+              v25PickAndSetScrew((typeof lastUsedSection !== 'undefined' && lastUsedSection.vgs)
+                || (typeof V25_VGS_DEFAULT_SPEC !== 'undefined' ? V25_VGS_DEFAULT_SPEC : 'VGS11300'));
+            } else if (typeof setStatus === 'function') {
+              setStatus('VGS screw: switch to 2D paper-space mode to place (3D coming soon)');
             }
           } },
         { id: 'd-stud', kind: 'tool', label: 'Stud',

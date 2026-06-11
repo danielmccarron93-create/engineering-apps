@@ -13,10 +13,12 @@
 // ============================================================
 
 /**
- * Retrieve a ScrewSpec by its catalogue ID (e.g. "HBSPL12200").
- * Returns the spec object, or null if not found.
+ * Retrieve a ScrewSpec by its catalogue ID (e.g. "HBSPL12200" or "VGS11300").
+ * Resolves across every screw-family catalogue: HBS plate screws (02c) and
+ * VGS fully-threaded screws (02j). Returns the spec object, or null.
  */
 function getScrewSpec(screwId) {
+  if (typeof VGS_SCREWS === 'object' && VGS_SCREWS[screwId]) return VGS_SCREWS[screwId];
   return HBS_PLATE_SCREWS[screwId] || null;
 }
 

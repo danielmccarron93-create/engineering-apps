@@ -57,13 +57,62 @@ function _pickerItemsFor(kind) {
     return { grouped: false, flat: Object.keys(RHS_DB || {}) };
   }
   if (kind === 'chs') {
-    return { grouped: false, flat: Object.keys(CHS_DB || {}) };
+    // chs-availability (2026-06-12) — list only the sizes purchasable per the
+    // Austube Mills availability guide (CHS_AVAIL, 02-data-sections.js),
+    // grouped by grade so the two product families read as series. Choosing a
+    // size drags the member's grade with it (see the options-bar applySel).
+    if (typeof CHS_AVAIL === 'object' && CHS_AVAIL && CHS_AVAIL.C350) {
+      const groups = [
+        ['C350L0 — Light / Extra Light', CHS_AVAIL.C350.map(function (r) { return r.key; })],
+        ['C250L0 — Medium / Heavy / Extra Heavy', CHS_AVAIL.C250.map(function (r) { return r.key; })],
+      ];
+      return { grouped: true, groups: groups, flat: groups[0][1].concat(groups[1][1]) };
+    }
+    // Fallback (availability data missing): full DCT catalogue grouped by OD.
+    const names = Object.keys(CHS_DB || {});
+    const byOD = {};
+    names.forEach(function (n) {
+      const od = n.split('x')[0];
+      if (!byOD[od]) byOD[od] = [];
+      byOD[od].push(n);
+    });
+    const groups = Object.keys(byOD)
+      .sort(function (a, b) { return parseFloat(b) - parseFloat(a); })
+      .map(function (od) { return [od + ' OD', byOD[od]]; });
+    return { grouped: groups.length > 0, groups: groups, flat: names };
   }
-  if (kind === 'ea') {
-    return { grouped: false, flat: Object.keys(EA_DB || {}) };
+  if (kind === 'ea' || kind === 'ua') {
+    // Group by leg pair ("EA100x100", "UA150x90", …) so each leg size reads
+    // as one series with its thicknesses beneath.
+    const dbS = kind === 'ea' ? (EA_DB || {}) : (UA_DB || {});
+    const names = Object.keys(dbS);
+    const byLeg = {};
+    names.forEach(function (n) {
+      const leg = n.replace(/x\d+(\.\d+)?$/, '');
+      if (!byLeg[leg]) byLeg[leg] = [];
+      byLeg[leg].push(n);
+    });
+    const groups = Object.keys(byLeg).map(function (leg) { return [leg, byLeg[leg]]; });
+    return { grouped: groups.length > 0, groups: groups, flat: names };
   }
-  if (kind === 'ua') {
-    return { grouped: false, flat: Object.keys(UA_DB || {}) };
+  if (kind === 'glt') {
+    // ASH MASSLAM GLT sizes are width × depth ("any width with any depth").
+    // Group the picker by width so the long depth list stays navigable.
+    const names = (typeof GLT_SIZES === 'object') ? Object.keys(GLT_SIZES) : [];
+    const widths = (typeof GLT_WIDTHS !== 'undefined') ? GLT_WIDTHS : [];
+    const groups = widths.map(function (b) {
+      return [b + ' wide', names.filter(function (n) { return GLT_SIZES[n].b === b; })];
+    }).filter(function (g) { return g[1].length; });
+    return { grouped: groups.length > 0, groups: groups, flat: names };
+  }
+  if (kind === 'clt') {
+    // NeXTimber CLT panels — group by layer count (3 / 5 / 7 / 9 layer series).
+    const names = (typeof CLT_PANELS === 'object') ? Object.keys(CLT_PANELS) : [];
+    const series = [3, 5, 7, 9];
+    const groups = series.map(function (n) {
+      return [n + '-layer', names.filter(function (k) { return CLT_PANELS[k].layers === n; })];
+    }).filter(function (g) { return g[1].length; });
+    return { grouped: groups.length > 0, groups: groups, flat: names };
   }
   return { grouped: false, flat: [] };
 }
@@ -158,7 +207,11 @@ function _renderPickerList(filter) {
     const r = document.createElement('div');
     r.className = 'picker__item';
     r.dataset.name = name;
-    r.innerHTML = `<span>${name}</span>` + (name === last ? '<span class="star">★</span>' : '');
+    // CLT rows show the catalogue label (with layup) so the two same-designation
+    // NX 3-100 layups are distinguishable; the chosen value stays the raw key.
+    const disp = (s.kind === 'clt' && typeof CLT_PANELS === 'object' && CLT_PANELS[name] && CLT_PANELS[name].label)
+      ? CLT_PANELS[name].label : name;
+    r.innerHTML = `<span>${disp}</span>` + (name === last ? '<span class="star">★</span>' : '');
     r.addEventListener('click', () => _pickerChoose(name));
     rows.push(r);
     return r;
@@ -203,6 +256,8 @@ function _pickerChoose(name) {
     onChoose(name, kind);
   } else if (kind === 'bolt') {
     selectMemberByBolt(name);
+  } else if (kind === 'clt' && typeof v25SetCltPanel === 'function') {
+    v25SetCltPanel(name);
   } else {
     selectMemberBySection(kind, name);
   }

@@ -111,7 +111,39 @@ function drawBlockWall2D(blk, ent, cs) {
 // thickness centred on the line. Drawn in a local frame (lu along the strip,
 // lv across the thickness ±half) so the coursing tilts with an angled strip.
 //   { type:'blockWall', wallMode:'sec', u, v, rot, lengthMM, blockKey,
-//     endBreak:'start'|'end'|'none'|'both', grouted:bool }
+//     endBreak:'start'|'end'|'none'|'both',
+//     groutFill:bool, groutSpacing, groutOpacity, groutWidth,   // stipple fill (default ON)
+//     xHatch:bool,   xHatchSpacing, xHatchOpacity, xHatchWidth } // 45° overlay (default ON)
+// Legacy `grouted:bool` (the old 45° core hatch) maps onto groutFill for old saves.
+
+// Section-fill knobs. Each is a 0–100 slider (Spacing / Opacity / Line-width)
+// surfaced in BOTH the top options bar (placement) and the left inspector
+// (selection), mapped to physical units in the renderer so all three agree.
+// Grout is a fine stipple defaulting ON (reads like a grout-filled / AAC core in
+// section, matching the reference detail); the cross-hatch is a subtler, wider
+// 45° overlay defaulting OFF.
+const BLOCKWALL_GROUT_DEFAULTS  = { spacing: 25, opacity: 55, width: 30 };
+const BLOCKWALL_XHATCH_DEFAULTS = { spacing: 50, opacity: 40, width: 30 };
+function _bwLerp(a, b, pct) { const t = Math.max(0, Math.min(100, +pct || 0)) / 100; return a + (b - a) * t; }
+
+// Assemble the eight hatch fields for a new section wall from a source bag
+// (v25Last at placement). Shared by both creation sites in 69-v25-dispatch.js so
+// the placed strip and the drag-preview never drift. Grout defaults ON.
+function v25WallHatchFields(src) {
+  src = src || {};
+  const gd = BLOCKWALL_GROUT_DEFAULTS, xd = BLOCKWALL_XHATCH_DEFAULTS;
+  return {
+    groutFill:     (src.groutFill    != null) ? !!src.groutFill   : true,
+    groutSpacing:  (src.groutSpacing != null) ? src.groutSpacing  : gd.spacing,
+    groutOpacity:  (src.groutOpacity != null) ? src.groutOpacity  : gd.opacity,
+    groutWidth:    (src.groutWidth   != null) ? src.groutWidth    : gd.width,
+    xHatch:        (src.xHatch != null) ? !!src.xHatch : true,
+    xHatchSpacing: (src.xHatchSpacing != null) ? src.xHatchSpacing : xd.spacing,
+    xHatchOpacity: (src.xHatchOpacity != null) ? src.xHatchOpacity : xd.opacity,
+    xHatchWidth:   (src.xHatchWidth   != null) ? src.xHatchWidth   : xd.width,
+  };
+}
+
 function drawBlockWallSec2D(blk, ent, cs) {
   const cat = V25_BLOCK_DB[ent.blockKey || '190'] || V25_BLOCK_DB['190'];
   const col = cs.getPropertyValue('--entity-color').trim();
@@ -135,21 +167,107 @@ function drawBlockWallSec2D(blk, ent, cs) {
 
   const courseH = cat.h + cat.bed;                          // 200 for std AU block
   const shellT = Math.min(35, Math.max(25, thk * 0.18));    // face-shell thickness
-  const coreW = thk - 2 * shellT;
 
-  // Grouted cores — light 45° hatch of the central band between the face shells.
-  if (ent.grouted && coreW > 4) {
-    ctx.save();
+  // Coursing datum — full blocks start from the SOLID (non-break) end so the
+  // partial course falls against the section break, not against the clean edge.
+  // This mirrors the elevation renderer (and the reference detail): the true
+  // top-of-wall edge lands on a block boundary, never mid-course. Bed-joint
+  // positions are computed ONCE here and reused by both the grout-cell clip and
+  // the joint linework so the two can never drift.
+  const eb = ent.endBreak || 'start';
+  const breakStart = (eb === 'start' || eb === 'both');
+  const breakEnd   = (eb === 'end'   || eb === 'both');
+  const courseFromEnd = breakStart && !breakEnd;            // datum = the lu=L end
+  const bedJoints = [];
+  if (courseFromEnd) {
+    for (let lu = L - courseH; lu > 0.5; lu -= courseH) bedJoints.push(lu);
+    bedJoints.reverse();                                    // ascending lu order
+  } else {
+    for (let lu = courseH; lu < L - 0.5; lu += courseH) bedJoints.push(lu);
+  }
+
+  // ---- Section fill: grout stipple + 45° cross-hatch, BOTH confined to the
+  // GROUT (the core cells only) — the block face shells AND the mortar bed
+  // joints stay white, matching the reference detail. Drawn UNDER the shell /
+  // joint / face linework. Knobs come off the entity (0–100) with BLOCKWALL_*
+  // fallbacks; a legacy `grouted` wall maps onto the grout fill. Both default ON.
+  const groutOn  = (ent.groutFill != null) ? !!ent.groutFill : !!ent.grouted;
+  const xHatchOn = (ent.xHatch    != null) ? !!ent.xHatch    : true;
+  // Clip to the grout cells: the core band between the face shells (lv), broken
+  // by a white gap at every mortar bed (lu = course joints). Returns false if the
+  // core is too thin to hold grout.
+  const lvLo = -half + shellT, lvHi = half - shellT;
+  const clipGroutCells = () => {
+    if (lvHi - lvLo < 2) return false;
+    const bedHalf = Math.max(1.5, (cat.bed || 10) / 2);
     ctx.beginPath();
-    [[0, -half + shellT], [L, -half + shellT], [L, half - shellT], [0, half - shellT]].forEach((p, i) => {
-      const sp = project(p[0], p[1]); if (i === 0) ctx.moveTo(sp.x, sp.y); else ctx.lineTo(sp.x, sp.y);
-    });
-    ctx.closePath(); ctx.clip();
-    ctx.strokeStyle = colorAlpha(col, 0.5);
-    ctx.lineWidth = Math.max(0.3, LW.HATCH * pm);
-    const step = 12;
-    for (let s = -coreW; s < L + coreW; s += step) {
-      strokeLocal(s, -half + shellT, s + coreW, half - shellT);
+    const addCell = (a, b) => {
+      if (b - a < 1) return;
+      const p1 = project(a, lvLo), p2 = project(b, lvLo), p3 = project(b, lvHi), p4 = project(a, lvHi);
+      ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.lineTo(p3.x, p3.y); ctx.lineTo(p4.x, p4.y); ctx.closePath();
+    };
+    let cellStart = 0;
+    for (const b of bedJoints) { addCell(cellStart, b - bedHalf); cellStart = b + bedHalf; }
+    addCell(cellStart, L);
+    ctx.clip();
+    return true;
+  };
+  if (groutOn || xHatchOn) {
+    ctx.save();
+    if (clipGroutCells()) {
+      if (groutOn) {
+        const gd = BLOCKWALL_GROUT_DEFAULTS;
+        const gS = (ent.groutSpacing != null) ? ent.groutSpacing : gd.spacing;
+        const gO = (ent.groutOpacity != null) ? ent.groutOpacity : gd.opacity;
+        const gW = (ent.groutWidth   != null) ? ent.groutWidth   : gd.width;
+        const coreW = lvHi - lvLo;
+        let gap = _bwLerp(2, 20, gS);                          // dot grid pitch (mm)
+        const maxDots = 6000;                                  // bound the count on long walls
+        if ((L / gap) * (coreW / gap) > maxDots) gap = Math.sqrt((L * coreW) / maxDots);
+        const dotR = Math.max(0.4, _bwLerp(0.12, 0.55, gW) * pm);
+        // Deterministic jitter seeded from the entity so the stipple never shimmers.
+        let s = (((ent.id || 0) * 9301 + Math.round(L * 13.7) + Math.round(thk * 17.3)) >>> 0) || 1;
+        const rnd = () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; };
+        ctx.fillStyle = colorAlpha(col, Math.max(0, Math.min(1, gO / 100)));
+        // Screen render accumulates every dot into ONE path and fills once —
+        // thousands of per-dot fill() calls made scroll/zoom redraws crawl on
+        // slower machines. PDF vector export keeps the per-dot beginPath/fill:
+        // the export shim's full-circle fast path only fires on a bare arc()
+        // (empty path), emitting crisp circle primitives instead of
+        // polygonised arcs.
+        const perDot = (typeof pdfExportMode !== 'undefined' && pdfExportMode);
+        if (!perDot) ctx.beginPath();
+        for (let lu = gap * 0.5; lu < L; lu += gap) {
+          for (let lv = lvLo + gap * 0.5; lv < lvHi; lv += gap) {
+            const sp = project(lu + (rnd() - 0.5) * gap * 0.6, lv + (rnd() - 0.5) * gap * 0.6);
+            if (perDot) {
+              ctx.beginPath(); ctx.arc(sp.x, sp.y, dotR, 0, Math.PI * 2); ctx.fill();
+            } else {
+              ctx.moveTo(sp.x + dotR, sp.y);   // moveTo onto the arc start — no joining spoke
+              ctx.arc(sp.x, sp.y, dotR, 0, Math.PI * 2);
+            }
+          }
+        }
+        if (!perDot) ctx.fill();
+      }
+      if (xHatchOn) {
+        const xd = BLOCKWALL_XHATCH_DEFAULTS;
+        const xS = (ent.xHatchSpacing != null) ? ent.xHatchSpacing : xd.spacing;
+        const xO = (ent.xHatchOpacity != null) ? ent.xHatchOpacity : xd.opacity;
+        const xW = (ent.xHatchWidth   != null) ? ent.xHatchWidth   : xd.width;
+        const gap = _bwLerp(8, 64, xS);                        // perpendicular line spacing (mm)
+        ctx.strokeStyle = colorAlpha(col, Math.max(0, Math.min(1, xO / 100)));
+        ctx.lineWidth = Math.max(0.2, _bwLerp(0.05, 0.4, xW) * pm);
+        const t = L + thk;                                     // half-length (covers the rect)
+        const flip = !!ent.xHatchFlip;                         // per-wall direction toggle
+        ctx.beginPath();                                       // one path, one stroke
+        for (let c = -t; c <= L + t; c += gap * Math.SQRT2) {  // 45° lines
+          const a = project(flip ? c - t : c + t, -t);         // lu = c + lv (flip) / c - lv
+          const b = project(flip ? c + t : c - t, t);
+          ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
+        }
+        ctx.stroke();
+      }
     }
     ctx.restore();
   }
@@ -160,10 +278,17 @@ function drawBlockWallSec2D(blk, ent, cs) {
   strokeLocal(0, -half + shellT, L, -half + shellT);
   strokeLocal(0,  half - shellT, L,  half - shellT);
 
-  // Bed joints — across the full width every course (the cut mortar joints).
-  ctx.lineWidth = Math.max(0.3, LW.VIS * pm);
-  for (let lu = courseH; lu < L - 0.5; lu += courseH) {
-    strokeLocal(lu, -half, lu, half);
+  // Mortar bed joints — drawn at the ACTUAL standard bed thickness (cat.bed,
+  // ~10 mm) as a pair of FAINT lines bounding the white bed band, full width
+  // (face to face), so the bed reads true-to-scale like the reference detail.
+  {
+    const bedHalfLn = Math.max(1.5, (cat.bed || 10) / 2);
+    ctx.strokeStyle = colorAlpha(col, 0.55);
+    ctx.lineWidth = Math.max(0.3, LW.HID * pm);
+    for (const lu of bedJoints) {
+      strokeLocal(lu - bedHalfLn, -half, lu - bedHalfLn, half);
+      strokeLocal(lu + bedHalfLn, -half, lu + bedHalfLn, half);
+    }
   }
 
   // Wall faces — the two long cut edges, heavy.
@@ -174,19 +299,22 @@ function drawBlockWallSec2D(blk, ent, cs) {
 
   // End caps — clean line (true edge, e.g. top of wall) or zigzag section
   // break (the cut continues into the structure beyond the detail).
-  const eb = ent.endBreak || 'start';
-  const breakStart = (eb === 'start' || eb === 'both');
-  const breakEnd   = (eb === 'end'   || eb === 'both');
+  // (eb / breakStart / breakEnd computed above for the coursing datum.)
   const drawEnd = (lu, isBreak) => {
     if (!isBreak) { strokeLocal(lu, -half, lu, half); return; }
-    const amp = thk * 0.16, n = 3;
-    const pts = [[lu, -half]];
-    for (let i = 0; i < n; i++) {
-      const t = (i + 0.5) / n;
-      const sign = (i % 2 === 0) ? 1 : -1;
-      pts.push([lu + amp * sign, -half + thk * t]);
-    }
-    pts.push([lu, half]);
+    // AS 1100 freehand break line: a thin line across the thickness that
+    // OVERSHOOTS both faces, with one compact zigzag ("Z") near the centre —
+    // reads as "the wall continues beyond the detail", like the reference.
+    const over = Math.max(6, thk * 0.12);   // overshoot past each face
+    const amp  = Math.max(8, thk * 0.22);   // zigzag depth along the wall run
+    const z    = Math.max(5, thk * 0.13);   // half-height of the zigzag band
+    ctx.strokeStyle = col;
+    ctx.lineWidth = Math.max(0.4, LW.VIS * pm);
+    const pts = [
+      [lu, -half - over], [lu, -z],
+      [lu + amp, -z * 0.35], [lu - amp, z * 0.35],
+      [lu, z], [lu, half + over],
+    ];
     ctx.beginPath();
     pts.forEach((p, i) => { const sp = project(p[0], p[1]); if (i === 0) ctx.moveTo(sp.x, sp.y); else ctx.lineTo(sp.x, sp.y); });
     ctx.stroke();
@@ -488,6 +616,152 @@ function v25Mem2EffRoll(ent) {
   return 0;
 }
 
+// Total cross-section glyph rotation in degrees: quarter-turn roll (which face)
+// + free Rotation° (ent.rot — e.g. tilting an SHS 30° to suit inclined wall
+// sheeting). Legacy sections (roll == null) stored their spin IN ent.rot, which
+// v25Mem2EffRoll already returns — don't add rot a second time for those.
+function v25Mem2SecRotDeg(ent) {
+  if (!ent) return 0;
+  const eff = v25Mem2EffRoll(ent);
+  return (ent.roll != null) ? eff + (Number(ent.rot) || 0) : eff;
+}
+
+// ---- GLT timber grain (ASH MASSLAM) -----------------------------------------
+// End-grain "tree rings" (section view) and side-grain wavy lines (elevation),
+// lifted from the timberSec / timberElev hatch materials (67-v25-materials.js)
+// but drawn in the member's LOCAL frame via the caller's project(lu,lv) closure
+// so the grain rotates with the member. Deterministic per entity (seed) so the
+// pattern is stable across re-render / save-load / export. Grain is emitted as
+// explicit, analytically rect-clipped line segments — NOT ctx.clip — a choice
+// made when the vector-PDF shim treated clip() as a no-op. The shim now clips
+// for real (44-pdf-export.js, 2026-06-12), but the analytic clipping stays:
+// it's correct, cheaper, and produces shorter PDF streams than q/W/n scoping.
+function _gltRng(seed) {
+  let s = seed >>> 0; if (!s) s = 1;
+  return function () { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; };
+}
+// GLT-notch (72m) — true when a LOCAL grain sample falls inside any cut shape
+// (rect/circle), so the grain helpers can drop it (pen-up/down) and leave the
+// notch/void free of timber grain. `shapes` come from v25NotchCutsFor().exclude;
+// kept self-contained here so the grain hot-loop has no cross-file dependency.
+function _v25GrainExcluded(lu, lv, shapes) {
+  if (!shapes || !shapes.length) return false;
+  for (let i = 0; i < shapes.length; i++) {
+    const s = shapes[i];
+    if (s.k === 'r') { if (lu >= s.u0 && lu <= s.u1 && lv >= s.v0 && lv <= s.v1) return true; }
+    else if (s.k === 'c') { const dx = lu - s.cx, dy = lv - s.cy; if (dx * dx + dy * dy <= s.r * s.r) return true; }
+    else if (s.k === 'p') {
+      // even-odd point-in-polygon (freehand cut)
+      const pts = s.pts || s.poly; if (!pts) continue;
+      let inside = false;
+      for (let a = 0, b = pts.length - 1; a < pts.length; b = a++) {
+        const xi = pts[a][0], yi = pts[a][1], xj = pts[b][0], yj = pts[b][1];
+        if (((yi > lv) !== (yj > lv)) && (lu < (xj - xi) * (lv - yi) / (yj - yi) + xi)) inside = !inside;
+      }
+      if (inside) return true;
+    }
+  }
+  return false;
+}
+// Concentric rings + pith + radial checks, clipped to the local section
+// rectangle [-hW,hW] × [-hH,hH]. spacingMul scales the ring gap; sizeMul scales
+// the ring wobble (how organic vs perfect-circle the rings read).
+function v25TimberEndGrain(project, hW, hH, seed, spacingMul, sizeMul, pm, excl) {
+  const rnd = _gltRng(seed);
+  const w = hW * 2, h = hH * 2;
+  // Pith near the lower third, slightly off-centre (matches the timberSec mat).
+  const cu = -hW + w * (0.45 + (rnd() - 0.5) * 0.1);
+  const cv = -hH + h * (0.30 + (rnd() - 0.5) * 0.1);
+  // `excl` (GLT-notch) — drop rings/checks that fall inside a notch or void.
+  const inRect = function (lu, lv) {
+    return lu >= -hW && lu <= hW && lv >= -hH && lv <= hH && !_v25GrainExcluded(lu, lv, excl);
+  };
+  // Stroke only the runs of a sampled curve that fall inside the rectangle.
+  const strokeClipped = function (count, ptsFn) {
+    let started = false;
+    for (let k = 0; k <= count; k++) {
+      const p = ptsFn(k);
+      if (inRect(p[0], p[1])) {
+        const sp = project(p[0], p[1]);
+        if (!started) { ctx.beginPath(); ctx.moveTo(sp.x, sp.y); started = true; }
+        else ctx.lineTo(sp.x, sp.y);
+      } else if (started) { ctx.stroke(); started = false; }
+    }
+    if (started) ctx.stroke();
+  };
+  // Pith — small filled dot at the centre.
+  if (inRect(cu, cv)) {
+    const p = project(cu, cv);
+    ctx.beginPath(); ctx.arc(p.x, p.y, Math.max(0.6, 0.5 * pm), 0, Math.PI * 2); ctx.fill();
+  }
+  const maxR = Math.hypot(Math.max(hW - cu, cu + hW), Math.max(hH - cv, cv + hH));
+  const ringStep = Math.max(8, Math.min(w, h) * 0.08) * spacingMul;
+  const N = 80;
+  for (let r = ringStep; r < maxR; r += ringStep * (0.85 + rnd() * 0.4)) {
+    const ampMm = (r * 0.04 + rnd() * 1.2) * sizeMul;
+    const phase = rnd() * Math.PI * 2;
+    const lobes = 3 + Math.floor(rnd() * 3); // 3..5 lobes per ring
+    strokeClipped(N, function (k) {
+      const ang = (k / N) * Math.PI * 2;
+      const rr = r + Math.sin(ang * lobes + phase) * ampMm;
+      return [cu + Math.cos(ang) * rr, cv + Math.sin(ang) * rr];
+    });
+  }
+  // Radial checks — 3..5 cracks from near the pith.
+  const cracks = 3 + Math.floor(rnd() * 3);
+  const segs = 6;
+  for (let i = 0; i < cracks; i++) {
+    const ang = (i / cracks) * Math.PI * 2 + rnd() * 0.5;
+    const startR = ringStep * 0.6;
+    const endR = maxR * (0.55 + rnd() * 0.5);
+    strokeClipped(segs, function (k) {
+      const t = k / segs;
+      const rr = startR + t * (endR - startR);
+      const a = ang + (rnd() - 0.5) * 0.2;
+      return [cu + Math.cos(a) * rr, cv + Math.sin(a) * rr];
+    });
+  }
+}
+// Long wavy grain lines running ALONG the member axis (local-u), spaced across
+// the depth (local-v) within [vMin,vMax]. spacingMul scales the line gap;
+// sizeMul scales the wave amplitude.
+// uLoFn/uHiFn (optional) map a local-v to the body's left/right u-bound at that
+// height — pass the member's end-cap functions (xA / xB) so the grain follows an
+// angled mitre cap instead of overrunning it. Each sample is kept only if it is
+// inside the depth band AND between the caps; out-of-bounds points are DROPPED
+// with pen-up/down (like the end-grain helper) — never clamped onto the outline,
+// and never ctx.clip (PDF-safe explicit segments).
+function v25TimberSideGrain(project, uMin, uMax, vMin, vMax, seed, spacingMul, sizeMul, uLoFn, uHiFn, excl) {
+  const rnd = _gltRng(seed);
+  const lengthSpan = uMax - uMin, shortSpan = vMax - vMin;
+  if (lengthSpan <= 0 || shortSpan <= 0) return;
+  const loFn = (typeof uLoFn === 'function') ? uLoFn : function () { return uMin; };
+  const hiFn = (typeof uHiFn === 'function') ? uHiFn : function () { return uMax; };
+  const lineSpacingMm = 30 * spacingMul;
+  const lines = Math.max(3, Math.floor(shortSpan / lineSpacingMm));
+  const N = Math.max(20, Math.floor(lengthSpan / 6));
+  for (let i = 0; i < lines; i++) {
+    const baseT = (i + 0.5) / lines;        // 0..1 across the depth
+    const ampMm = (1.0 + rnd() * 2.5) * sizeMul;
+    const periodMm = 60 + rnd() * 120;
+    const phase = rnd() * Math.PI * 2;
+    const drift = (rnd() - 0.5) * lineSpacingMm * 0.4;
+    let started = false;
+    for (let k = 0; k <= N; k++) {
+      const lu = uMin + (k / N) * lengthSpan;
+      const wave = Math.sin(lu / periodMm * Math.PI * 2 + phase) * ampMm;
+      const lv = vMin + baseT * shortSpan + drift + wave;
+      const inside = (lv >= vMin && lv <= vMax && lu >= loFn(lv) && lu <= hiFn(lv) && !_v25GrainExcluded(lu, lv, excl));
+      if (inside) {
+        const sp = project(lu, lv);
+        if (!started) { ctx.beginPath(); ctx.moveTo(sp.x, sp.y); started = true; }
+        else ctx.lineTo(sp.x, sp.y);
+      } else if (started) { ctx.stroke(); started = false; }
+    }
+    if (started) ctx.stroke();
+  }
+}
+
 function drawMem2D(blk, ent, cs) {
   const col = v25EntColour(ent, cs);
   const clCol = cs.getPropertyValue('--cl-color').trim() || col;
@@ -525,7 +799,9 @@ function drawMem2D(blk, ent, cs) {
   // the glyph is rotated by roll; in ELEVATION the member runs along the paper
   // drag angle (ent.rot) and roll instead selects which face is drawn.
   const effRoll = v25Mem2EffRoll(ent);
-  const rotDeg = (aspect === 'sec') ? effRoll : (ent.rot || 0);
+  // Section glyphs spin by roll + free Rotation° (v25Mem2SecRotDeg) so the
+  // inspector's Rotation° tilts the section (e.g. SHS as a 30° diamond).
+  const rotDeg = (aspect === 'sec') ? v25Mem2SecRotDeg(ent) : (ent.rot || 0);
   const rot = rotDeg * Math.PI / 180;
   const cosR = Math.cos(rot), sinR = Math.sin(rot);
   // Local-frame point → screen pixel.
@@ -878,6 +1154,105 @@ function drawMem2D(blk, ent, cs) {
       _drawCapWeld(weldA_pfc, T, project);
       _drawCapWeld(weldB_pfc, T, project);
     }
+  } else if (ent.memberType === 'ea' || ent.memberType === 'ua') {
+    // V26 — Equal / Unequal Angle per AS/NZS 3679.1 + AISC DCT Vol 1 Tables
+    // 3.1-9(A) (EA) and 3.1-10 (UA). Cross-section is the L glyph: standing
+    // leg `a` vertical on the left (heel bottom-left at roll 0), back legs on
+    // the outside faces. roll spins the glyph through the four heel corners
+    // via project() like every other section type. Elevation draws the
+    // standing leg's silhouette (depth a; UA roll 90/270 stands the SHORT leg
+    // b instead) with ONE leg-edge line at t from the bottom face — solid
+    // when the other leg projects toward the viewer (roll 0/90), AS 1100
+    // hidden (dashed) when it projects away (roll 180/270).
+    const dbS = (ent.memberType === 'ea'
+              ? (typeof EA_DB === 'object' ? EA_DB[ent.section] : null)
+              : (typeof UA_DB === 'object' ? UA_DB[ent.section] : null));
+    if (!dbS) return;
+    const aLeg = dbS.a || 100;        // long / standing leg
+    const bLeg = dbS.b || dbS.a || 100; // short leg (EA: equal)
+    const t = dbS.t || 6;
+    if (aspect === 'sec') {
+      // L outline in the local frame, centred on the leg bounding box:
+      // vertical leg outer face at -hb, bottom face at -ha.
+      const ha = aLeg / 2, hb = bLeg / 2;
+      const pts = [
+        [-hb,     ha], [-hb + t,  ha], [-hb + t, -ha + t],
+        [ hb, -ha + t], [ hb,    -ha], [-hb,     -ha],
+      ];
+      fillPoly(pts);
+      ctx.lineWidth = cutLW;
+      ctx.beginPath();
+      pts.forEach((p, i) => {
+        const sp = project(p[0], p[1]);
+        if (i === 0) ctx.moveTo(sp.x, sp.y); else ctx.lineTo(sp.x, sp.y);
+      });
+      ctx.closePath(); ctx.stroke();
+      // Centrelines
+      ctx.strokeStyle = clCol; ctx.lineWidth = clLW; ctx.setLineDash(DASH.CL);
+      strokeLine(-hb - 8, 0, hb + 8, 0);
+      strokeLine(0, -ha - 8, 0, ha + 8);
+      ctx.setLineDash([]); ctx.strokeStyle = col;
+    } else {
+      // Elevation — standing-leg rectangle + one leg-edge line + centreline.
+      // Same auto-mitre / welded-cap pipeline as the PFC elevation so angles
+      // participate in brace-meets-host joints.
+      const len = ent.length || 600;
+      const standDep = (effRoll === 90 || effRoll === 270) ? bLeg : aLeg;
+      const legToward = (effRoll === 0 || effRoll === 90);
+      const T = standDep / 2, B = -standDep / 2;
+      const trims = (typeof jointTrimsForMem2 === 'function')
+        ? jointTrimsForMem2(ent, blk.viewKey) : null;
+      const capA = trims && trims.a ? null
+        : ((typeof v25Mem2ResolveCap === 'function') ? v25Mem2ResolveCap(ent, 'A') : null);
+      const capB = trims && trims.b ? null
+        : ((typeof v25Mem2ResolveCap === 'function') ? v25Mem2ResolveCap(ent, 'B') : null);
+      const capX = (y, def, cap) => {
+        if (!cap) return def;
+        return cap.topLocalX + (T - y) / (2 * T) * (cap.botLocalX - cap.topLocalX);
+      };
+      const xA = (y) => trims && trims.a ? trims.a.uAtV(y) : capX(y, 0, capA);
+      const xB = (y) => trims && trims.b ? trims.b.uAtV(y) : capX(y, len, capB);
+      const aPts = _v25CapPts(xA, T, trims && trims.a ? trims.a.kinks : null);
+      const bPts = _v25CapPts(xB, T, trims && trims.b ? trims.b.kinks : null);
+      const strokeCapPts = (pts) => { for (let i = 0; i < pts.length - 1; i++) strokeLine(pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1]); };
+      fillPoly([aPts[0], ...bPts, ...aPts.slice(1).reverse()]);
+      ctx.lineWidth = cutLW;
+      strokeLine(xA(T), T, xB(T), T);   // top edge (standing-leg toe)
+      strokeLine(xA(B), B, xB(B), B);   // bottom edge (heel)
+      // Leg-edge line at t above the heel face: solid when the other leg
+      // points at the viewer, hidden (dashed) when it points away.
+      const legY = B + t;
+      if (!legToward) { ctx.strokeStyle = hidCol; ctx.lineWidth = hidLW; ctx.setLineDash(hidDashPx); }
+      strokeLine(xA(legY), legY, xB(legY), legY);
+      if (!legToward) { ctx.setLineDash([]); ctx.lineWidth = cutLW; ctx.strokeStyle = col; }
+      if (capA) {
+        strokeLine(capA.topLocalX, T, capA.botLocalX, B);
+      } else if (trims && trims.a) {
+        strokeCapPts(aPts);
+      } else {
+        drawEndCap(0, T, B, ent.endA || 'normal', -1);
+      }
+      if (capB) {
+        strokeLine(capB.topLocalX, T, capB.botLocalX, B);
+      } else if (trims && trims.b) {
+        strokeCapPts(bPts);
+      } else {
+        drawEndCap(len, T, B, ent.endB || 'normal', +1);
+      }
+      const clMinAng = Math.min(0, xA(0)) - 10;
+      const clMaxAng = Math.max(len, xB(0)) + 10;
+      ctx.strokeStyle = clCol; ctx.lineWidth = clLW; ctx.setLineDash(DASH.CL);
+      strokeLine(clMinAng, 0, clMaxAng, 0);
+      ctx.setLineDash([]); ctx.strokeStyle = col;
+      const weldA_ang = capA || (trims && trims.a
+        ? { topLocalX: xA(T), botLocalX: xA(B), weldSize: trims.a.weldSize || 6, pts: aPts }
+        : null);
+      const weldB_ang = capB || (trims && trims.b
+        ? { topLocalX: xB(T), botLocalX: xB(B), weldSize: trims.b.weldSize || 6, pts: bPts }
+        : null);
+      _drawCapWeld(weldA_ang, T, project);
+      _drawCapWeld(weldB_ang, T, project);
+    }
   } else if (ent.memberType === 'shs' || ent.memberType === 'rhs' || ent.memberType === 'chs') {
     const dbS = (ent.memberType === 'shs' ? SHS_DB[ent.section]
               : ent.memberType === 'rhs' ? (typeof RHS_DB === 'object' ? RHS_DB[ent.section] : null)
@@ -890,7 +1265,30 @@ function drawMem2D(blk, ent, cs) {
     const dep = (ent.memberType === 'rhs') ? (dbS.d || dbS.D || dbS.B || 100)
               : (dbS.B || dbS.d || dbS.D || 100);
     const wid = (ent.memberType === 'rhs') ? (dbS.bf || dbS.B || dep) : dep;
-    if (aspect === 'sec') {
+    if (aspect === 'sec' && ent.memberType === 'chs') {
+      // CHS cross-section — two concentric circles (outer face + bore), not
+      // the box the SHS/RHS path draws. Radius is converted to screen px via
+      // a projected point on the circle so it follows zoom + drawingScale.
+      const r = dep / 2, ri = Math.max(0, r - t);
+      const c0 = project(0, 0), cR = project(r, 0);
+      const rPx = Math.hypot(cR.x - c0.x, cR.y - c0.y);
+      const riPx = rPx * (ri / r);
+      if (fillCol) {
+        ctx.save(); ctx.fillStyle = fillCol;
+        ctx.beginPath(); ctx.arc(c0.x, c0.y, rPx, 0, Math.PI * 2); ctx.fill();
+        ctx.restore();
+      }
+      ctx.lineWidth = cutLW;
+      ctx.beginPath(); ctx.arc(c0.x, c0.y, rPx, 0, Math.PI * 2); ctx.stroke();
+      if (riPx > 0.5) {
+        ctx.beginPath(); ctx.arc(c0.x, c0.y, riPx, 0, Math.PI * 2); ctx.stroke();
+      }
+      // Centrelines
+      ctx.strokeStyle = clCol; ctx.lineWidth = clLW; ctx.setLineDash(DASH.CL);
+      strokeLine(-r - 8, 0, r + 8, 0);
+      strokeLine(0, -r - 8, 0, r + 8);
+      ctx.setLineDash([]); ctx.strokeStyle = col;
+    } else if (aspect === 'sec') {
       // Canonical depth(v) × width(u) box; project() spins it by roll, so
       // on-edge (roll 0) and lay-flat (roll 90) fall out of the same polygon.
       const hW = wid / 2, hH = dep / 2, hWi = hW - t, hHi = hH - t;
@@ -1010,6 +1408,127 @@ function drawMem2D(blk, ent, cs) {
         : null);
       _drawCapWeld(weldA, hB, project);
       _drawCapWeld(weldB, hB, project);
+    }
+  } else if (ent.memberType === 'glt') {
+    // ASH MASSLAM glue-laminated timber — solid rectangular member. Section
+    // view = end-grain rings; elevation = side grain. "Slightly thicker" outline
+    // (cut weight in section, heavy-visible in elevation) over a timber grain
+    // hatch. No inner walls / hidden lines (solid) and no fillet-weld hatching
+    // (timber is bolted/screwed, not welded). Mitre caps still honoured so GLT
+    // joins like every other member.
+    const dbS = (typeof GLT_SIZES === 'object') ? GLT_SIZES[ent.section] : null;
+    if (!dbS) return;
+    const dep = dbS.d || 100, wid = dbS.b || 100;
+    const gd = (typeof GLT_GRAIN_DEFAULTS === 'object') ? GLT_GRAIN_DEFAULTS : { size: 50, spacing: 50, opacity: 35 };
+    const grainSize    = (typeof ent.grainSize    === 'number') ? ent.grainSize    : gd.size;
+    const grainSpacing = (typeof ent.grainSpacing === 'number') ? ent.grainSpacing : gd.spacing;
+    const grainOpacity = (typeof ent.grainOpacity === 'number') ? ent.grainOpacity : gd.opacity;
+    const sizeMul    = Math.max(0.1, grainSize / 50);
+    const spacingMul = Math.max(0.2, grainSpacing / 50);
+    const grainA = Math.max(0, Math.min(1, grainOpacity / 100));
+    const seed = ((ent.id || 0) * 9301 + Math.round(wid * 7.1) + Math.round(dep * 11.9)) >>> 0;
+    // Outer-edge weight: timber reads heavier than steel. Scale the base outline
+    // weight by the member's edge knob (ent.edgeWeight 0–100; default GLT_EDGE_DEFAULT).
+    const _gltEdgePct = (typeof ent.edgeWeight === 'number') ? ent.edgeWeight
+                      : (typeof GLT_EDGE_DEFAULT === 'number' ? GLT_EDGE_DEFAULT : 50);
+    const _gltEdgeMul = (typeof gltEdgeMult === 'function') ? gltEdgeMult(_gltEdgePct) : 1.5;
+    const outlineLW = ((aspect === 'sec') ? cutLW : Math.max(0.5, LW.VIS_HEAVY * pm)) * _gltEdgeMul;
+    // GLT-notch (72m) — carpenter's cuts stored in the member's LOCAL frame.
+    // Edge cuts (freehand polygons / sized rects opening onto an edge) reshape
+    // the outline via segment clipping (_nEdge); _nexcl masks grain inside ANY
+    // cut; _ncuts.voids are interior white-space holes. Un-notched members are
+    // byte-for-byte unchanged. Local geometry rides through move/rotate/flip via
+    // the same project() closure the body uses.
+    const _ncuts = (typeof v25NotchCutsFor === 'function') ? v25NotchCutsFor(ent) : null;
+    const _nexcl = _ncuts ? _ncuts.exclude : null;
+    const _nEdge = !!(_ncuts && _ncuts.hasEdge);
+    // Fill (rare — only if ent.fillColour set): even-odd so edge cuts read as
+    // removed. Body box corners passed in; cut polygons punch the holes.
+    const fillBodyEO = (boxPts) => {
+      if (!fillCol) return;
+      ctx.save(); ctx.fillStyle = fillCol; ctx.beginPath();
+      boxPts.forEach((p, i) => { const s = project(p[0], p[1]); if (i === 0) ctx.moveTo(s.x, s.y); else ctx.lineTo(s.x, s.y); }); ctx.closePath();
+      if (_ncuts && _ncuts.edgePolys) _ncuts.edgePolys.forEach(poly => { poly.forEach((p, i) => { const s = project(p[0], p[1]); if (i === 0) ctx.moveTo(s.x, s.y); else ctx.lineTo(s.x, s.y); }); ctx.closePath(); });
+      ctx.fill('evenodd'); ctx.restore();
+    };
+    if (aspect === 'sec') {
+      const hW = wid / 2, hH = dep / 2;
+      const box = [[-hW, hH], [hW, hH], [hW, -hH], [-hW, -hH]];
+      if (_nEdge) fillBodyEO(box); else fillPoly(box); // solid fill only if ent.fillColour set (off by default)
+      // End-grain hatch under the outline, at the grain opacity.
+      ctx.save();
+      ctx.globalAlpha = ctx.globalAlpha * grainA;
+      ctx.strokeStyle = col; ctx.fillStyle = col;
+      ctx.lineWidth = Math.max(0.15, LW.HATCH * pm);
+      ctx.lineJoin = 'round'; ctx.lineCap = 'round'; ctx.setLineDash([]);
+      v25TimberEndGrain(project, hW, hH, seed, spacingMul, sizeMul, pm, _nexcl);
+      ctx.restore();
+      // Voids — white-space holes (erase grain + stroke the hole boundary).
+      if (_ncuts && typeof v25NotchDrawVoids === 'function') v25NotchDrawVoids(ent, project, cs, pm, col, _ncuts.voids);
+      // Outer outline — slightly thicker (cut weight). Edge notches reshape it
+      // (segment-clipped: body edges outside the cut + cut faces inside body).
+      if (_nEdge && typeof v25NotchDrawEdgeOutline === 'function') { v25NotchDrawEdgeOutline(_ncuts, project, outlineLW, col); }
+      else {
+        ctx.strokeStyle = col; ctx.lineWidth = outlineLW; ctx.setLineDash([]);
+        ctx.beginPath();
+        box.forEach((p, i) => { const sp = project(p[0], p[1]); if (i === 0) ctx.moveTo(sp.x, sp.y); else ctx.lineTo(sp.x, sp.y); });
+        ctx.closePath(); ctx.stroke();
+      }
+      // Centrelines.
+      ctx.strokeStyle = clCol; ctx.lineWidth = clLW; ctx.setLineDash(DASH.CL);
+      strokeLine(-hW - 8, 0, hW + 8, 0);
+      strokeLine(0, -hH - 8, 0, hH + 8);
+      ctx.setLineDash([]); ctx.strokeStyle = col;
+    } else {
+      // Elevation — solid rectangle + side grain + thicker outline + end caps.
+      const len = ent.length || 500;
+      const hB = ((effRoll === 90 || effRoll === 270) ? wid : dep) / 2;
+      // Mitre / joint caps — same machinery as the steel members so GLT joins
+      // identically (just no weld hatching afterwards).
+      const trims = (typeof jointTrimsForMem2 === 'function') ? jointTrimsForMem2(ent, blk.viewKey) : null;
+      const capA = trims && trims.a ? null : ((typeof v25Mem2ResolveCap === 'function') ? v25Mem2ResolveCap(ent, 'A') : null);
+      const capB = trims && trims.b ? null : ((typeof v25Mem2ResolveCap === 'function') ? v25Mem2ResolveCap(ent, 'B') : null);
+      const capX = (y, def, cap) => { if (!cap) return def; return cap.topLocalX + (hB - y) / (2 * hB) * (cap.botLocalX - cap.topLocalX); };
+      const xA = (y) => trims && trims.a ? trims.a.uAtV(y) : capX(y, 0, capA);
+      const xB = (y) => trims && trims.b ? trims.b.uAtV(y) : capX(y, len, capB);
+      const aPts = _v25CapPts(xA, hB, trims && trims.a ? trims.a.kinks : null);
+      const bPts = _v25CapPts(xB, hB, trims && trims.b ? trims.b.kinks : null);
+      const strokeCapPts = (pts) => { for (let i = 0; i < pts.length - 1; i++) strokeLine(pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1]); };
+      if (_nEdge) fillBodyEO([[0, -hB], [len, -hB], [len, hB], [0, hB]]);
+      else fillPoly([aPts[0], ...bPts, ...aPts.slice(1).reverse()]);
+      // Side grain under the outline, bounded to the body rectangle.
+      ctx.save();
+      ctx.globalAlpha = ctx.globalAlpha * grainA;
+      ctx.strokeStyle = col;
+      ctx.lineWidth = Math.max(0.15, LW.HATCH * pm);
+      ctx.lineJoin = 'round'; ctx.lineCap = 'round'; ctx.setLineDash([]);
+      v25TimberSideGrain(project, Math.min(0, xA(hB), xA(-hB)), Math.max(len, xB(hB), xB(-hB)), -hB, hB, seed, spacingMul, sizeMul, xA, xB, _nexcl);
+      ctx.restore();
+      // Voids — white-space holes (erase grain + stroke the hole boundary).
+      if (_ncuts && typeof v25NotchDrawVoids === 'function') v25NotchDrawVoids(ent, project, cs, pm, col, _ncuts.voids);
+      if (_nEdge && typeof v25NotchDrawEdgeOutline === 'function') {
+        // Edge-notched member — the segment-clipped outline IS the full boundary
+        // (long edges + square ends + freehand notch faces). Mitre/break caps are
+        // dropped while a member carries edge notches (notched ends are sawn flat).
+        v25NotchDrawEdgeOutline(_ncuts, project, outlineLW, col);
+      } else {
+        // Outer edges — slightly thicker (heavy visible).
+        ctx.strokeStyle = col; ctx.lineWidth = outlineLW; ctx.setLineDash([]);
+        strokeLine(xA(hB), hB, xB(hB), hB);
+        strokeLine(xA(-hB), -hB, xB(-hB), -hB);
+        // End caps (normal / breakline / mitre) — identical to the steel members.
+        if (capA) strokeLine(capA.topLocalX, hB, capA.botLocalX, -hB);
+        else if (trims && trims.a) strokeCapPts(aPts);
+        else drawEndCap(0, hB, -hB, ent.endA || 'normal', -1);
+        if (capB) strokeLine(capB.topLocalX, hB, capB.botLocalX, -hB);
+        else if (trims && trims.b) strokeCapPts(bPts);
+        else drawEndCap(len, hB, -hB, ent.endB || 'normal', +1);
+      }
+      // Centreline.
+      const clMin = Math.min(0, xA(0)) - 8, clMax = Math.max(len, xB(0)) + 8;
+      ctx.strokeStyle = clCol; ctx.lineWidth = clLW; ctx.setLineDash(DASH.CL);
+      strokeLine(clMin, 0, clMax, 0);
+      ctx.setLineDash([]); ctx.strokeStyle = col;
     }
   }
   } finally { ctx.globalAlpha = _opacityWas; }
@@ -1315,6 +1834,10 @@ function v25Mem2Thickness(ent) {
     // AS 4100 Cl 9.7.3.10 "thinner part" — web is thinner than flange for PFCs.
     const db = PFC_DB[ent.section]; return db && db.tw ? db.tw : 10;
   }
+  if (ent.memberType === 'glt' && typeof GLT_SIZES === 'object') {
+    // Solid timber — the member breadth is the bearing/contact thickness.
+    const db = GLT_SIZES[ent.section]; return db ? (db.b || 10) : 10;
+  }
   return 10;
 }
 
@@ -1418,7 +1941,11 @@ function computeV25WeldInterfaces(viewKey) {
   const allFaces = [];
   {
     const arr = entities2D[viewKey] || [];
-    const mems = arr.filter(e => e && e.type === 'mem2' && e.aspect !== 'sec' && (e.length || 0) >= 1);
+    // GLT/timber members never auto-weld — timber is bolted/screwed, not welded
+    // (see the memberType==='glt' render branch). Excluding them from the face
+    // collection means no weld hatch appears at any timber↔steel or timber↔timber
+    // contact, while steel-to-steel and plate-to-steel welds are unaffected.
+    const mems = arr.filter(e => e && e.type === 'mem2' && e.aspect !== 'sec' && (e.length || 0) >= 1 && e.memberType !== 'glt');
     for (const m of mems) for (const f of v25Mem2Faces(m)) { f._ent = m; allFaces.push(f); }
     const plates = arr.filter(e => e && e.type === 'plate2');
     for (const p of plates) for (const f of v25Plate2Faces(p)) { f._ent = p; allFaces.push(f); }
@@ -1569,6 +2096,22 @@ function v25Mem2HalfDepth(ent) {
     if (!db) return 50;
     return (flat ? (db.bf || db.d) : db.d) / 2;
   }
+  if (ent.memberType === 'ea' && typeof EA_DB === 'object') {
+    const db = EA_DB[ent.section];
+    return db ? (db.a || 100) / 2 : 50;
+  }
+  if (ent.memberType === 'ua' && typeof UA_DB === 'object') {
+    // Long leg standing at roll 0/180; short leg standing at roll 90/270.
+    const db = UA_DB[ent.section];
+    if (!db) return 50;
+    return (flat ? (db.b || db.a) : db.a) / 2;
+  }
+  if (ent.memberType === 'glt' && typeof GLT_SIZES === 'object') {
+    const db = GLT_SIZES[ent.section];
+    if (!db) return 50;
+    // deep face (roll 0) shows the depth; on-its-side (roll 90/270) shows breadth.
+    return (flat ? (db.b || db.d) : db.d) / 2;
+  }
   return 50;
 }
 
@@ -1599,6 +2142,14 @@ function v25Mem2Thickness(ent) {
     const db = PFC_DB[ent.section];
     return db ? Math.min(db.tw || 6, db.tf || 6) : 6;
   }
+  if ((ent.memberType === 'ea' || ent.memberType === 'ua')
+      && typeof EA_DB === 'object' && typeof UA_DB === 'object') {
+    const db = ent.memberType === 'ea' ? EA_DB[ent.section] : UA_DB[ent.section];
+    return db ? db.t || 6 : 6;
+  }
+  if (ent.memberType === 'glt' && typeof GLT_SIZES === 'object') {
+    const db = GLT_SIZES[ent.section]; return db ? (db.b || 6) : 6;
+  }
   return 6;
 }
 
@@ -1613,12 +2164,99 @@ function v25Mem2WorldOutline(ent) {
   const cosR = Math.cos(rot), sinR = Math.sin(rot);
   const hd = v25Mem2HalfDepth(ent);
   const aspect = ent.aspect || 'elev';
+  // GLT cross-sections are strongly non-square (e.g. 165×480) — use the true
+  // breadth×depth rectangle spun by roll, not the depth×depth square the other
+  // section types fall back to, so the hit-test / bounds stay tight to the glyph.
+  if (aspect === 'sec' && ent.memberType === 'glt' && typeof GLT_SIZES === 'object' && GLT_SIZES[ent.section]) {
+    const db = GLT_SIZES[ent.section];
+    const eff = v25Mem2SecRotDeg(ent) * Math.PI / 180;
+    const c = Math.cos(eff), s = Math.sin(eff);
+    const hW = (db.b || 100) / 2, hH = (db.d || 100) / 2;
+    return [[-hW, hH], [hW, hH], [hW, -hH], [-hW, -hH]].map(function (p) {
+      return [ent.u + p[0] * c - p[1] * s, ent.v + p[0] * s + p[1] * c];
+    });
+  }
+  // GLT-notch (72m): notches/voids are NOT folded into this outer envelope — it
+  // stays the bounding rectangle so hit-test/selection grab the whole member by
+  // its footprint. The drawn notch outline (drawMem2D) and DXF (45) use the
+  // segment-clipped edge outline instead; voids are emitted separately.
   const corners = (aspect === 'sec')
     ? [[-hd, hd], [hd, hd], [hd, -hd], [-hd, -hd]]
     : [[0, hd], [len, hd], [len, -hd], [0, -hd]];
   return corners.map(([lx, ly]) => [
     ent.u + lx * cosR - ly * sinR,
     ent.v + lx * sinR + ly * cosR,
+  ]);
+}
+
+// True cross-section profile of a mem2 (aspect 'sec') in WORLD coords as a
+// closed polygon hugging the DRAWN glyph: I-shape for UB/UC/WB, C-shape for
+// PFC (honouring openSide), bf × d rect for RHS, circle (24-gon) for CHS.
+// Returns null for non-section members and for types whose glyph already
+// matches the depth² square fallback (SHS; GLT has its own tight rect in
+// v25Mem2WorldOutline). Selection highlight, hover pre-highlight and the
+// click hit-test all use this so the "picked" wash hugs the visible steel
+// instead of a bounding square that buries everything around the member.
+// Geometry mirrors the matching aspect==='sec' branches of drawMem2D — keep
+// them in sync. v25Mem2WorldOutline is NOT changed: mitre-cap ray clipping
+// and depth-order silhouettes keep the convex envelope they were built on.
+function v25Mem2SecOutline(ent) {
+  if (!ent || ent.type !== 'mem2' || (ent.aspect || 'elev') !== 'sec') return null;
+  let pts = null;
+  if (ent.memberType === 'ub' || ent.memberType === 'uc' || ent.memberType === 'wb') {
+    const dbS = (ent.memberType === 'ub' ? UB_DB[ent.section] : UC_DB[ent.section]) || UB_DB[ent.section];
+    if (!dbS) return null;
+    const hd = dbS.d / 2, htw = dbS.tw / 2, hbf = dbS.bf / 2, tf = dbS.tf;
+    pts = [
+      [-hbf, hd], [hbf, hd], [hbf, hd - tf], [htw, hd - tf],
+      [htw, -(hd - tf)], [hbf, -(hd - tf)], [hbf, -hd], [-hbf, -hd],
+      [-hbf, -(hd - tf)], [-htw, -(hd - tf)], [-htw, hd - tf], [-hbf, hd - tf],
+    ];
+  } else if (ent.memberType === 'pfc' && typeof PFC_DB === 'object') {
+    const dbS = PFC_DB[ent.section];
+    if (!dbS) return null;
+    const hd = dbS.d / 2, hbf = dbS.bf / 2, tf = dbS.tf, tw = dbS.tw;
+    const openUp = ent.openSide === '+v';
+    const vSpine = openUp ? -hd : +hd;
+    const vOpen = openUp ? +hd : -hd;
+    const vFlangeInner = openUp ? vOpen - tf : vOpen + tf;
+    const uSpine = -hbf, uWebInner = -hbf + tw, uOpen = +hbf;
+    pts = [
+      [uOpen, vOpen], [uOpen, vFlangeInner], [uWebInner, vFlangeInner],
+      [uWebInner, -vFlangeInner], [uOpen, -vFlangeInner], [uOpen, -vOpen],
+      [uSpine, -vOpen], [uSpine, vOpen],
+    ];
+  } else if (ent.memberType === 'rhs' && typeof RHS_DB === 'object') {
+    const dbS = RHS_DB[ent.section];
+    if (!dbS) return null;
+    const hH = (dbS.d || dbS.D || dbS.B || 100) / 2;
+    const hW = (dbS.bf || dbS.B || hH * 2) / 2;
+    pts = [[-hW, hH], [hW, hH], [hW, -hH], [-hW, -hH]];
+  } else if (ent.memberType === 'chs' && typeof CHS_DB === 'object') {
+    const dbS = CHS_DB[ent.section];
+    if (!dbS) return null;
+    const r = (dbS.d || dbS.D || 100) / 2;
+    pts = [];
+    for (let i = 0; i < 24; i++) {
+      const a = i / 24 * 2 * Math.PI;
+      pts.push([r * Math.cos(a), r * Math.sin(a)]);
+    }
+  } else if ((ent.memberType === 'ea' || ent.memberType === 'ua')
+             && typeof EA_DB === 'object' && typeof UA_DB === 'object') {
+    const dbS = ent.memberType === 'ea' ? EA_DB[ent.section] : UA_DB[ent.section];
+    if (!dbS) return null;
+    const ha = (dbS.a || 100) / 2, hb = (dbS.b || dbS.a || 100) / 2, t = dbS.t || 6;
+    pts = [
+      [-hb,     ha], [-hb + t,  ha], [-hb + t, -ha + t],
+      [ hb, -ha + t], [ hb,    -ha], [-hb,     -ha],
+    ];
+  }
+  if (!pts) return null;
+  const eff = v25Mem2SecRotDeg(ent) * Math.PI / 180;
+  const c = Math.cos(eff), s = Math.sin(eff);
+  return pts.map(([lx, ly]) => [
+    ent.u + lx * c - ly * s,
+    ent.v + lx * s + ly * c,
   ]);
 }
 

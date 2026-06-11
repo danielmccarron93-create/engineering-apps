@@ -297,6 +297,47 @@
       <path d="M8.1 11.5 H11.9 M8.4 9 H11.6 M8.8 6.5 H11.2" stroke-width="0.5" opacity="0.7"/>
       <line x1="10" y1="1.5" x2="10" y2="18.5" stroke-dasharray="2 1.5" stroke-width="0.5" opacity="0.55"/>
     </symbol>
+    <!-- ===== VGS timber-screw icons (tile + orientation row) — countersunk wedge head + FULL-length thread ===== -->
+    <!-- Tile: side-on VGS — flat csk head with 45° taper, thread teeth along the entire shaft to a pointed tip -->
+    <symbol id="icon-vgs" viewBox="0 0 20 20">
+      <path d="M2.5 5.5 L2.5 14.5 L5.5 11.5 L5.5 8.5 Z" stroke-width="0.9"/>
+      <path d="M5.5 8.5 L15.5 8.5 L18.5 10 L15.5 11.5 L5.5 11.5 Z" stroke-width="0.85"/>
+      <path d="M6.8 7.3 V12.7 M8.4 7.3 V12.7 M10 7.3 V12.7 M11.6 7.3 V12.7 M13.2 7.4 V12.6 M14.7 7.8 V12.2" stroke-width="0.55" opacity="0.7"/>
+    </symbol>
+    <!-- VGS end-on (plan / head-on): head circle + inner countersink edge + small TX cross -->
+    <symbol id="icon-orient-vgs-end" viewBox="0 0 20 20">
+      <circle cx="10" cy="10" r="6.5"/>
+      <circle cx="10" cy="10" r="3.5" stroke-width="0.85"/>
+      <path d="M10 7.4 V12.6 M7.75 8.7 L12.25 11.3 M7.75 11.3 L12.25 8.7" stroke-width="0.85" opacity="0.85"/>
+    </symbol>
+    <!-- VGS horizontal section, head left: csk wedge L, fully-threaded shaft to a point R -->
+    <symbol id="icon-orient-vgs-h-headl" viewBox="0 0 20 20">
+      <path d="M2.5 6 L2.5 14 L5.5 11.3 L5.5 8.7 Z" stroke-width="0.85"/>
+      <path d="M5.5 8.7 L15.5 8.7 L18 10 L15.5 11.3 L5.5 11.3 Z" stroke-width="0.8"/>
+      <path d="M7 8 V12 M8.8 8 V12 M10.6 8 V12 M12.4 8 V12 M14.2 8.2 V11.8" stroke-width="0.5" opacity="0.7"/>
+      <line x1="1.5" y1="10" x2="18.5" y2="10" stroke-dasharray="2 1.5" stroke-width="0.5" opacity="0.55"/>
+    </symbol>
+    <!-- VGS horizontal section, head right: csk wedge R, point L -->
+    <symbol id="icon-orient-vgs-h-headr" viewBox="0 0 20 20">
+      <path d="M17.5 6 L17.5 14 L14.5 11.3 L14.5 8.7 Z" stroke-width="0.85"/>
+      <path d="M14.5 8.7 L4.5 8.7 L2 10 L4.5 11.3 L14.5 11.3 Z" stroke-width="0.8"/>
+      <path d="M13 8 V12 M11.2 8 V12 M9.4 8 V12 M7.6 8 V12 M5.8 8.2 V11.8" stroke-width="0.5" opacity="0.7"/>
+      <line x1="1.5" y1="10" x2="18.5" y2="10" stroke-dasharray="2 1.5" stroke-width="0.5" opacity="0.55"/>
+    </symbol>
+    <!-- VGS vertical section, head top: csk wedge T, point B -->
+    <symbol id="icon-orient-vgs-v-headt" viewBox="0 0 20 20">
+      <path d="M6 2.5 L14 2.5 L11.3 5.5 L8.7 5.5 Z" stroke-width="0.85"/>
+      <path d="M8.7 5.5 L8.7 15.5 L10 18 L11.3 15.5 L11.3 5.5" stroke-width="0.8"/>
+      <path d="M8 7 H12 M8 8.8 H12 M8 10.6 H12 M8 12.4 H12 M8.2 14.2 H11.8" stroke-width="0.5" opacity="0.7"/>
+      <line x1="10" y1="1.5" x2="10" y2="18.5" stroke-dasharray="2 1.5" stroke-width="0.5" opacity="0.55"/>
+    </symbol>
+    <!-- VGS vertical section, head bottom: csk wedge B, point T -->
+    <symbol id="icon-orient-vgs-v-headb" viewBox="0 0 20 20">
+      <path d="M6 17.5 L14 17.5 L11.3 14.5 L8.7 14.5 Z" stroke-width="0.85"/>
+      <path d="M8.7 14.5 L8.7 4.5 L10 2 L11.3 4.5 L11.3 14.5" stroke-width="0.8"/>
+      <path d="M8 13 H12 M8 11.2 H12 M8 9.4 H12 M8 7.6 H12 M8.2 5.8 H11.8" stroke-width="0.5" opacity="0.7"/>
+      <line x1="10" y1="1.5" x2="10" y2="18.5" stroke-dasharray="2 1.5" stroke-width="0.5" opacity="0.55"/>
+    </symbol>
     <!-- ===== ChemSet anchor-stud icons (tile + orientation row, 72j-v25-stud.js) ===== -->
     <!-- Tile: side-on stud — hex nut + washer + threaded rod + 45° chisel tip -->
     <symbol id="icon-stud" viewBox="0 0 20 20">
@@ -457,6 +498,61 @@
     <symbol id="icon-orient-chs-sec" viewBox="0 0 20 20">
       <circle cx="10" cy="10" r="7"/>
       <circle cx="10" cy="10" r="4.5"/>
+    </symbol>
+    <!-- EA (equal angle) — elevation: standing-leg rectangle with the other
+         leg's edge line near the bottom face (solid = leg toward viewer,
+         dashed = leg away). Section: single-stroke L, one per heel corner. -->
+    <symbol id="icon-orient-ea-elev-toward" viewBox="0 0 20 20">
+      <path d="M3 4 H17 V16 H3 Z"/>
+      <path d="M3 13 H17"/>
+    </symbol>
+    <symbol id="icon-orient-ea-elev-away" viewBox="0 0 20 20">
+      <path d="M3 4 H17 V16 H3 Z"/>
+      <path d="M3 13 H17" stroke-dasharray="2 1.3"/>
+    </symbol>
+    <symbol id="icon-orient-ea-sec-bl" viewBox="0 0 20 20">
+      <path d="M5 4 V16 H16"/>
+    </symbol>
+    <symbol id="icon-orient-ea-sec-br" viewBox="0 0 20 20">
+      <path d="M15 4 V16 H4"/>
+    </symbol>
+    <symbol id="icon-orient-ea-sec-tr" viewBox="0 0 20 20">
+      <path d="M15 16 V4 H4"/>
+    </symbol>
+    <symbol id="icon-orient-ea-sec-tl" viewBox="0 0 20 20">
+      <path d="M5 16 V4 H16"/>
+    </symbol>
+    <!-- UA (unequal angle) — elevation: tall box = long leg standing, shallow
+         box = short leg standing; the other leg's edge line is solid (toward
+         viewer) or dashed (away). Section: unequal-leg L per heel corner,
+         long leg up at roll 0. -->
+    <symbol id="icon-orient-ua-elev-long-toward" viewBox="0 0 20 20">
+      <path d="M3 4 H17 V16 H3 Z"/>
+      <path d="M3 13 H17"/>
+    </symbol>
+    <symbol id="icon-orient-ua-elev-long-away" viewBox="0 0 20 20">
+      <path d="M3 4 H17 V16 H3 Z"/>
+      <path d="M3 13 H17" stroke-dasharray="2 1.3"/>
+    </symbol>
+    <symbol id="icon-orient-ua-elev-short-toward" viewBox="0 0 20 20">
+      <path d="M3 7 H17 V13 H3 Z"/>
+      <path d="M3 11 H17"/>
+    </symbol>
+    <symbol id="icon-orient-ua-elev-short-away" viewBox="0 0 20 20">
+      <path d="M3 7 H17 V13 H3 Z"/>
+      <path d="M3 11 H17" stroke-dasharray="2 1.3"/>
+    </symbol>
+    <symbol id="icon-orient-ua-sec-bl" viewBox="0 0 20 20">
+      <path d="M5 4 V16 H12"/>
+    </symbol>
+    <symbol id="icon-orient-ua-sec-br" viewBox="0 0 20 20">
+      <path d="M15 8 V16 H4"/>
+    </symbol>
+    <symbol id="icon-orient-ua-sec-tr" viewBox="0 0 20 20">
+      <path d="M15 16 V4 H8"/>
+    </symbol>
+    <symbol id="icon-orient-ua-sec-tl" viewBox="0 0 20 20">
+      <path d="M5 12 V4 H16"/>
     </symbol>
 
     <!-- ===== Fasteners ===== -->
@@ -1647,6 +1743,8 @@
 <!-- ASH MASSLAM GLT timber member catalogue (added 2026-06-06). See PlannedBuilds/glt-member/. -->
 <script src="js/02h-data-glt.js"></script>
 <script src="js/02i-data-clt.js"></script>
+<!-- Rothoblaas VGS fully-threaded screw catalogue (added 2026-06-10). See PlannedBuilds/vgs-screw/. -->
+<script src="js/02j-data-vgs-screws.js"></script>
 <script src="js/03-data-bolts.js"></script>
 <script src="js/04-workspace.js"></script>
 <script src="js/05-state.js"></script>
@@ -1781,7 +1879,12 @@
 <script src="js/88-v25-snapshot-tools.js"></script>
 <!-- title-block-styles — three Bligh Tanner title blocks (Sketch / Bottom /
      Right) + the top-bar style toggle. Owns drawDrawingFrame (moved out of
-     45-dxf-export.js). Pure paper-space renderer; loads before render() runs. -->
+     45-dxf-export.js). Pure paper-space renderer; loads before render() runs.
+     87a (the baked-template PNGs as data-URLs, generated file) MUST load before
+     87 — its constants are resolved when 87's TB_*_BG_SRC consts initialise.
+     Data-URLs keep the baked canvases untainted under file:// so the white-
+     keying and the vector-PDF image embed both work. -->
+<script src="js/87a-titleblock-bg-data.js"></script>
 <script src="js/87-titleblock.js"></script>
 <!-- Timber-screw connection feature — Phase 2 entity types (added 2026-05-18).
      Note: number 76 was originally js/76-v25-plate.js (the v1 V25 plate path),

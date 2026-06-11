@@ -12,6 +12,22 @@
 let v25Selected = []; // entity ids
 let v25Drag = null;   // { ent, handle:'body'|'tip'|'txt'|'p1'..., dx, dy } during drag
 
+// Re-wrap a fixing's axis-aligned AABB after free rotation (ent.rot): rotate
+// the four corners about the anchor (u,v) and take the enclosing AABB, so
+// marquee-select / zoom-to keep covering the rotated glyph. End-on glyphs are
+// circles centred on the anchor — rotation-invariant, callers skip them.
+function _v25FixRotBox(ent, box) {
+  const deg = Number(ent && ent.rot) || 0;
+  if (!deg || typeof v25FixingRotPt !== 'function') return box;
+  let L = Infinity, R = -Infinity, B = Infinity, T = -Infinity;
+  [[box.L, box.B], [box.R, box.B], [box.R, box.T], [box.L, box.T]].forEach(c => {
+    const p = v25FixingRotPt(ent, c[0], c[1]);
+    if (p.u < L) L = p.u; if (p.u > R) R = p.u;
+    if (p.v < B) B = p.v; if (p.v > T) T = p.v;
+  });
+  return { L, R, B, T };
+}
+
 // AABB for any v25 entity in real-world (u,v) coords. Used for hit-test +
 // selection highlight box.
 function v25EntBounds(ent) {
@@ -143,9 +159,20 @@ function v25EntBounds(ent) {
     const rot = (ent.rot || 0) * Math.PI / 180;
     const cosR = Math.cos(rot), sinR = Math.sin(rot);
     const hd = (typeof v25Mem2HalfDepth === 'function') ? v25Mem2HalfDepth(ent) : 50;
-    // For cross-section view (length=0), bbox is just hd around centre.
+    // For cross-section view (length=0), bbox hugs the true drawn profile
+    // (I / C / rect / circle) when available — a UB section's bbox is bf
+    // wide, not d wide — falling back to the hd square otherwise.
     const aspect = ent.aspect || 'elev';
     if (aspect === 'sec') {
+      const so = (typeof v25Mem2SecOutline === 'function') ? v25Mem2SecOutline(ent) : null;
+      if (so && so.length >= 3) {
+        let L = Infinity, R = -Infinity, B = Infinity, T = -Infinity;
+        so.forEach(p => {
+          if (p[0] < L) L = p[0]; if (p[0] > R) R = p[0];
+          if (p[1] < B) B = p[1]; if (p[1] > T) T = p[1];
+        });
+        return { L, R, B, T };
+      }
       return { L: ent.u - hd, R: ent.u + hd, B: ent.v - hd, T: ent.v + hd };
     }
     let L = Infinity, R = -Infinity, B = Infinity, T = -Infinity;
@@ -194,31 +221,41 @@ function v25EntBounds(ent) {
     const halfWO = (b.washOD || 40) / 2; // transverse half-extent (washer Ø)
     const isH = (orient === 'h-nutR' || orient === 'h-nutL');
     if (isH) {
-      return { L: ent.u - axHalf, R: ent.u + axHalf, B: ent.v - halfWO, T: ent.v + halfWO };
+      return _v25FixRotBox(ent, { L: ent.u - axHalf, R: ent.u + axHalf, B: ent.v - halfWO, T: ent.v + halfWO });
     }
-    return { L: ent.u - halfWO, R: ent.u + halfWO, B: ent.v - axHalf, T: ent.v + axHalf };
+    return _v25FixRotBox(ent, { L: ent.u - halfWO, R: ent.u + halfWO, B: ent.v - axHalf, T: ent.v + axHalf });
   }
   if (ent.type === 'screw') {
-    // HBS timber screw (js/72i-v25-screw.js). Catalogue dia drives the footprint.
-    const S = (typeof getScrewSpec === 'function' && getScrewSpec(ent.screwSpec))
-            || (typeof HBS_PLATE_SCREWS === 'object' && HBS_PLATE_SCREWS[ent.screwSpec])
-            || { d: 10, dK: 16.5, t1: 16.5, L: 120 };
-    const halfW = (S.dK || 16.5) / 2;
+    // Timber screw — HBS pan-head (72i) or VGS fully-threaded (02j; spec ids
+    // 'VGS…'). Catalogue head dims drive the footprint; _v25ScrewGlyphParams
+    // resolves the family-specific bearing station / extents / head width.
+    const S = _v25ScrewSpecOf(ent);   // family-aware fallback (VGS stays VGS)
+    const G = _v25ScrewGlyphParams(S);
+    const halfW = G.halfW;
     const orient = ent.screwOrient || 'end';
     if (orient === 'end') {
       return { L: ent.u - halfW, R: ent.u + halfW, B: ent.v - halfW, T: ent.v + halfW };
     }
-    // Section: head at the placed u,v (the live glyph snaps the head to a face at
-    // draw time); body runs ~L into the material, head/collar overhangs ~tK.
-    const tK = S.tK || (S.d ? S.d * 0.56 : 5);
-    const bodyLen = Math.max(0, (S.L || 120) - tK) + 4;   // shank + thread + tip side
-    const headOver = tK + 6;                               // head/collar protrudes ~tK
+    // Section: bearing at the placed u,v (the live glyph snaps the bearing
+    // plane to a face at draw time); body runs ~L into the material. Head-side
+    // overhang is family-specific: HBS pan head sits ~tK proud; VGS csk is
+    // FLUSH at the bearing face (pad only); VGS hex head + washer flange sit
+    // tS + tFl proud. Slightly generous, like the bolt2 box above.
+    let bodyLen, headOver;
+    if (G.isVgs) {
+      bodyLen = (S.L || 120) + 2;                          // thread + tip side
+      headOver = G.isHex ? ((S.tS || 6.4) + (S.tFl || 2) + 2) : 2;
+    } else {
+      const tK = S.tK || (S.d ? S.d * 0.56 : 5);
+      bodyLen = Math.max(0, (S.L || 120) - tK) + 4;        // shank + thread + tip side
+      headOver = tK + 6;                                   // head/collar protrudes ~tK
+    }
     const headLow = (orient === 'h-headL' || orient === 'v-headB'); // body toward +axis
     const isH = (orient === 'h-headL' || orient === 'h-headR');
     const axLo = headLow ? -headOver : -bodyLen;
     const axHi = headLow ?  bodyLen  :  headOver;
-    if (isH) return { L: ent.u + axLo, R: ent.u + axHi, B: ent.v - halfW, T: ent.v + halfW };
-    return { L: ent.u - halfW, R: ent.u + halfW, B: ent.v + axLo, T: ent.v + axHi };
+    if (isH) return _v25FixRotBox(ent, { L: ent.u + axLo, R: ent.u + axHi, B: ent.v - halfW, T: ent.v + halfW });
+    return _v25FixRotBox(ent, { L: ent.u - halfW, R: ent.u + halfW, B: ent.v + axLo, T: ent.v + axHi });
   }
   if (ent.type === 'stud') {
     // ChemSet anchor stud (js/72j-v25-stud.js). Snap-independent generous box
@@ -247,8 +284,8 @@ function v25EntBounds(ent) {
     const isH = (orient === 'h-nutL' || orient === 'h-nutR');
     const axLo = nutLow ? -nutOver : -bodyLen;
     const axHi = nutLow ?  bodyLen  :  nutOver;
-    if (isH) return { L: ent.u + axLo, R: ent.u + axHi, B: ent.v - halfW, T: ent.v + halfW };
-    return { L: ent.u - halfW, R: ent.u + halfW, B: ent.v + axLo, T: ent.v + axHi };
+    if (isH) return _v25FixRotBox(ent, { L: ent.u + axLo, R: ent.u + axHi, B: ent.v - halfW, T: ent.v + halfW });
+    return _v25FixRotBox(ent, { L: ent.u - halfW, R: ent.u + halfW, B: ent.v + axLo, T: ent.v + axHi });
   }
   if (ent.type === 'noteBox' && typeof nbBounds === 'function') return nbBounds(ent);
   // CLT panel — AABB of the (rotated) world outline. Drives marquee-select,
@@ -431,6 +468,13 @@ function v25EntHit(blk, ent, cursorPx, ctx) {
 
   // ---- AREA / FILLED entities -------------------------------------------
   if (t === 'mem2') {
+    // Section view — pick by the TRUE drawn profile (I / C / rect / circle) so
+    // a click in the void beside a UB web falls through to entities around the
+    // member instead of being swallowed by the depth² bounding square.
+    if (typeof v25Mem2SecOutline === 'function') {
+      const so = v25Mem2SecOutline(ent);
+      if (so && so.length >= 3) return areaHit(so.map(p => ({ u: p[0], v: p[1] })));
+    }
     const oc = (typeof v25Mem2WorldOutline === 'function') ? v25Mem2WorldOutline(ent) : [];
     const poly = oc.map(p => ({ u: p[0], v: p[1] }));
     return areaHit(poly);
@@ -516,6 +560,51 @@ function v25EntHit(blk, ent, cursorPx, ctx) {
   return areaHit([{ u: b.L, v: b.B }, { u: b.R, v: b.B }, { u: b.R, v: b.T }, { u: b.L, v: b.T }]);
 }
 
+// Family-aware screw glyph parameters, shared by the bounds / precise-pick /
+// centreline / highlight paths so they stay in sync per family. Local axis s
+// runs head TOP (s = 0) → tip, exactly like the canvas drawers:
+//   isVgs / isHex   family flags (spec.system === 'rothoblaas-vgs', headType)
+//   sBear    bearing-plane station — the s the v25ScrewBearingFace coordinate
+//            maps to. HBS: pan-head collar underside (~tK). VGS csk: head TOP
+//            (countersunk head sits flush, s = 0). VGS hex: washer-flange
+//            underside (tS + tFl).
+//   sTotal   glyph length along s. HBS / VGS csk: catalogue L (head-top → tip).
+//            VGS hex: tS + L (catalogue L is under-head plane → tip).
+//   halfW    widest transverse half — head Ø (HBS/csk: dK) or hex
+//            across-corners (SW·2/√3) vs flange Ø (VGS hex) — drives the pick
+//            tolerance, end-on radius and highlight half-width.
+// Shared spec resolver for every screw selection-geometry site: catalogue
+// lookup with a FAMILY-AWARE fallback (mirrors drawScrew2D in 72i), so an
+// unresolvable 'VGS…' id keeps VGS datums instead of flipping to HBS while
+// the canvas keeps drawing the VGS glyph.
+function _v25ScrewSpecOf(ent) {
+  const spec = (typeof getScrewSpec === 'function' && getScrewSpec(ent.screwSpec))
+            || (typeof HBS_PLATE_SCREWS === 'object' && HBS_PLATE_SCREWS[ent.screwSpec]) || null;
+  if (spec) return spec;
+  return (typeof isVgsSpec === 'function' && isVgsSpec(ent.screwSpec))
+    ? { system: 'rothoblaas-vgs', headType: 'csk', d: 11, L: 300, b: 290,
+        dK: 19.3, t1: 8.2, dIn: 10.58, dU: 7.7 }      // representative Ø11×300 csk
+    : { d: 10, dK: 16.5, t1: 16.5, tK: 5, L: 120 };   // representative HBS Ø10×120
+}
+
+function _v25ScrewGlyphParams(S) {
+  S = S || {};
+  const isVgs = S.system === 'rothoblaas-vgs';
+  if (isVgs && S.headType === 'hex') {
+    const tS = S.tS || 6.4, tFl = S.tFl || 2;
+    return { isVgs: true, isHex: true, sBear: tS + tFl, sTotal: tS + (S.L || 120),
+             halfW: Math.max(S.dFl || 0, (S.SW || 17) * 1.1547) / 2 };
+  }
+  if (isVgs) {
+    return { isVgs: true, isHex: false, sBear: 0, sTotal: S.L || 120,
+             halfW: (S.dK || 16) / 2 };
+  }
+  // HBS — collar underside is the bearing plane (mirrors drawScrew2D_Section).
+  const d = S.d || 10, tK = S.tK || d * 0.56, headLen = 1.80 * d;
+  return { isVgs: false, isHex: false, sBear: Math.min(tK, headLen * 0.45),
+           sTotal: S.L || d * 12, halfW: (S.dK || 16.5) / 2 };
+}
+
 // Precise hit for a fastener (screw / bolt) SECTION centreline. The drawn
 // centreline is re-centred on the detected bearing/clamp FACE — NOT ent.u/v —
 // so we recompute the exact endpoints the drawer uses. End-on glyphs are a
@@ -527,35 +616,42 @@ function v25FastenerHit(blk, ent, cursorPx, ctx, kind) {
   const ppmm = ctx.ppmm;
   const FLOOR_PX = ctx.FLOOR_PX;
 
+  // Free rotation (ent.rot) — the glyph is drawn rigidly rotated about the
+  // anchor (v25FixingRotWrap, 69-v25-dispatch.js): screen = p0 + R(-rot)·(q-p0).
+  // Un-rotate the cursor into the unrotated frame (apply R(+rot) about the
+  // anchor px) so the orientation-aligned axis math below applies unchanged.
+  const _fxDeg = Number(ent.rot) || 0;
+  if (_fxDeg) {
+    const _p0 = real2Px(ent.u, ent.v);
+    const _a = _fxDeg * Math.PI / 180, _c = Math.cos(_a), _s = Math.sin(_a);
+    const _dx = cursorPx.x - _p0.x, _dy = cursorPx.y - _p0.y;
+    cursorPx = { x: _p0.x + _dx * _c - _dy * _s, y: _p0.y + _dx * _s + _dy * _c };
+  }
+
   if (kind === 'screw') {
-    const S = (typeof getScrewSpec === 'function' && getScrewSpec(ent.screwSpec))
-            || (typeof HBS_PLATE_SCREWS === 'object' && HBS_PLATE_SCREWS[ent.screwSpec])
-            || { d: 10, dK: 16.5, t1: 16.5, tK: 5, L: 120 };
+    const S = _v25ScrewSpecOf(ent);   // family-aware fallback (VGS stays VGS)
+    const G = _v25ScrewGlyphParams(S);   // HBS / VGS-csk / VGS-hex datum + extents
     const orient = ent.screwOrient || 'end';
     if (orient === 'end') {
       const p = real2Px(ent.u, ent.v);
       const d = Math.hypot(cursorPx.x - p.x, cursorPx.y - p.y);
-      const tol = ((S.dK || 16.5) / 2) * ppmm + FLOOR_PX;
+      const tol = G.halfW * ppmm + FLOOR_PX;
       return (d <= tol) ? { precise: true, score: d } : null;
     }
-    // SECTION: replicate drawScrew2D_Section's axis mapping exactly so the pick
-    // sits on the DRAWN centreline (which lands on the bearing face).
+    // SECTION: replicate the drawer's axis mapping exactly so the pick sits on
+    // the DRAWN centreline (which lands on the bearing face). The family datum
+    // (G.sBear) and glyph length (G.sTotal) come from the shared params.
     const axisIsU = (orient === 'h-headL' || orient === 'h-headR');
     const trans = axisIsU ? ent.v : ent.u;
     const bodyDir = (orient === 'h-headL' || orient === 'v-headB') ? 1 : -1;
-    const d = S.d || 10;
-    const tK = S.tK || d * 0.56;
-    const L = S.L || d * 12;
-    const headLen = 1.80 * d;                    // SCREW_GEOM.headLenNorm * d
-    const sBear = Math.min(tK, headLen * 0.45);  // collar underside = bearing plane
     const bearing = (typeof v25ScrewBearingFace === 'function') ? v25ScrewBearingFace(blk, ent) : null;
     const junction = (bearing != null) ? bearing : (axisIsU ? ent.u : ent.v);
-    const axisAt = (s) => junction + bodyDir * (s - sBear);
-    const a0 = axisAt(-2), aL = axisAt(L + 2);
+    const axisAt = (s) => junction + bodyDir * (s - G.sBear);
+    const a0 = axisAt(-2), aL = axisAt(G.sTotal + 2);
     const A = axisIsU ? real2Px(a0, trans) : real2Px(trans, a0);
     const B = axisIsU ? real2Px(aL, trans) : real2Px(trans, aL);
     const dist = distSeg(cursorPx, A, B);
-    const tol = Math.max(FLOOR_PX, ((S.dK || 16.5) / 2) * ppmm);
+    const tol = Math.max(FLOOR_PX, G.halfW * ppmm);
     return (dist <= tol) ? { precise: true, score: dist } : null;
   }
 
@@ -957,10 +1053,14 @@ function v25EntHandles(ent, blk) {
     if (!g) {
       out.push({ key: 'body', u: ent.u, v: ent.v });
     } else {
-      const body = g.Puv(0, 0), face = g.Puv(g.sFace, 0), tip = g.Puv(g.embLen, 0);
-      out.push({ key: 'body', u: body[0], v: body[1] });
-      out.push({ key: 'stud-face', shape: 'circle', u: face[0], v: face[1] });
-      out.push({ key: 'stud-tip', u: tip[0], v: tip[1] });
+      // Grips ride the free rotation (ent.rot) — the geometry is computed in
+      // the unrotated frame, so spin each grip about the anchor to land on the
+      // drawn (rotated) glyph.
+      const rp = (p) => (typeof v25FixingRotPt === 'function') ? v25FixingRotPt(ent, p[0], p[1]) : { u: p[0], v: p[1] };
+      const body = rp(g.Puv(0, 0)), face = rp(g.Puv(g.sFace, 0)), tip = rp(g.Puv(g.embLen, 0));
+      out.push({ key: 'body', u: body.u, v: body.v });
+      out.push({ key: 'stud-face', shape: 'circle', u: face.u, v: face.v });
+      out.push({ key: 'stud-tip', u: tip.u, v: tip.v });
     }
   }
   // Mat — rotation handle (Bluebeam-style perpendicular ball above the top
@@ -1140,8 +1240,25 @@ function v25CollectSnapPoints(blk, originU, originV) {
 // its value; the other collapses to the previous vertex's coordinate.
 function v25OrthoSnap(lastU, lastV, cu, cv) {
   const du = cu - lastU, dv = cv - lastV;
-  if (Math.abs(du) >= Math.abs(dv)) return { u: cu, v: lastV };
-  return { u: lastU, v: cv };
+  const len = Math.hypot(du, dv);
+  if (len < 1e-6) return { u: cu, v: cv };
+  // Project onto the nearest of 8 directions (0/45/90/135/180/225/270/315°).
+  // Find which octant by comparing |du| and |dv| against the 22.5° threshold
+  // (tan(22.5°) ≈ 0.414 → the diagonal wins when |dv|/|du| is between 0.414 and 2.414).
+  const adx = Math.abs(du), ady = Math.abs(dv);
+  const sx = du >= 0 ? 1 : -1, sy = dv >= 0 ? 1 : -1;
+  const ratio = adx < 1e-9 ? Infinity : ady / adx;
+  if (ratio < 0.4142) {
+    // Closest to horizontal (0°/180°)
+    return { u: cu, v: lastV };
+  } else if (ratio > 2.4142) {
+    // Closest to vertical (90°/270°)
+    return { u: lastU, v: cv };
+  } else {
+    // Closest to a 45° diagonal — project the displacement onto the unit diagonal
+    const proj = (adx + ady) / 2;
+    return { u: lastU + sx * proj, v: lastV + sy * proj };
+  }
 }
 
 // Try to snap the cursor in 2D mode for v25 draw tools.
@@ -1393,9 +1510,8 @@ function _v25FastenerFootprintPoly(ent, blk) {
     const nd = (typeof studDims === 'function') ? studDims(S.size, S.d || 16) : { washOD: (S.d || 16) * 2.1 };
     halfW = (nd.washOD || (S.d || 16) * 2.1) / 2;
   } else if (ent.type === 'screw') {
-    const S = (typeof getScrewSpec === 'function' && getScrewSpec(ent.screwSpec))
-            || (typeof HBS_PLATE_SCREWS === 'object' && HBS_PLATE_SCREWS[ent.screwSpec]) || { dK: 16.5 };
-    halfW = (S.dK || 16.5) / 2;
+    const S = _v25ScrewSpecOf(ent);   // family-aware fallback (VGS stays VGS)
+    halfW = _v25ScrewGlyphParams(S).halfW;   // HBS dK / VGS-csk dK / VGS-hex SW·2/√3 vs dFl
   } else if (ent.type === 'bolt2') {
     const b = (typeof BOLT_DB === 'object' && (BOLT_DB[ent.size] || BOLT_DB.M20)) || { washOD: 44, d: 20 };
     halfW = (b.washOD || (b.d || 20) * 1.85) / 2;
@@ -1421,6 +1537,13 @@ function v25SelFootprint(ent, blk) {
     const len = ent.length || 0;
     const hd = (typeof v25Mem2HalfDepth === 'function') ? v25Mem2HalfDepth(ent) : 50;
     if ((ent.aspect || 'elev') === 'sec' || len === 0) {
+      // True drawn profile (I-shape UB/UC/WB, C-shape PFC, rect RHS, circle
+      // CHS) so the accent fill hugs the visible steel instead of a depth²
+      // square that buries everything around the member.
+      if (typeof v25Mem2SecOutline === 'function') {
+        const so = v25Mem2SecOutline(ent);
+        if (so && so.length >= 3) return so.map(p => ({ u: p[0], v: p[1] }));
+      }
       // GLT sections are strongly non-square (e.g. 165×480) — hug the true
       // breadth×depth glyph (spun by roll) via the tight WorldOutline rather than
       // the depth² square the other section types fall back to, so the selection
@@ -1429,8 +1552,12 @@ function v25SelFootprint(ent, blk) {
         const oc = v25Mem2WorldOutline(ent);
         if (oc && oc.length >= 3) return oc.map(p => ({ u: p[0], v: p[1] }));
       }
-      return [{ u: ent.u - hd, v: ent.v - hd }, { u: ent.u + hd, v: ent.v - hd },
-              { u: ent.u + hd, v: ent.v + hd }, { u: ent.u - hd, v: ent.v + hd }];
+      // Spin the square halo by the total section rotation (roll + free
+      // Rotation°) so it hugs a tilted glyph (e.g. SHS rotated 30°).
+      const sr = ((typeof v25Mem2SecRotDeg === 'function') ? v25Mem2SecRotDeg(ent) : (ent.rot || 0)) * Math.PI / 180;
+      const sc = Math.cos(sr), ss = Math.sin(sr);
+      return [[-hd, -hd], [hd, -hd], [hd, hd], [-hd, hd]].map(([lx, ly]) => ({
+        u: ent.u + lx * sc - ly * ss, v: ent.v + lx * ss + ly * sc }));
     }
     const r = (ent.rot || 0) * Math.PI / 180, c = Math.cos(r), s = Math.sin(r);
     return [[0, -hd], [len, -hd], [len, hd], [0, hd]].map(([lx, ly]) => ({
@@ -1668,22 +1795,30 @@ function v25BlockWallPolyWorld(ent) {
 // halo lands on the exact drawn (bearing/clamp-re-centred) axis the pick uses.
 // Returns { kind:'seg', a:{u,v}, b:{u,v} } | { kind:'pt', u, v, radMm } | null.
 function v25FastenerCentreline(blk, ent) {
+  const cl = _v25FastenerCentrelineRaw(blk, ent);
+  // Free rotation (ent.rot) — spin the unrotated-frame centreline about the
+  // anchor (matching v25FixingRotWrap / v25FastenerHit) so the hover halo,
+  // highlight rod rect and footprint all track the drawn rotated glyph.
+  // End-on 'pt' results sit ON the anchor — rotation-invariant.
+  if (cl && cl.kind === 'seg' && (Number(ent.rot) || 0) && typeof v25FixingRotPt === 'function') {
+    return { kind: 'seg', a: v25FixingRotPt(ent, cl.a.u, cl.a.v), b: v25FixingRotPt(ent, cl.b.u, cl.b.v) };
+  }
+  return cl;
+}
+function _v25FastenerCentrelineRaw(blk, ent) {
   const t = ent.type;
   if (t === 'screw') {
-    const S = (typeof getScrewSpec === 'function' && getScrewSpec(ent.screwSpec))
-            || (typeof HBS_PLATE_SCREWS === 'object' && HBS_PLATE_SCREWS[ent.screwSpec])
-            || { d: 10, dK: 16.5, tK: 5, L: 120 };
+    const S = _v25ScrewSpecOf(ent);   // family-aware fallback (VGS stays VGS)
+    const G = _v25ScrewGlyphParams(S);   // HBS / VGS-csk / VGS-hex datum + extents
     const orient = ent.screwOrient || 'end';
-    if (orient === 'end') return { kind: 'pt', u: ent.u, v: ent.v, radMm: (S.dK || 16.5) / 2 };
+    if (orient === 'end') return { kind: 'pt', u: ent.u, v: ent.v, radMm: G.halfW };
     const axisIsU = (orient === 'h-headL' || orient === 'h-headR');
     const trans = axisIsU ? ent.v : ent.u;
     const bodyDir = (orient === 'h-headL' || orient === 'v-headB') ? 1 : -1;
-    const d = S.d || 10, tK = S.tK || d * 0.56, L = S.L || d * 12;
-    const headLen = 1.80 * d, sBear = Math.min(tK, headLen * 0.45);
     const bearing = (typeof v25ScrewBearingFace === 'function') ? v25ScrewBearingFace(blk, ent) : null;
     const junction = (bearing != null) ? bearing : (axisIsU ? ent.u : ent.v);
-    const axisAt = (s) => junction + bodyDir * (s - sBear);
-    const a0 = axisAt(-2), aL = axisAt(L + 2);
+    const axisAt = (s) => junction + bodyDir * (s - G.sBear);
+    const a0 = axisAt(-2), aL = axisAt(G.sTotal + 2);
     return axisIsU ? { kind: 'seg', a: { u: a0, v: trans }, b: { u: aL, v: trans } }
                    : { kind: 'seg', a: { u: trans, v: a0 }, b: { u: trans, v: aL } };
   }
@@ -1742,7 +1877,11 @@ function v25HoverOutline(blk, ent) {
     return out;
   }
   if (t === 'mem2') {
-    const oc = (typeof v25Mem2WorldOutline === 'function') ? v25Mem2WorldOutline(ent) : null;
+    // Section view — trace the TRUE drawn profile (I / C / rect / circle),
+    // mirroring the precise pick, so the hover glow hugs the visible steel.
+    const so = (typeof v25Mem2SecOutline === 'function') ? v25Mem2SecOutline(ent) : null;
+    const oc = (so && so.length >= 3) ? so
+      : ((typeof v25Mem2WorldOutline === 'function') ? v25Mem2WorldOutline(ent) : null);
     if (oc && oc.length >= 3) out.closed.push(oc.map(p => ({ u: p[0], v: p[1] }))); else bboxClosed();
     return out;
   }
@@ -1909,9 +2048,11 @@ function v25HitHandle(blk, ent, u, v) {
     // one gesture.)
     const g = (typeof studSectionGeom === 'function') ? studSectionGeom(blk, ent) : null;
     if (g) {
-      const tip = g.Puv(g.embLen, 0), face = g.Puv(g.sFace, 0);
-      if (distPx(tip[0], tip[1]) < 11) return 'stud-tip';
-      if (distPx(face[0], face[1]) < 11) return 'stud-face';
+      // Spin the grip targets with the free rotation (matches v25EntHandles).
+      const rp = (p) => (typeof v25FixingRotPt === 'function') ? v25FixingRotPt(ent, p[0], p[1]) : { u: p[0], v: p[1] };
+      const tip = rp(g.Puv(g.embLen, 0)), face = rp(g.Puv(g.sFace, 0));
+      if (distPx(tip.u, tip.v) < 11) return 'stud-tip';
+      if (distPx(face.u, face.v) < 11) return 'stud-face';
     }
     return 'body';
   }
@@ -2141,8 +2282,12 @@ function v25Move(ent, du, dv, handle) {
     const _blk = (typeof activeBlock !== 'undefined') ? activeBlock : null;
     const g = (typeof studSectionGeom === 'function') ? studSectionGeom(_blk, ent) : null;
     if (!g) return;
-    const cu = (typeof v25Drag === 'object' && v25Drag) ? (v25Drag.lastU + du) : (ent.u + du);
-    const cv = (typeof v25Drag === 'object' && v25Drag) ? (v25Drag.lastV + dv) : (ent.v + dv);
+    const cu0 = (typeof v25Drag === 'object' && v25Drag) ? (v25Drag.lastU + du) : (ent.u + du);
+    const cv0 = (typeof v25Drag === 'object' && v25Drag) ? (v25Drag.lastV + dv) : (ent.v + dv);
+    // The axis projection below runs in the UNROTATED frame — map the cursor
+    // back through the inverse free rotation about the anchor first.
+    const _unr = (typeof v25FixingUnrotPt === 'function') ? v25FixingUnrotPt(ent, cu0, cv0) : { u: cu0, v: cv0 };
+    const cu = _unr.u, cv = _unr.v;
     const cursorAxis = g.axisIsU ? cu : cv;
     const s = (cursorAxis - g.junction) * g.bodyDir;     // project cursor onto the stud axis
     if (handle === 'stud-tip') {
@@ -2708,17 +2853,40 @@ function v25UpdateInspector() {
     col('Line colour', 'extColour');
     sel('Line style', 'extLs', ['solid', 'dashed', 'dotted']);
   } else if (ent.type === 'mem2') {
-    sel('Type', 'memberType', ['ub','uc','wb','pfc','shs','rhs','glt']);
+    sel('Type', 'memberType', ['ub','uc','wb','pfc','shs','rhs','chs','ea','ua','glt']);
+    // chs-availability — seed the grade from the size (Austube guide) so the
+    // grade-filtered Section list below and the Grade dropdown always agree.
+    if (ent.memberType === 'chs' && !ent.grade) {
+      ent.grade = (typeof chsGradeOfSize === 'function' && chsGradeOfSize(ent.section)) || 'C350';
+    }
     let secNames = ent.memberType === 'ub' ? Object.keys(UB_DB).filter(n => n.includes('UB'))
                  : ent.memberType === 'uc' ? Object.keys(UC_DB || {})
                  : ent.memberType === 'wb' ? Object.keys((typeof WB_DB === 'object') ? WB_DB : {})
                  : ent.memberType === 'pfc' ? Object.keys((typeof PFC_DB === 'object') ? PFC_DB : {})
                  : ent.memberType === 'shs' ? Object.keys(SHS_DB)
                  : ent.memberType === 'rhs' ? Object.keys((typeof RHS_DB === 'object' ? RHS_DB : {}))
+                 : ent.memberType === 'chs' ? ((typeof chsAvailSizes === 'function' && chsAvailSizes(ent.grade || 'C350').length)
+                     ? chsAvailSizes(ent.grade || 'C350')
+                     : Object.keys((typeof CHS_DB === 'object') ? CHS_DB : {}))
+                 : ent.memberType === 'ea'  ? Object.keys((typeof EA_DB  === 'object') ? EA_DB  : {})
+                 : ent.memberType === 'ua'  ? Object.keys((typeof UA_DB  === 'object') ? UA_DB  : {})
                  : ent.memberType === 'glt' ? Object.keys((typeof GLT_SIZES === 'object') ? GLT_SIZES : {})
                  : [];
     if (ent.section && !secNames.includes(ent.section)) secNames = [ent.section, ...secNames];
+    // chs-availability — Grade (re-filters the Section list on rebuild) and
+    // Finish (per-size availability from the Austube guide, MOQ/ex-rolling
+    // flagged in the label) sit either side of Section, like the top bar.
+    if (ent.memberType === 'chs' && typeof CHS_GRADES !== 'undefined') {
+      fields.push({ kind: 'sel', label: 'Grade', key: 'grade', opts: CHS_GRADES.map(g => ({ v: g.v, l: g.l })) });
+    }
     sel('Section', 'section', secNames);
+    if (ent.memberType === 'chs' && typeof chsFinishOptions === 'function') {
+      const fOpts = chsFinishOptions(ent.grade || 'C350', ent.section);
+      if (fOpts.length) {
+        if (!ent.finish || !fOpts.some(o => o.v === ent.finish)) ent.finish = fOpts[0].v;
+        fields.push({ kind: 'sel', label: 'Finish', key: 'finish', opts: fOpts });
+      }
+    }
     sel('Aspect', 'aspect', ['elev','sec']);
     // Axial roll about the member's long axis (0/90/180/270). In section it
     // spins the glyph (web-vert vs web-horiz); in elevation it picks the face
@@ -2858,11 +3026,13 @@ function v25UpdateInspector() {
     num('Arrow line (mm)', 'leaderLwMm', 0.05);
     sel('Case', 'textCase', ['upper','normal']);
   } else if (ent.type === 'screw') {
-    // HBS timber screw (js/72i-v25-screw.js). screwSpec is the 02c catalogue key;
-    // changing it / the orientation just re-renders via the generic apply handler.
+    // Timber screw — the spec id selects the family (HBSPL… = HBS pan-head 02c,
+    // VGS… = VGS fully-threaded 02j); changing it / the orientation just
+    // re-renders via the generic apply handler.
     let screwIds = (typeof HBS_PLATE_SCREWS === 'object') ? Object.keys(HBS_PLATE_SCREWS) : [];
+    if (typeof VGS_SCREWS === 'object') screwIds = screwIds.concat(Object.keys(VGS_SCREWS));
     if (ent.screwSpec && !screwIds.includes(ent.screwSpec)) screwIds = [ent.screwSpec, ...screwIds];
-    sel('Size (HBS code)', 'screwSpec', screwIds);
+    sel('Size (catalogue code)', 'screwSpec', screwIds);
     sel('Orientation', 'screwOrient',
       (typeof V25_SCREW_ORIENT === 'object' && V25_SCREW_ORIENT)
         ? V25_SCREW_ORIENT.map(o => o.id) : ['end','h-headL','h-headR','v-headT','v-headB']);
@@ -3110,6 +3280,10 @@ function v25UpdateInspector() {
                     : val === 'wb' ? (typeof WB_DB === 'object' ? WB_DB : UB_DB)
                     : val === 'shs' ? SHS_DB
                     : val === 'rhs' ? (typeof RHS_DB === 'object' ? RHS_DB : {})
+                    : val === 'chs' ? (typeof CHS_DB === 'object' ? CHS_DB : {})
+                    : val === 'pfc' ? (typeof PFC_DB === 'object' ? PFC_DB : {})
+                    : val === 'ea'  ? (typeof EA_DB  === 'object' ? EA_DB  : {})
+                    : val === 'ua'  ? (typeof UA_DB  === 'object' ? UA_DB  : {})
                     : val === 'glt' ? (typeof GLT_SIZES === 'object' ? GLT_SIZES : {})
                     : {};
         let names = Object.keys(newDb || {});

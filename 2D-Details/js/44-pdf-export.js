@@ -292,10 +292,13 @@ async function exportSheetToPDFVector() {
 // Canvas-2D-like surface that emits jsPDF primitives. Covers the subset of
 // the HTMLCanvasElement 2D API actually used by render() — path building,
 // rect/circle/text drawing, transform stack, stroke/fill styling, dashes,
-// and drawImage (used only for the 3D isometric block, rasterised inline).
-// Clipping is a no-op: the main clip use is `drawCrossHatchPoly` which
-// falls back acceptably without clipping because the hatch lines are
-// drawn to the polygon bounding-box extent.
+// clipping, and drawImage (3D isometric block, snapshot images, baked
+// title-block strips).
+// Clipping is REAL (2026-06-12): V25 hatch/material patterns (stipple dots,
+// 45° hatch lines, concrete aggregate) draw across — and past — the entity
+// bounding box and rely on ctx.clip() to trim to the polygon. clip() emits a
+// PDF `q` + path + `W n`, and the matching canvas restore() emits the `Q`,
+// so PDF clip scoping mirrors the canvas save/clip/restore convention.
 function createPdfCanvasShim(pdf) {
   // Mutable graphics state. save()/restore() push/pop a deep copy.
   const st = {
@@ -316,6 +319,15 @@ function createPdfCanvasShim(pdf) {
   const stack = [];
   const subpaths = [];  // array of subpath arrays; each subpath is pt objs
   let cur = null;       // ref to the current subpath (top of `subpaths`)
+
+  // Clip support requires the jsPDF graphics-state + clip operators (all
+  // present in the pinned 2.5.1). If a future jsPDF swap drops any of them,
+  // clip() degrades back to the historical no-op instead of emitting an
+  // unbalanced `q` that would swallow the rest of the document.
+  const canClip = typeof pdf.saveGraphicsState === 'function'
+    && typeof pdf.restoreGraphicsState === 'function'
+    && typeof pdf.clip === 'function'
+    && typeof pdf.discardPath === 'function';
 
   // --- Transform helpers ---
   function tp(x, y) {
@@ -407,7 +419,8 @@ function createPdfCanvasShim(pdf) {
 
   // --- Path emission ---
   // Converts a subpath's point sequence into jsPDF draw calls. `style` is
-  // jsPDF's style code: 'S' stroke, 'F' fill, 'FD' fill+stroke.
+  // jsPDF's style code: 'S' stroke, 'F' fill, 'FD' fill+stroke — or null to
+  // build the path WITHOUT painting it (jsPDF's convention for clip paths).
   function emitSubpath(sp, style) {
     if (!sp || sp.length === 0) return;
     if (sp[0].cmd === 'CIRCLE') {
@@ -440,6 +453,8 @@ function createPdfCanvasShim(pdf) {
       pdf.lines(deltas, first.x, first.y, [1, 1], style, closed);
     } catch (e) {
       // Fall back to per-segment lines (loses fill, but keeps stroke).
+      // Never for a clip path (style null) — pdf.line would paint strokes.
+      if (style === null) return;
       let x0 = first.x, y0 = first.y;
       for (const d of deltas) {
         pdf.line(x0, y0, x0 + d[0], y0 + d[1]);
@@ -467,11 +482,17 @@ function createPdfCanvasShim(pdf) {
         textAlign: st.textAlign,
         textBaseline: st.textBaseline,
         transform: [...st.transform],
+        qCount: 0,   // PDF `q` ops emitted by clip() under this save frame
       });
     },
     restore() {
       const s = stack.pop();
       if (s) {
+        // Pop the PDF graphics states pushed by clip() calls inside this
+        // frame — this is what actually ends the clip region in the PDF.
+        for (let i = 0; i < s.qCount; i++) {
+          try { pdf.restoreGraphicsState(); } catch (e) {}
+        }
         st.strokeColor = s.strokeColor;
         st.fillColor = s.fillColor;
         st.strokeAlpha = s.strokeAlpha;
@@ -684,40 +705,112 @@ function createPdfCanvasShim(pdf) {
     },
 
     // ----- Image -----
-    // Used exclusively by drawBlockContent() to blit the Three.js isometric
-    // canvas. We convert to PNG (better than JPEG for edge lines) and embed.
+    // Blits the Three.js isometric canvas, V25 snapshot images, and the baked
+    // title-block strips. PNG (better than JPEG for edge lines), embedded via
+    // pdf.addImage. Three cases (2026-06-12 rewrite):
+    //   - axis-aligned whole image (the overwhelmingly common case): direct
+    //     embed, honouring any scale in the current transform.
+    //   - rotated transform and/or 9-arg source crop: bake through a temp
+    //     canvas (full current transform applied) and embed the transformed
+    //     bounding box — previously the crop was ignored and rotation lost.
+    // NOTE: a tainted source (file:// loaded <img>) still throws in
+    // toDataURL and is skipped with the console warning below — the baked
+    // title blocks avoid this by loading from data-URLs (87a-titleblock-bg-data).
     drawImage(img, a, b, c, d, e, f, g, h) {
       try {
-        let dx, dy, dw, dh;
+        let sx = 0, sy = 0, sw = null, sh = null, dx, dy, dw, dh;
         if (arguments.length === 9) {
-          // drawImage(img, sx, sy, sw, sh, dx, dy, dw, dh) — source clip ignored
-          dx = e; dy = f; dw = g; dh = h;
+          // drawImage(img, sx, sy, sw, sh, dx, dy, dw, dh)
+          sx = a; sy = b; sw = c; sh = d; dx = e; dy = f; dw = g; dh = h;
         } else if (arguments.length === 5) {
           dx = a; dy = b; dw = c; dh = d;
         } else {
           dx = a; dy = b; dw = img.width || 0; dh = img.height || 0;
         }
-        const p = tp(dx, dy);
-        let data = null;
-        if (typeof img.toDataURL === 'function') {
-          data = img.toDataURL('image/png');
-        } else if (img.src) {
-          data = img.src;
+        if (!(dw > 0) || !(dh > 0)) return;
+
+        const m = st.transform;
+        const rot = Math.atan2(m[1], m[0]);
+        const scX = Math.hypot(m[0], m[1]) || 1;
+        const scY = Math.hypot(m[2], m[3]) || 1;
+        const srcW = img.naturalWidth || img.width || 0;
+        const srcH = img.naturalHeight || img.height || 0;
+        const hasRot = Math.abs(rot) > 1e-4;
+        const hasCrop = sw != null
+          && (sx !== 0 || sy !== 0 || sw !== srcW || sh !== srcH);
+
+        if (!hasRot && !hasCrop) {
+          // Fast path — whole image, axis-aligned (possibly scaled).
+          let data = null;
+          if (typeof img.toDataURL === 'function') {
+            data = img.toDataURL('image/png');
+          } else if (img.src) {
+            data = img.src;
+          }
+          if (!data) return;
+          const p = tp(dx, dy);
+          pdf.addImage(data, 'PNG', p.x, p.y, dw * scX, dh * scY);
+          return;
         }
-        if (!data) return;
-        pdf.addImage(data, 'PNG', p.x, p.y, dw, dh);
+
+        // Rotation and/or source crop — bake through a temp canvas with the
+        // full current transform, then embed the transformed bounding box.
+        const c0 = tp(dx, dy), c1 = tp(dx + dw, dy),
+              c2 = tp(dx + dw, dy + dh), c3 = tp(dx, dy + dh);
+        const bL = Math.min(c0.x, c1.x, c2.x, c3.x);
+        const bR = Math.max(c0.x, c1.x, c2.x, c3.x);
+        const bT = Math.min(c0.y, c1.y, c2.y, c3.y);
+        const bB = Math.max(c0.y, c1.y, c2.y, c3.y);
+        const bw = bR - bL, bh = bB - bT;
+        if (!(bw > 0) || !(bh > 0)) return;
+        // Raster density: keep the source's px-per-output-mm (clamped 2..8)
+        // so the bake never visibly softens the image.
+        const k = Math.max(2, Math.min(8, ((sw != null ? sw : srcW) || dw) / (dw * scX || 1)));
+        const cnv = document.createElement('canvas');
+        cnv.width = Math.max(1, Math.ceil(bw * k));
+        cnv.height = Math.max(1, Math.ceil(bh * k));
+        const c2d = cnv.getContext('2d');
+        c2d.setTransform(k, 0, 0, k, -bL * k, -bT * k);
+        c2d.transform(m[0], m[1], m[2], m[3], m[4], m[5]);
+        if (sw != null) c2d.drawImage(img, sx, sy, sw, sh, dx, dy, dw, dh);
+        else c2d.drawImage(img, dx, dy, dw, dh);
+        pdf.addImage(cnv.toDataURL('image/png'), 'PNG', bL, bT, bw, bh);
       } catch (e) {
         console.warn('PDF drawImage failed:', e);
       }
     },
 
-    // ----- Clipping (no-op) -----
-    // drawCrossHatchPoly uses clip+stroke to fill a polygon with 45° hatch
-    // lines. Without clip the hatch extends to the bounding box, which for
-    // rectangular plates (the overwhelmingly common case) looks identical.
-    // For irregular polygons the hatch will slightly overrun; acceptable
-    // for V15, revisit in V17 alongside polygon-plate rendering polish.
-    clip() {},
+    // ----- Clipping -----
+    // Real clip (2026-06-12). The on-screen renderers (V25 mat stipple/hatch,
+    // steel cross-hatch, hollow-section even-odd hatch, snapshot crops) build
+    // a path, clip(), then draw patterns that overrun the shape — without a
+    // real clip the export gets bbox-filling stipple rects and sheet-wide
+    // 45° hatch bands. Mirrors canvas semantics: the clip lasts until the
+    // restore() matching the save() made before it. Emits `q` + path + `W n`
+    // here; restore() pops the `Q` via the frame's qCount. A clip() with no
+    // prior save() is permanent (canvas-equivalent) so no `q` is emitted —
+    // that keeps the content stream's q/Q balanced.
+    clip(rule) {
+      if (!canClip || subpaths.length === 0) return;
+      // Canvas allows clip('evenodd') as the first arg (Path2D form unused here).
+      const evenodd = rule === 'evenodd';
+      try {
+        if (stack.length) {
+          pdf.saveGraphicsState();
+          stack[stack.length - 1].qCount++;
+        }
+        // All subpaths accumulate into ONE PDF path before the clip operator,
+        // so multi-subpath regions (e.g. outer + inner wall rings) clip with
+        // the intended even-odd holes.
+        for (const sp of subpaths) emitSubpath(sp, null);
+        if (evenodd && typeof pdf.clipEvenOdd === 'function') pdf.clipEvenOdd();
+        else pdf.clip(evenodd ? 'evenodd' : undefined);
+        pdf.discardPath();
+      } catch (e) {
+        // Path emission failed mid-clip — the `q` (if any) is already counted
+        // against the frame, so restore() still rebalances the stream.
+      }
+    },
   };
 
   return shim;

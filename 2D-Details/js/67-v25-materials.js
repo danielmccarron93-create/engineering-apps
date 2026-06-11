@@ -254,10 +254,16 @@ function drawMat2D(blk, ent, cs) {
     const dotCount = Math.max(20, Math.min(2400, Math.round(areaMm2 * (def.dotDensity || 0.09) / scaleMulSq)));
 
     // Aggregate triangles — outlined (paper interior), slight wobble + rotation.
+    // All triangles accumulate into ONE path, filled once then stroked once;
+    // per-triangle fill()+stroke() pairs (up to 800 of each) were the bulk of
+    // the cost of redrawing a concrete region every frame. Where triangles
+    // overlap, both outlines now show through (the old interleaved fill hid
+    // the earlier outline) — invisible at aggregate scale.
     ctx.lineWidth = Math.max(0.45, 0.30 * pm);
     ctx.strokeStyle = colorAlpha(col, 0.85);
     ctx.lineJoin = 'round';
     ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
     for (let i = 0; i < triCount; i++) {
       const u = L + rnd() * w;
       const v = B + rnd() * h;
@@ -265,48 +271,61 @@ function drawMat2D(blk, ent, cs) {
       const sizeBias = rnd();
       const baseMm = (1.0 + sizeBias * sizeBias * 2.0) * scaleMul;   // ~1.0..3.0 mm × scaleMul
       const baseRot = rnd() * Math.PI * 2;
-      const pts = [];
       for (let k = 0; k < 3; k++) {
         const ang = baseRot + (k / 3) * Math.PI * 2 + (rnd() - 0.5) * 0.5;
         const r = baseMm * (0.85 + rnd() * 0.35);
-        pts.push({ u: u + Math.cos(ang) * r, v: v + Math.sin(ang) * r });
-      }
-      ctx.beginPath();
-      pts.forEach((p, k) => {
-        const pp = real2px(blk, p.u, p.v);
+        const pp = real2px(blk, u + Math.cos(ang) * r, v + Math.sin(ang) * r);
         if (k === 0) ctx.moveTo(pp.x, pp.y); else ctx.lineTo(pp.x, pp.y);
-      });
+      }
       ctx.closePath();
-      ctx.fill();
-      ctx.stroke();
     }
-    // Fines — tiny solid dots filling between the aggregate.
+    ctx.fill();
+    ctx.stroke();
+    // Fines — tiny solid dots filling between the aggregate. Batched into one
+    // path + one fill on screen; pdfExportMode keeps the per-dot beginPath/fill
+    // so the export shim's full-circle fast path (bare arc on an empty path)
+    // emits circle primitives instead of polygonised arcs.
     ctx.fillStyle = colorAlpha(col, 0.9);
+    const _perDot = (typeof pdfExportMode !== 'undefined' && pdfExportMode);
+    if (!_perDot) ctx.beginPath();
     for (let i = 0; i < dotCount; i++) {
       const u = L + rnd() * w;
       const v = B + rnd() * h;
       const r = Math.max(0.35, (0.18 + rnd() * 0.18) * pm * scaleMul);
       const pp = real2px(blk, u, v);
-      ctx.beginPath();
-      ctx.arc(pp.x, pp.y, r, 0, Math.PI * 2);
-      ctx.fill();
+      if (_perDot) {
+        ctx.beginPath(); ctx.arc(pp.x, pp.y, r, 0, Math.PI * 2); ctx.fill();
+      } else {
+        ctx.moveTo(pp.x + r, pp.y);   // moveTo onto the arc start — no joining spoke
+        ctx.arc(pp.x, pp.y, r, 0, Math.PI * 2);
+      }
     }
+    if (!_perDot) ctx.fill();
   } else if (def.dots || def.dotSize) {
-    // Regular dots, optionally jittered
+    // Regular dots, optionally jittered. Batched into one path + one fill on
+    // screen; pdfExportMode keeps the per-dot beginPath/fill so the export
+    // shim emits circle primitives instead of polygonised arcs.
     const gap = (3) * drawingScale * scaleMul;
     let seed = 17;
     const rnd = () => { seed = (seed * 9301 + 49297) % 233280; return seed / 233280; };
+    const dotR = Math.max(0.4, (def.dotSize || 0.3) * pm * scaleMul);
+    ctx.fillStyle = colorAlpha(col, 0.55);
+    const _perDot = (typeof pdfExportMode !== 'undefined' && pdfExportMode);
+    if (!_perDot) ctx.beginPath();
     for (let y = B + gap / 2; y < T; y += gap) {
       for (let x = L + gap / 2; x < R; x += gap) {
         const jx = def.dotJitter ? (rnd() - 0.5) * gap * 0.5 : 0;
         const jy = def.dotJitter ? (rnd() - 0.5) * gap * 0.5 : 0;
         const pp = real2px(blk, x + jx, y + jy);
-        ctx.beginPath();
-        ctx.arc(pp.x, pp.y, Math.max(0.4, (def.dotSize || 0.3) * pm * scaleMul), 0, Math.PI * 2);
-        ctx.fillStyle = colorAlpha(col, 0.55);
-        ctx.fill();
+        if (_perDot) {
+          ctx.beginPath(); ctx.arc(pp.x, pp.y, dotR, 0, Math.PI * 2); ctx.fill();
+        } else {
+          ctx.moveTo(pp.x + dotR, pp.y);   // moveTo onto the arc start — no joining spoke
+          ctx.arc(pp.x, pp.y, dotR, 0, Math.PI * 2);
+        }
       }
     }
+    if (!_perDot) ctx.fill();
     if (def.triangle) {
       // Sprinkle small triangles too — reinforced concrete signature
       let s2 = 91;

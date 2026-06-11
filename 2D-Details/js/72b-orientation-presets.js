@@ -27,7 +27,6 @@
 // PFC roll convention (verified against the renderer, which rotates the C-glyph
 // CCW): section 0 = toes right, 90 = toes up, 180 = toes left, 270 = toes down.
 // Elevation 0 = toes away (flange roots solid), 180 = toes toward (dashed).
-// EA / UA deferred to v1.x (canonical orientation count to be confirmed).
 const V25_ORIENT = {
   ub: [
     { id: 'elev-web',     label: 'Elevation — web face',     aspect: 'elev', roll: 0,  icon: 'icon-orient-i-elev-web' },
@@ -68,11 +67,45 @@ const V25_ORIENT = {
     { id: 'sec-on-edge',  label: 'Section — on edge',     aspect: 'sec',  roll: 0,  icon: 'icon-orient-rhs-edge' },
     { id: 'sec-lay-flat', label: 'Section — lay flat',    aspect: 'sec',  roll: 90, icon: 'icon-orient-rhs-flat' },
   ],
+  // GLT solid timber — like RHS, the aspect ratio matters: deepest-side-down vs
+  // on-its-side in elevation, upright vs laid-flat in section.
+  glt: [
+    { id: 'elev-deep',   label: 'Elevation — deepest side down', aspect: 'elev', roll: 0,  icon: 'icon-orient-glt-elev-deep' },
+    { id: 'elev-flat',   label: 'Elevation — on its side',       aspect: 'elev', roll: 90, icon: 'icon-orient-glt-elev-flat' },
+    { id: 'sec-upright', label: 'Section — upright',             aspect: 'sec',  roll: 0,  icon: 'icon-orient-glt-sec-upright' },
+    { id: 'sec-flat',    label: 'Section — laid flat',           aspect: 'sec',  roll: 90, icon: 'icon-orient-glt-sec-flat' },
+  ],
   chs: [
     { id: 'elev', label: 'Elevation', aspect: 'elev', roll: 0, icon: 'icon-orient-chs-elev' },
     { id: 'sec',  label: 'Section',   aspect: 'sec',  roll: 0, icon: 'icon-orient-chs-sec' },
   ],
-  // ea, ua — deferred to v1.x (confirm canonical orientation count first).
+  // EA — equal angle. Section roll spins the L glyph CCW through the four
+  // heel corners (0 = heel bottom-left, the AS 1100 default shelf angle).
+  // Elevation: the standing leg is the silhouette; roll picks whether the
+  // other leg projects toward the viewer (solid leg-edge line, roll 0) or
+  // away (AS 1100 hidden dashed, roll 180).
+  ea: [
+    { id: 'elev-leg-toward', label: 'Elevation — leg toward viewer', aspect: 'elev', roll: 0,   icon: 'icon-orient-ea-elev-toward' },
+    { id: 'elev-leg-away',   label: 'Elevation — leg away (hidden)', aspect: 'elev', roll: 180, icon: 'icon-orient-ea-elev-away' },
+    { id: 'sec-heel-bl', label: 'Section — heel bottom-left',  aspect: 'sec', roll: 0,   icon: 'icon-orient-ea-sec-bl' },
+    { id: 'sec-heel-br', label: 'Section — heel bottom-right', aspect: 'sec', roll: 90,  icon: 'icon-orient-ea-sec-br' },
+    { id: 'sec-heel-tr', label: 'Section — heel top-right',    aspect: 'sec', roll: 180, icon: 'icon-orient-ea-sec-tr' },
+    { id: 'sec-heel-tl', label: 'Section — heel top-left',     aspect: 'sec', roll: 270, icon: 'icon-orient-ea-sec-tl' },
+  ],
+  // UA — unequal angle. Same section spin as EA (long leg standing at roll
+  // 0). Elevation roll carries TWO choices in one DOF: which leg stands
+  // (0/180 = long leg `a`, 90/270 = short leg `b`) and which way the other
+  // leg projects (0/90 toward = solid, 180/270 away = hidden).
+  ua: [
+    { id: 'elev-long-toward',  label: 'Elevation — long leg standing, short leg toward',  aspect: 'elev', roll: 0,   icon: 'icon-orient-ua-elev-long-toward' },
+    { id: 'elev-short-toward', label: 'Elevation — short leg standing, long leg toward',  aspect: 'elev', roll: 90,  icon: 'icon-orient-ua-elev-short-toward' },
+    { id: 'elev-long-away',    label: 'Elevation — long leg standing, short leg away',    aspect: 'elev', roll: 180, icon: 'icon-orient-ua-elev-long-away' },
+    { id: 'elev-short-away',   label: 'Elevation — short leg standing, long leg away',    aspect: 'elev', roll: 270, icon: 'icon-orient-ua-elev-short-away' },
+    { id: 'sec-heel-bl', label: 'Section — heel bottom-left (long leg up)',     aspect: 'sec', roll: 0,   icon: 'icon-orient-ua-sec-bl' },
+    { id: 'sec-heel-br', label: 'Section — heel bottom-right (long leg flat)',  aspect: 'sec', roll: 90,  icon: 'icon-orient-ua-sec-br' },
+    { id: 'sec-heel-tr', label: 'Section — heel top-right (long leg down)',     aspect: 'sec', roll: 180, icon: 'icon-orient-ua-sec-tr' },
+    { id: 'sec-heel-tl', label: 'Section — heel top-left (long leg flat)',      aspect: 'sec', roll: 270, icon: 'icon-orient-ua-sec-tl' },
+  ],
 };
 
 // ---- State mutation ----
@@ -126,8 +159,8 @@ function v25RotateOrientation90(memberType) {
 
 // ---- Row component ----
 // Returns an HTMLDivElement of icon buttons for the active member type's
-// orientations. Empty <div> for a type with no presets (e.g. deferred EA/UA),
-// so callers can append unconditionally.
+// orientations. Empty <div> for a type with no presets, so callers can
+// append unconditionally.
 function v25BuildOrientationRow(memberType) {
   const presets = V25_ORIENT[memberType] || [];
   const row = document.createElement('div');
